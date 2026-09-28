@@ -1,0 +1,57 @@
+# Single-host, unauthenticated development demonstration. Not a production deployment.
+name: hoori-micro-demo
+x-common: &common
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=16m
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  stop_grace_period: 15s
+  healthcheck:
+    test: [CMD-SHELL, 'curl -fsS --max-time 2 http://127.0.0.1:8080/health/ready >/dev/null']
+    interval: 5s
+    timeout: 3s
+    start_period: 30s
+    retries: 20
+x-env: &env
+  HOORI_ENGINE: ${HOORI_ENGINE:-mixed}
+  # Deliberately relaxed DEMO deadlines for debug/cold-compilation qualification.
+  # Framework defaults remain client=2s and inbound=10s.
+  HOORI_CLIENT_TIMEOUT_MS: ${HOORI_DEMO_CLIENT_TIMEOUT_MS:-30000}
+  HOORI_REQUEST_TIMEOUT_MS: ${HOORI_DEMO_REQUEST_TIMEOUT_MS:-60000}
+  HOORI_SHUTDOWN_GRACE_MS: 10000
+services:
+  recipes:
+    <<: *common
+    build:
+      context: .docker-context
+      args:
+        SERVICE: recipes
+        RUNTIME_BASE: ${HOORI_RUNTIME_BASE:-debian:trixie-slim}
+    environment:
+      <<: *env
+      HOORI_MAIN_CLASS: dev/hoori/micro/demo/RecipesMain
+      HOORI_OUTBOUND: none
+    networks: [backend]
+  shopping:
+    <<: *common
+    build:
+      context: .docker-context
+      args:
+        SERVICE: shopping
+        RUNTIME_BASE: ${HOORI_RUNTIME_BASE:-debian:trixie-slim}
+    environment:
+      <<: *env
+      HOORI_MAIN_CLASS: dev/hoori/micro/demo/ShoppingMain
+      HOORI_OUTBOUND: http
+    depends_on:
+      recipes:
+        condition: service_healthy
+    ports:
+      - '127.0.0.1:${HOORI_DEMO_PORT:-8080}:8080'
+    networks: [edge, backend]
+networks:
+  edge: {}
+  backend:
+    internal: true

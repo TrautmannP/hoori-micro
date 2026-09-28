@@ -1,0 +1,10 @@
+**/target/
+.cache/
+.docker-context/
+.docker-context.tmp/
+.idea/
+*.iml
+.env
+__pycache__/
+*.pyc
+.DS_Store

@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>dev.hoori</groupId>
+  <artifactId>hoori-micro-parent</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+  <name>Hoori Micro</name>
+  <description>Explicit, bounded microservice composition on Hoori HTTP and REST</description>
+  <modules>
+    <module>framework</module>
+    <module>examples/demo-contracts</module>
+    <module>examples/recipes-service</module>
+    <module>examples/shopping-service</module>
+  </modules>
+  <properties>
+    <maven.compiler.release>21</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.build.outputTimestamp>2026-09-28T00:00:00Z</project.build.outputTimestamp>
+    <hoori.sdk.version>0.1.0</hoori.sdk.version>
+    <hoori.guest.version>0.4.0</hoori.guest.version>
+    <junit.version>5.11.4</junit.version>
+  </properties>
+  <dependencyManagement>
+    <dependencies>
+      <dependency><groupId>dev.hoori</groupId><artifactId>hoori-http-api</artifactId><version>${hoori.sdk.version}</version></dependency>
+      <dependency><groupId>dev.hoori</groupId><artifactId>hoori-rest-api</artifactId><version>${hoori.sdk.version}</version></dependency>
+      <dependency><groupId>dev.hoori</groupId><artifactId>hoori-micro</artifactId><version>${project.version}</version></dependency>
+      <dependency><groupId>dev.hoori</groupId><artifactId>hoori-micro-demo-contracts</artifactId><version>${project.version}</version></dependency>
+    </dependencies>
+  </dependencyManagement>
+  <dependencies>
+    <!-- Compile-time Hoori transport/runtime signatures. Never shade java.* into the application. -->
+    <dependency>
+      <groupId>dev.hoori</groupId><artifactId>hoori-guest-base</artifactId><version>${hoori.guest.version}</version><scope>provided</scope>
+    </dependency>
+    <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><version>${junit.version}</version><scope>test</scope></dependency>
+  </dependencies>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId><artifactId>maven-enforcer-plugin</artifactId><version>3.5.0</version>
+        <executions><execution><id>toolchains</id><goals><goal>enforce</goal></goals><configuration><rules>
+          <requireJavaVersion><version>[21,22)</version></requireJavaVersion>
+          <requireMavenVersion><version>[3.9,4)</version></requireMavenVersion>
+        </rules></configuration></execution></executions>
+      </plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-clean-plugin</artifactId><version>3.4.0</version></plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-resources-plugin</artifactId><version>3.3.1</version></plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.13.0</version></plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.5.2</version>
+        <configuration><useModulePath>false</useModulePath></configuration>
+      </plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-jar-plugin</artifactId><version>3.4.2</version></plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-install-plugin</artifactId><version>3.1.3</version></plugin>
+    </plugins>
+  </build>
+</project>
