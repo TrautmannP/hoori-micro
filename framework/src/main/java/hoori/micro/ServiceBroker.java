@@ -37,8 +37,8 @@ final class ServiceBroker {
     private final JsonLimits limits;
     private final byte[] registration;
     private final AtomicInteger turn = new AtomicInteger();
-    private volatile boolean followCatalog;
-    private volatile View view = new View(Catalog.EMPTY, 0);
+    private volatile Catalog.Filter filter;
+    private volatile View view = new View(Catalog.EMPTY, 0, "", false);
     private final Random jitter = new Random();
     private boolean registered; // all control state below is heartbeat-thread owned
     private String retiredEpoch;
@@ -59,7 +59,7 @@ final class ServiceBroker {
                 new Catalog.Instance(config.instanceId, service.name, service.version, config.advertiseUrl, entries),
                 Catalog.INSTANCE,
                 limits);
-        followCatalog = !service.dependencies.isEmpty();
+        filter = Catalog.Filter.consumer(service.dependencies, false);
     }
 
     static Exchange transport(HttpClient http) {
@@ -73,11 +73,14 @@ final class ServiceBroker {
     <I, O> O call(Request context, Action<I, O> action, I input) throws IOException {
         if (action == null || input == null) throw new NullPointerException();
 
-        String[] name = ServiceName.qualified(action.name);
-        byte[] result =
-                invoke(context, name[0], dependency(name[0]), name[1], Json.encode(input, action.input, limits));
+        byte[] result = invoke(
+                context,
+                action.service,
+                dependency(action.service),
+                action.operation,
+                Json.encode(input, action.input, limits));
 
-        return decode(name[0], result, action.output);
+        return decode(action.service, result, action.output);
     }
 
     Object call(Request context, String action, Map<String, ?> params) throws IOException {
@@ -103,7 +106,7 @@ final class ServiceBroker {
                 .add(VERSION_HEADER, Integer.toString(version));
         Response response;
         try {
-            response = exchange.send(context, URI.create(target.url + INVOKE_PATH), "POST", headers, params);
+            response = exchange.send(context, target.invokeTarget, "POST", headers, params);
         } catch (InterruptedIOException cancelledOrExpired) {
             // Keep the SDK's cancellation/timeout semantics and interrupt status intact.
             throw cancelledOrExpired;
@@ -125,26 +128,50 @@ final class ServiceBroker {
         View current = view;
         long age = System.nanoTime() - current.fetchedNanos;
 
-        return age < config.catalogMaxAgeMillis * 1_000_000L ? current.catalog : Catalog.EMPTY;
+        if (current.live && age < config.catalogMaxAgeMillis * 1_000_000L) return current.catalog;
+
+        expire(current);
+
+        return Catalog.EMPTY;
     }
 
-    void followCatalog() {
-        followCatalog = true;
+    private synchronized void expire(View current) {
+        if (view == current && current.live)
+            view = new View(
+                    new Catalog(
+                            current.catalog.epoch,
+                            current.catalog.revision,
+                            current.catalog.complete,
+                            new Catalog.Instance[0]),
+                    current.fetchedNanos,
+                    current.scope,
+                    false);
+    }
+
+    void followPublicCatalog() {
+        filter = Catalog.Filter.consumer(service.dependencies, true);
     }
 
     /** One control exchange; an unknown lease permits one full, idempotent re-registration. */
     void beat(boolean ready) throws InterruptedIOException {
         boolean register = ready && !service.actions.isEmpty();
 
-        if (!register && !followCatalog) return;
+        catalog(); // Also releases expired rows during idle/control failures; version tokens stay bounded.
+
+        if (!register && filter.key.equals("none")) return;
 
         try {
             View known = view;
-            Headers headers = new Headers().add("Accept", "application/json").add(Catalog.PROTOCOL_HEADER, "2");
+            Catalog.Filter requested = filter;
+            Headers headers = new Headers()
+                    .add("Accept", "application/json")
+                    .add(Catalog.PROTOCOL_HEADER, "2")
+                    .add(Catalog.VIEW_HEADER, requested.key);
 
-            if (known.catalog != Catalog.EMPTY)
+            if (known.live)
                 headers.add(Catalog.EPOCH_HEADER, known.catalog.epoch)
-                        .add(Catalog.REVISION_HEADER, Long.toString(known.catalog.revision));
+                        .add(Catalog.REVISION_HEADER, Long.toString(known.catalog.revision))
+                        .add(Catalog.KNOWN_VIEW_HEADER, known.scope);
 
             String path = "/v1/instances/" + config.instanceId;
             Response response;
@@ -167,7 +194,7 @@ final class ServiceBroker {
                 response = exchange.send(null, URI.create(config.registryUrl + "/v1/catalog"), "GET", headers, EMPTY);
             }
 
-            accept(response, known);
+            accept(response, known, requested);
 
             if (register) registered = true;
 
@@ -208,10 +235,11 @@ final class ServiceBroker {
     }
 
     void accept(byte[] body) {
-        accept(Json.decode(body, Catalog.CODEC, limits));
+        Catalog.Filter requested = filter;
+        accept(requested.apply(Json.decode(body, Catalog.CODEC, limits)), requested.key);
     }
 
-    private void accept(Catalog next) {
+    private synchronized void accept(Catalog next, String scope) {
         if (next == null) throw new JsonException("Null catalog");
 
         View current = view;
@@ -226,23 +254,32 @@ final class ServiceBroker {
 
         if (!sameEpoch && old != Catalog.EMPTY) retiredEpoch = old.epoch;
 
-        view = new View(sameEpoch && next.revision == old.revision ? old : next, System.nanoTime());
+        view = new View(
+                sameEpoch && next.revision == old.revision && current.live && scope.equals(current.scope) ? old : next,
+                System.nanoTime(),
+                scope,
+                true);
     }
 
-    private void accept(Response response, View sent) throws IOException {
+    private synchronized void accept(Response response, View sent, Catalog.Filter requested) throws IOException {
         if (!"2".equals(response.headers.get(Catalog.PROTOCOL_HEADER))) throw new IOException("Registry protocol");
+
+        if (!requested.key.equals(response.headers.get(Catalog.VIEW_HEADER))) throw new IOException("Registry view");
+
+        if (!requested.key.equals(filter.key)) return;
 
         String epoch = response.headers.get(Catalog.EPOCH_HEADER),
                 revision = response.headers.get(Catalog.REVISION_HEADER);
 
         if (response.status == 204) {
-            if (sent.catalog == Catalog.EMPTY
+            if (!sent.live
+                    || !sent.scope.equals(requested.key)
                     || !sent.catalog.epoch.equals(epoch)
                     || !Long.toString(sent.catalog.revision).equals(revision)
                     || response.body.length != 0
                     || view != sent) throw new IOException("Unmatched catalog confirmation");
 
-            view = new View(sent.catalog, System.nanoTime());
+            view = new View(sent.catalog, System.nanoTime(), sent.scope, true);
 
             return;
         }
@@ -255,16 +292,20 @@ final class ServiceBroker {
                 || !next.epoch.equals(epoch)
                 || !Long.toString(next.revision).equals(revision)) throw new IOException("Unmatched catalog version");
 
-        accept(next);
+        accept(next, requested.key);
     }
 
     private static final class View {
         final Catalog catalog;
         final long fetchedNanos;
+        final String scope;
+        final boolean live;
 
-        View(Catalog catalog, long fetchedNanos) {
+        View(Catalog catalog, long fetchedNanos, String scope, boolean live) {
             this.catalog = catalog;
             this.fetchedNanos = fetchedNanos;
+            this.scope = scope;
+            this.live = live;
         }
     }
 

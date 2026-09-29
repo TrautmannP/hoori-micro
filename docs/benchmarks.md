@@ -164,3 +164,50 @@ Läufe sind beschreibende Kontrollen, keine statistische Gewinnfreigabe. Der Hea
 enthält auch noch nicht gesammelten Garbage; dies ist keine Live-Retentionmessung.
 Ein RSS-Gewinn ist nicht belegt. Genau ein serialisierter Registry-Snapshot wird
 gehalten; die JUnit-Prüfung belegt dessen Objekt-/Byte-Wiederverwendung bei Leases.
+
+## Abhängigkeitssichten, 30. September 2026
+
+Je ein frischer C-Lauf vor/nach #3 mit denselben stabilen Einstellungen wie oben
+(`seconds=2`, `warmup=5`, `idle=12`), klein und mit 32 zusätzlichen Services.
+Ausgangspunkt `24c2a8b`; Runtime/SDK weiterhin `550d608f`. Beide Stände verwenden
+dieselbe erweiterte Test-Fixture: `/bench/runtime` zählt zusätzlich tatsächlich
+gehaltene Broker-Instanzen/Actions. Fixture- und Generator-Hashes stimmen in allen
+vier Dateien überein; Registry-Instanzmengen bleiben vor/nach dem ruhigen Abschnitt
+exakt 3/35. Rohdaten: [alt, klein](benchmarks/issue-3-control-old-small.json.gz),
+[neu, klein](benchmarks/issue-3-control-new-small.json.gz),
+[alt, groß](benchmarks/issue-3-control-old-large.json.gz),
+[neu, groß](benchmarks/issue-3-control-new-large.json.gz).
+
+| Nach ruhigem Abschnitt | klein: alt → neu | 32 zusätzliche Services: alt → neu |
+|---|---:|---:|
+| Shopping: gehaltene Instanzen / Actions | 3/3 → 1/1 | 35/35 → 1/1 |
+| Recipes ohne Abhängigkeiten: Instanzen / Actions | 3/3 → 0/0 | 35/35 → 0/0 |
+| Shopping: beobachteter Guest-Heap, MiB | 0,571 → 0,562 | 0,622 → 0,561 |
+| Shopping: RSS, MiB | 59,734 → 56,438 | 60,586 → 56,711 |
+| Shopping: empfangene / gesendete Service-Bytes | 1618/12604 → 1870/13143 | 1630/12611 → 1882/13147 |
+| Registry: CPU-ms / HTTP-Request | 9,363 → 9,889 | 2,868 → 3,054 |
+
+Die Katalogbegrenzung ist direkt nachgewiesen; einmalige RSS-/Heap-Beobachtungen
+belegen keinen allgemeinen RAM-Gewinn, der Heap enthält Garbage. Stabile Kataloge
+liefern bereits seit #2 überwiegend 204; die zusätzlichen Sicht-Header erhöhen hier
+Bytes und Registry-Kosten. Erfolgreiche/s bei geschlossener Last klein
+108,35 → 112,45, groß 105,54 → 109,71; die neuen Läufe enthalten jeweils einen
+Fehler (unter 1 %). Alle vier Recovery-Phasen liefern je acht korrekte Antworten.
+Diese kurzen Kontrollen sind keine statistische Durchsatz-/Performancefreigabe.
+
+[Isolierte native Lookup-Kontrolle](benchmarks/issue-3-lookup-550d608f.json.gz): ein
+Prozess je Engine, ein Warmup-Paar und fünf Paare mit je 100000 Auswahlen,
+abwechselnd `echo`/nicht angebotene Action. Median [min–max] je Auswahl: Mixed
+bei 1/35 Instanzen **1,75 [1,70–1,78] / 2,22 [2,20–2,24] µs**, Interpreter
+**4,51 [4,38–4,51] / 39,95 [39,55–40,39] µs**. Diese CPU-Kontrolle läuft außerhalb
+Docker und misst keine Transportlatenz. Beim nun tatsächlich gehaltenen einzelnen
+Eintrag ist ein zusätzlicher Suchindex nicht begründet; der lineare Scan bleibt.
+
+```bash
+runtime=$PWD/.docker-context/runtime
+cp=$PWD/framework/target/classes:$PWD/framework/target/test-classes
+for jar in "$runtime"/lib/*.jar; do cp="$cp:$jar"; done
+"$runtime/bin/hoori" run --engine mixed --allow-environment-read \
+  --class-path "$cp" --arg lookup hoori/micro/BenchmarkMain
+# Dasselbe mit --engine interpreter.
+```

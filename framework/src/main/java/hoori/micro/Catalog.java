@@ -4,7 +4,10 @@ import hoori.rest.json.JsonCodec;
 import hoori.rest.json.JsonException;
 import hoori.rest.json.JsonReader;
 import hoori.rest.json.JsonWriter;
+import java.net.URI;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -15,12 +18,14 @@ final class Catalog {
     static final int MAX_INSTANCES = 256;
     static final String PROTOCOL_HEADER = "X-Hoori-Catalog-Protocol";
     static final String EPOCH_HEADER = "X-Hoori-Catalog-Epoch", REVISION_HEADER = "X-Hoori-Catalog-Revision";
+    static final String VIEW_HEADER = "X-Hoori-Catalog-View", KNOWN_VIEW_HEADER = "X-Hoori-Catalog-Known-View";
     static final Catalog EMPTY = new Catalog("", 0, false, new Instance[0]);
 
     final String epoch;
     final long revision;
     final boolean complete;
     final Instance[] instances;
+    final Object identity = new Object();
 
     Catalog(String epoch, long revision, boolean complete, Instance[] instances) {
         this.epoch = epoch;
@@ -58,6 +63,7 @@ final class Catalog {
         final String id, service, url;
         final int version;
         final Entry[] actions;
+        final URI invokeTarget;
 
         Instance(String id, String service, int version, String url, Entry[] actions) {
             this.id = id;
@@ -65,6 +71,7 @@ final class Catalog {
             this.version = version;
             this.url = url;
             this.actions = actions;
+            invokeTarget = URI.create(url + ServiceBroker.INVOKE_PATH);
         }
 
         boolean offers(String service, int version, String action) {
@@ -92,6 +99,105 @@ final class Catalog {
             }
 
             return true;
+        }
+    }
+
+    /** Fixed startup selection, not a cache keyed by incoming business requests. */
+    static final class Filter {
+        final String key;
+        private final boolean all, published;
+        private final Map<String, Integer> dependencies;
+
+        private Filter(String key, boolean all, boolean published, Map<String, Integer> dependencies) {
+            this.key = key;
+            this.all = all;
+            this.published = published;
+            this.dependencies = dependencies;
+        }
+
+        static Filter consumer(Map<String, Integer> dependencies, boolean published) {
+            StringBuilder key = new StringBuilder(published ? "public" : "none");
+
+            if (!dependencies.isEmpty()) {
+                key = new StringBuilder(published ? "public;services=" : "services=");
+                for (Map.Entry<String, Integer> dependency : dependencies.entrySet()) {
+                    if (key.charAt(key.length() - 1) != '=') key.append(',');
+
+                    key.append(dependency.getKey()).append(':').append(dependency.getValue());
+                }
+            }
+
+            return parse(key.toString());
+        }
+
+        static Filter parse(String key) {
+            if (key == null) key = "all"; // Old protocol-2 clients still receive the full catalog.
+
+            if (key.length() > 2300) throw new IllegalArgumentException("Catalog view too long");
+
+            LinkedHashMap<String, Integer> dependencies = new LinkedHashMap<>();
+            boolean published = key.equals("public") || key.startsWith("public;services=");
+
+            if (!key.equals("all") && !key.equals("none") && !key.equals("public")) {
+                String prefix = published ? "public;services=" : "services=";
+
+                if (!key.startsWith(prefix)) throw new IllegalArgumentException("Invalid catalog view");
+
+                int start = prefix.length();
+                do {
+                    int end = key.indexOf(',', start);
+
+                    if (end < 0) end = key.length();
+
+                    String dependency = key.substring(start, end);
+                    int colon = dependency.indexOf(':');
+
+                    if (colon < 1 || dependencies.size() == Service.MAX_DEPENDENCIES)
+                        throw new IllegalArgumentException("Invalid catalog dependency");
+
+                    String name = ServiceName.require(dependency.substring(0, colon));
+                    String number = dependency.substring(colon + 1);
+                    int version = Integer.parseInt(number);
+
+                    if (version < 1
+                            || version > Service.MAX_VERSION
+                            || !number.equals(Integer.toString(version))
+                            || dependencies.put(name, version) != null)
+                        throw new IllegalArgumentException("Invalid catalog dependency");
+
+                    start = end + 1;
+                } while (start <= key.length());
+            }
+
+            return new Filter(key, key.equals("all"), published, dependencies);
+        }
+
+        Catalog apply(Catalog source) {
+            if (all) return source;
+
+            ArrayList<Instance> selected = new ArrayList<>();
+            for (Instance instance : source.instances) {
+                Integer version = dependencies.get(instance.service);
+                boolean dependency = version != null && version == instance.version;
+
+                if (!dependency && !published) continue;
+
+                ArrayList<Entry> actions = new ArrayList<>();
+                for (Entry entry : instance.actions) {
+                    if (dependency || published && entry.path != null)
+                        actions.add(published ? entry : new Entry(entry.name, null, null, null));
+                }
+
+                if (!actions.isEmpty())
+                    selected.add(new Instance(
+                            instance.id,
+                            instance.service,
+                            instance.version,
+                            instance.url,
+                            actions.toArray(new Entry[0])));
+            }
+
+            return new Catalog(source.epoch, source.revision, source.complete, selected.toArray(new Instance[0]));
         }
     }
 

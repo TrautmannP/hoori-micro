@@ -26,7 +26,7 @@ public final class Gateway implements Middleware {
     private final ServiceBroker broker;
     private final BiPredicate<Request, String> policy;
     private final JsonLimits limits;
-    private volatile Catalog source;
+    private volatile Object source;
     private volatile Route[] routes = new Route[0];
 
     private Gateway(Microservice app, BiPredicate<Request, String> policy) {
@@ -35,7 +35,7 @@ public final class Gateway implements Middleware {
         broker = app.broker();
         this.policy = policy;
         limits = app.jsonLimits();
-        broker.followCatalog();
+        broker.followPublicCatalog();
     }
 
     /** policy(request, permission) decides access; a service dependency is never a permission. */
@@ -109,9 +109,9 @@ public final class Gateway implements Middleware {
     private Route[] routes() {
         Catalog current = broker.catalog();
 
-        if (current != source) {
+        if (current.identity != source) {
             routes = build(current);
-            source = current;
+            source = current.identity;
         }
 
         return routes;

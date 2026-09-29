@@ -13,16 +13,19 @@ Docker 29.8.1, Compose v5.5.1, Basis `debian:trixie-slim` (Tag, kein Digest).
 | Spotless-Check (auch in `mvn verify`) | **24 Java-Dateien geprüft** | Palantir 2.100.0 plus JDK-Syntaxschritt in Spotless 3.10.3; nur Host-JDK. Fehlende Leerzeilen abgewiesen, `apply` korrigiert, erneuter Check erfolgreich |
 | `scripts/test-core.sh` (HotSpot) | **96 Assertions und 5 Formatter-Fixtures bestanden** | Namen, Origins, Konfiguration; Formatter mit Kommentaren/Literalen, `else if`, Guards, Switch, Idempotenz und ungültigem Input; kein Netzwerk |
 | Python `unittest` | **14 Tests bestanden** | 12 Distributionsprüfungen; Benchmark-Zählung, begrenzte offene Last und keine Generator-Retries. Lokaler Python-Peer, keine native Transport-Abnahme |
-| `scripts/build.sh` inkl. `mvn clean verify` | **13 JUnit-Tests bestanden** | Zusätzlich: Snapshot-/Byte-Wiederverwendung bei Leases, monotone Revisionen, transaktionales Byte-/Eintragslimit, kleine Broker-Leases und Neuanmeldung, Frische ohne Versionsrückschritt. HotSpot mit Transport-Seam |
+| `scripts/build.sh` inkl. `mvn clean verify` | **15 JUnit-Tests bestanden** | Zusätzlich: Lease-/Byte-Wiederverwendung, monotone Revisionen, transaktionale Limits, gefilterte Sichten und ihre Bestätigungen, Freigabe abgelaufener Zeilen und voller Wiederabruf. HotSpot mit Transport-Seam |
 | `scripts/test-hoori-core.sh`, mixed und interpreter | **96 Assertions bestanden** | Echte Guest-Ausführung der portablen Checks |
-| `scripts/smoke.py`, mixed und interpreter | **6 Phasen bestanden** | Einschließlich nativer Lease-/Protokoll-/Byte-Grenzen; siehe unten |
+| `scripts/smoke.py`, mixed und interpreter | **6 Phasen bestanden** | Einschließlich nativer Sichten, Lease-/Byte-Grenzen und gleichzeitiger alter/neuer Anbieter; siehe unten |
 
 Der Smoke-Test startet Registry, Recipes, Shopping und Gateway als Container und prüft:
 Veröffentlichung über das Gateway, Aufruf über zwei Action-Hops, fachliche 404/400,
 Request-ID über alle Hops ohne Authorization-Weitergabe, nicht öffentlichen
 Invoke-Endpunkt, exakten Registry-Katalog; Neuerstellung von Recipes mit zusätzlicher
-Action, die ohne Neustart von Shopping/Gateway (gleiche Container-IDs) veröffentlicht
-wird; Aufrufe bei gestoppter Registry und vollständige Wiederanmeldung nach deren
+Action bei gleichzeitig weiterlaufender alter Instanz, die ohne Neustart von
+Shopping/Gateway (gleiche Container-IDs) veröffentlicht wird. Acht neue Aufrufe
+erreichen die neue Instanz; direkte Advertise-URLs liefern dort 200 und bei der alten
+Instanz 421. Nach deren Stop wird die Auswahlkonvergenz geprüft; Aufrufe bei
+gestoppter Registry und vollständige Wiederanmeldung nach deren
 Neustart; Anbieter-Ausfall mit sicherem 502 und Erholung; SIGTERM-Drain eines laufenden
 Aufrufs mit Exit-Code 0.
 
@@ -30,8 +33,11 @@ Discovery-Protokoll 2 wurde zusätzlich im echten Registry-Container geprüft:
 legacy PUT/GET, unveränderte leere Leases/bedingte Abrufe (204 und gleiche Revision),
 abweichende Protokollversion (426), zwei einzeln passende Registrierungen mit zu
 großem Gesamtkatalog (zweite mit 413 abgewiesen und nicht sichtbar), DELETE und
-anschließend unbekannte Lease (404). Snapshot-/Byte-Identität und verworfene
-Versionsrückschritte sind zusätzlich per JUnit belegt. Registrar-Timeout-Recovery
+anschließend unbekannte Lease (404). Consumer bekommen nur deklarierte Services
+und Action-Namen; `none` bleibt leer, `public` enthält nur publizierte Actions,
+Sichtwechsel erzwingen 200 und passende Bestätigungen erlauben 204. Snapshot-/Byte-
+Identität, verworfene Versionsrückschritte und falsche Sichten sowie Freigabe
+abgelaufener Broker-Zeilen sind zusätzlich per JUnit belegt. Registrar-Timeout-Recovery
 und Datenpool-Isolation bleiben die offene Arbeit aus #4.
 
 Dabei gefunden und behoben: Hooris Guest-Classlib hat weder `String.repeat` noch
@@ -40,7 +46,6 @@ Core-Checks liefen deshalb nie auf Hoori; `hoori.lock.json` fehlte im Repository
 
 ## Nicht ausgeführt
 
-- Mehrere Replikate eines Service in Docker (Auswahl pro Action nur per JUnit belegt);
 - Rolling Update mit gleichzeitig alten und neuen Instanzen unter Last;
 - verweigerte DNS-/Connect-Capabilities, HTTPS, erzwungene IP-Wechsel und die
   kombinierte Admission-/Budget-Abnahme aus #10;
@@ -82,5 +87,5 @@ Container-Basis/Digest, Engine-Modus, Testausgaben und relevante Fehler festhalt
 Nicht ausgeführte Schritte ausdrücklich offen lassen. Im aktuellen Git-Baum liegt
 keine CI-Konfiguration; die hier genannten Prüfungen wurden lokal ausgeführt.
 
-Es gibt eine gemessene Ausgangsbasis, weiterhin **keine gemessenen Gewinne einer
-Framework-Optimierung**. Kandidaten werden mit denselben Einstellungen verglichen.
+Es gibt eine gemessene Ausgangsbasis und gezielte Vergleichskontrollen, weiterhin
+**keine allgemeine Performancefreigabe**. Messgrenzen siehe `benchmarks.md`.

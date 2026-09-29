@@ -246,6 +246,7 @@ final class ServiceBrokerTest {
                 JsonLimits.DEFAULT);
         broker.beat(true);
         Catalog first = broker.catalog();
+        assertEquals(0, first.instances.length); // Pure provider leases never transfer a foreign catalog.
         for (int i = 0; i < 4; i++) {
             broker.beat(true);
             assertSame(first, broker.catalog());
@@ -273,7 +274,10 @@ final class ServiceBrokerTest {
                 new Catalog("old", 10, true, new Catalog.Instance[] {parse(instance("a", 1, "http://a:8080", "get"))});
         broker.accept(Json.encode(original, Catalog.CODEC));
         Catalog held = broker.catalog();
-        reply[0] = new Response(204, version(new Catalog("new", 10, true, original.instances)), new byte[0]);
+        reply[0] = new Response(
+                204,
+                withView(version(new Catalog("new", 10, true, original.instances)), "services=recipes:1"),
+                new byte[0]);
         broker.beat(false);
         assertSame(held, broker.catalog());
         assertTrue(broker.heartbeatDelayMillis() >= 180 && broker.heartbeatDelayMillis() <= 220);
@@ -285,7 +289,7 @@ final class ServiceBrokerTest {
         Catalog recovered = broker.catalog();
         broker.accept(Json.encode(new Catalog("old", 99, true, new Catalog.Instance[0]), Catalog.CODEC));
         assertSame(recovered, broker.catalog());
-        reply[0] = new Response(204, version(recovered), new byte[0]);
+        reply[0] = new Response(204, withView(version(recovered), "services=recipes:1"), new byte[0]);
         broker.beat(false);
         assertSame(recovered, broker.catalog());
         assertTrue(broker.heartbeatDelayMillis() >= 90 && broker.heartbeatDelayMillis() <= 110);
@@ -298,6 +302,133 @@ final class ServiceBrokerTest {
         assertThrows(
                 RuntimeException.class,
                 () -> broker.accept("{\"complete\":true,\"instances\":[]}".getBytes(StandardCharsets.UTF_8)));
+    }
+
+    @Test
+    void registryFiltersBeforeTransferAndBindsConfirmationsToTheView() {
+        Registry registry = new Registry(60_000, JsonLimits.DEFAULT);
+        long now = System.nanoTime();
+        Catalog.Entry published = new Catalog.Entry("get", "GET", "/recipes/{id}", "recipes:read");
+        Catalog.Entry privateAction = new Catalog.Entry("private", null, null, null);
+        registry.register(
+                new Catalog.Instance(
+                        "old", "recipes", 1, "http://old:8080", new Catalog.Entry[] {published, privateAction}),
+                now);
+        registry.register(parse(instance("new", 1, "http://new:8080", "get", "recommend")), now);
+        registry.register(parse(instance("v2", 2, "http://v2:8080", "get")), now);
+        for (int i = 0; i < 32; i++)
+            registry.register(
+                    new Catalog.Instance(
+                            "node-" + i, "other-" + i, 1, "http://other:8080", new Catalog.Entry[] {privateAction}),
+                    now);
+        Headers requested =
+                new Headers().add(Catalog.PROTOCOL_HEADER, "2").add(Catalog.VIEW_HEADER, "services=recipes:1");
+        Response response = registry.reply(requested, now);
+        Catalog selected = Json.decode(response.body, Catalog.CODEC);
+        assertEquals(2, selected.instances.length);
+        assertEquals(2, selected.instances[0].actions.length);
+        assertNull(selected.instances[0].actions[0].path);
+        assertEquals(
+                "http://new:8080/_hoori/invoke",
+                selected.select("recipes", 1, "recommend", 0).invokeTarget.toString());
+        assertNull(selected.select("recipes", 2, "get", 0));
+        assertEquals("services=recipes:1", response.headers.get(Catalog.VIEW_HEADER));
+        Headers known = version(selected)
+                .add(Catalog.VIEW_HEADER, "services=recipes:1")
+                .add(Catalog.KNOWN_VIEW_HEADER, "services=recipes:1");
+        assertEquals(204, registry.reply(known, now).status);
+        known = withView(known, "public");
+        Response publicResponse = registry.reply(known, now);
+        assertEquals(200, publicResponse.status); // Same epoch/revision, different selection.
+        Catalog publicCatalog = Json.decode(publicResponse.body, Catalog.CODEC);
+        assertEquals(1, publicCatalog.instances.length);
+        assertEquals(1, publicCatalog.instances[0].actions.length);
+        assertEquals("/recipes/{id}", publicCatalog.instances[0].actions[0].path);
+        known = withView(known, "public;services=recipes:1");
+        Catalog hybrid = Json.decode(registry.reply(known, now).body, Catalog.CODEC);
+        assertEquals(2, hybrid.instances.length);
+        assertEquals(2, hybrid.instances[0].actions.length);
+        known = withView(known, "none");
+        assertEquals(0, Json.decode(registry.reply(known, now).body, Catalog.CODEC).instances.length);
+        registry.remove("new");
+        known = withView(known, "services=recipes:1");
+        Catalog removed = Json.decode(registry.reply(known, now).body, Catalog.CODEC);
+        assertNull(removed.select("recipes", 1, "recommend", 0));
+        assertEquals(0, Json.decode(registry.reply(known, now + 60_001_000_000L).body, Catalog.CODEC).instances.length);
+        for (String invalid : List.of(
+                "services=",
+                "services=recipes:0",
+                "services=recipes:01",
+                "services=recipes:1,recipes:2",
+                "services=recipes:1,",
+                "unknown",
+                "services=recipes:10000"))
+            assertEquals(
+                    400,
+                    assertThrows(
+                                    RequestException.class,
+                                    () -> registry.reply(
+                                            new Headers()
+                                                    .add(Catalog.PROTOCOL_HEADER, "2")
+                                                    .add(Catalog.VIEW_HEADER, invalid),
+                                            now))
+                            .status);
+        assertThrows(IllegalArgumentException.class, () -> Catalog.Filter.parse(new String(new char[2301])));
+        StringBuilder tooMany = new StringBuilder("services=");
+        for (int i = 0; i < 33; i++)
+            tooMany.append(i == 0 ? "" : ",").append("service-").append(i).append(":1");
+        assertThrows(IllegalArgumentException.class, () -> Catalog.Filter.parse(tooMany.toString()));
+    }
+
+    @Test
+    void brokerRejectsWrongViewsAndReplacesExpiredRowsWithAFreshFullResponse() throws Exception {
+        Registry registry = new Registry(60_000, JsonLimits.DEFAULT);
+        long now = System.nanoTime() + 60_001_000_000L;
+        registry.register(parse(instance("a", 1, "http://a:8080", "get")), now);
+        ServiceConfig config = ServiceConfig.from(
+                "shopping",
+                key -> key.equals("HOORI_HEARTBEAT_MS")
+                        ? "100"
+                        : key.equals("HOORI_CATALOG_MAX_AGE_MS") ? "150" : null);
+        boolean[] wrong = {false};
+        List<Integer> statuses = new ArrayList<>();
+        ServiceBroker broker = new ServiceBroker(
+                shopping(),
+                config,
+                (c, t, m, h, b) -> {
+                    Response response = registry.reply(h, now);
+                    statuses.add(response.status);
+                    assertEquals("services=recipes:1", h.get(Catalog.VIEW_HEADER));
+
+                    if (wrong[0])
+                        response = new Response(response.status, withView(response.headers, "public"), response.body);
+
+                    return response;
+                },
+                JsonLimits.DEFAULT);
+        broker.beat(false);
+        Catalog first = broker.catalog();
+        broker.beat(false);
+        assertSame(first, broker.catalog());
+        wrong[0] = true;
+        broker.beat(false);
+        Thread.sleep(180);
+        assertSame(Catalog.EMPTY, broker.catalog());
+        // Expiry keeps only the version watermark, not rows or raw bodies.
+        var field = ServiceBroker.class.getDeclaredField("view");
+        field.setAccessible(true);
+        var rows = field.get(broker).getClass().getDeclaredField("catalog");
+        rows.setAccessible(true);
+        assertEquals(0, ((Catalog) rows.get(field.get(broker))).instances.length);
+        wrong[0] = false;
+        broker.beat(false);
+        assertEquals(List.of(200, 204, 204, 200), statuses);
+        assertEquals(1, broker.catalog().instances.length);
+        assertNotSame(first, broker.catalog());
+        Catalog recovered = broker.catalog();
+        broker.accept(Json.encode(
+                new Catalog(recovered.epoch, recovered.revision - 1, true, new Catalog.Instance[0]), Catalog.CODEC));
+        assertSame(recovered, broker.catalog());
     }
 
     @Test
@@ -392,6 +523,15 @@ final class ServiceBrokerTest {
     private static Response json(int status, String body) {
         return new Response(
                 status, new Headers().add("Content-Type", "application/json"), body.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static Headers withView(Headers original, String scope) {
+        Headers result = new Headers();
+        for (int i = 0; i < original.size(); i++)
+            if (!original.name(i).equalsIgnoreCase(Catalog.VIEW_HEADER))
+                result.add(original.name(i), original.value(i));
+
+        return result.add(Catalog.VIEW_HEADER, scope);
     }
 
     private static Headers version(Catalog catalog) {
