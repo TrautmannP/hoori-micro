@@ -40,7 +40,7 @@ public final class Registry {
 
     void mount(Microservice app) {
         app.routes().put("/v1/instances/{id}", request -> {
-            protocol(request.raw().headers, false);
+            Catalog.Filter filter = protocol(request.raw().headers, false);
             Catalog.Instance instance = request.body(Catalog.INSTANCE, limits);
 
             if (!instance.id.equals(request.pathParam("id"))) throw new RequestException(400, "Instance ID mismatch");
@@ -48,10 +48,10 @@ public final class Registry {
             long now = System.nanoTime();
             register(instance, now);
 
-            return reply(request.raw().headers, now);
+            return reply(request.raw().headers, now, filter);
         });
         app.routes().post("/v1/instances/{id}/lease", request -> {
-            protocol(request.raw().headers, true);
+            Catalog.Filter filter = protocol(request.raw().headers, true);
 
             if (request.raw().body.length != 0) throw new RequestException(400, "Lease body must be empty");
 
@@ -59,7 +59,7 @@ public final class Registry {
 
             if (!renew(request.pathParam("id"), now)) throw new RequestException(404, "Unknown lease");
 
-            return reply(request.raw().headers, now);
+            return reply(request.raw().headers, now, filter);
         });
         app.routes().delete("/v1/instances/{id}", request -> {
             protocol(request.raw().headers, false);
@@ -68,9 +68,9 @@ public final class Registry {
             return Responses.empty(204);
         });
         app.routes().get("/v1/catalog", request -> {
-            protocol(request.raw().headers, false);
+            Catalog.Filter filter = protocol(request.raw().headers, false);
 
-            return reply(request.raw().headers, System.nanoTime());
+            return reply(request.raw().headers, System.nanoTime(), filter);
         });
     }
 
@@ -142,26 +142,48 @@ public final class Registry {
     }
 
     synchronized Response reply(Headers known, long now) {
+        return reply(known, now, protocol(known, false));
+    }
+
+    private synchronized Response reply(Headers known, long now, Catalog.Filter filter) {
         snapshot(now);
         Headers headers = new Headers()
                 .add(Catalog.PROTOCOL_HEADER, "2")
                 .add(Catalog.EPOCH_HEADER, epoch)
-                .add(Catalog.REVISION_HEADER, Long.toString(revision));
+                .add(Catalog.REVISION_HEADER, Long.toString(revision))
+                .add(Catalog.VIEW_HEADER, filter.key);
 
         if ("2".equals(known.get(Catalog.PROTOCOL_HEADER))
                 && epoch.equals(known.get(Catalog.EPOCH_HEADER))
-                && Long.toString(revision).equals(known.get(Catalog.REVISION_HEADER)))
+                && Long.toString(revision).equals(known.get(Catalog.REVISION_HEADER))
+                && (filter.key.equals(known.get(Catalog.KNOWN_VIEW_HEADER))
+                        || filter.key.equals("all") && known.get(Catalog.KNOWN_VIEW_HEADER) == null))
             return new Response(204, headers, EMPTY);
 
-        return new Response(200, headers.add("Content-Type", "application/json"), encoded);
+        // No per-consumer cache: filtering/encoding happens only for a changed full response.
+        byte[] body = filter.key.equals("all") ? encoded : Json.encode(filter.apply(cached), Catalog.CODEC, limits);
+
+        return new Response(200, headers.add("Content-Type", "application/json"), body);
     }
 
-    private static void protocol(Headers headers, boolean required) {
+    private static Catalog.Filter protocol(Headers headers, boolean required) {
         String version = headers.get(Catalog.PROTOCOL_HEADER);
 
-        if (version == null && !required || "2".equals(version)) return;
+        if (!(version == null && !required || "2".equals(version)))
+            throw new RequestException(426, "Catalog protocol 2 required");
 
-        throw new RequestException(426, "Catalog protocol 2 required");
+        if (version == null && headers.get(Catalog.VIEW_HEADER) != null)
+            throw new RequestException(426, "Catalog protocol 2 required");
+
+        int views = 0;
+        for (int i = 0; i < headers.size(); i++)
+            if (headers.name(i).equalsIgnoreCase(Catalog.VIEW_HEADER) && ++views > 1)
+                throw new RequestException(400, "Duplicate catalog view");
+        try {
+            return Catalog.Filter.parse(headers.get(Catalog.VIEW_HEADER));
+        } catch (IllegalArgumentException invalid) {
+            throw new RequestException(400, "Invalid catalog view");
+        }
     }
 
     private void advance(long now) {

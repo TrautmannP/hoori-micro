@@ -10,14 +10,17 @@ public final class Action<I, O> {
     public final String name;
     public final JsonCodec<I> input;
     public final JsonCodec<O> output;
+    final String service, operation;
 
     public Action(String name, JsonCodec<I> input, JsonCodec<O> output) {
-        ServiceName.qualified(name);
+        String[] parts = ServiceName.qualified(name);
 
         if (input == null || output == null) throw new NullPointerException();
 
         this.name = name;
         this.input = input;
         this.output = output;
+        service = parts[0];
+        operation = parts[1];
     }
 }

@@ -24,6 +24,12 @@ public final class BenchmarkMain {
     private static final String VARIANT = System.getenv("BENCH_VARIANT");
 
     public static void main(String[] args) throws Exception {
+        if (args.length == 1 && args[0].equals("lookup")) {
+            lookup();
+
+            return;
+        }
+
         boolean fixed = VARIANT.equals("A") || VARIANT.equals("B");
 
         if (fixed && (ROLE.equals("recipes") || ROLE.equals("shopping"))) {
@@ -61,9 +67,39 @@ public final class BenchmarkMain {
                                         JsonTree.CODEC,
                                         JSON));
 
-            app.routes().get("/bench/runtime", request -> runtime());
+            app.routes().get("/bench/runtime", request -> runtime(app.broker()));
             app.run();
         }
+    }
+
+    /** Native CPU control, separate from transport timing. No speculative index implementation. */
+    private static void lookup() {
+        Catalog.Entry[] actions = {new Catalog.Entry("echo", null, null, null)};
+        Catalog.Instance[] all = new Catalog.Instance[35];
+        all[0] = new Catalog.Instance("recipes", "recipes", 1, "http://recipes:8080", actions);
+        for (int i = 1; i < all.length; i++)
+            all[i] = new Catalog.Instance("extra-" + i, "extra-" + i, 1, "http://extra:8080", actions);
+        Catalog[] catalogs = {
+            new Catalog("lookup", 1, true, new Catalog.Instance[] {all[0]}), new Catalog("lookup", 1, true, all)
+        };
+        int checksum = 0;
+        for (int round = 0; round < 6; round++) {
+            for (Catalog catalog : catalogs) {
+                long start = System.nanoTime();
+                for (int i = 0; i < 100_000; i++) {
+                    Catalog.Instance selected = catalog.select("recipes", 1, (i & 1) == 0 ? "echo" : "absent", i);
+
+                    if (selected != null) checksum++;
+                }
+                long elapsed = System.nanoTime() - start;
+
+                if (round != 0)
+                    System.out.println(
+                            "lookup instances=" + catalog.instances.length + " calls=100000 elapsed_ns=" + elapsed);
+            }
+        }
+
+        if (checksum != 600_000) throw new AssertionError("Wrong selection");
     }
 
     private static Object echo(Object input) throws InterruptedException {
@@ -112,7 +148,7 @@ public final class BenchmarkMain {
             router.get(
                     "/metrics", request -> Response.text(200, owner[0].metrics().prometheus()));
             router.get("/health/ready", request -> Response.text(200, "UP"));
-            router.get("/bench/runtime", request -> runtime());
+            router.get("/bench/runtime", request -> runtime(broker));
 
             if (ROLE.equals("recipes")) {
                 router.post(
@@ -179,7 +215,7 @@ public final class BenchmarkMain {
         }
     }
 
-    private static Response runtime() {
+    private static Response runtime(ServiceBroker broker) {
         RuntimeMetrics.Snapshot s = RuntimeMetrics.snapshot();
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("heap_used_bytes", s.heapUsedBytes);
@@ -196,6 +232,11 @@ public final class BenchmarkMain {
         values.put("service_handles_open", s.serviceHandlesOpen);
         values.put("service_bytes_read", s.serviceBytesRead);
         values.put("service_bytes_written", s.serviceBytesWritten);
+        Catalog catalog = broker == null ? Catalog.EMPTY : broker.catalog();
+        int actions = 0;
+        for (Catalog.Instance instance : catalog.instances) actions += instance.actions.length;
+        values.put("catalog_instances", catalog.instances.length);
+        values.put("catalog_actions", actions);
 
         return Responses.json(200, values, JsonTree.CODEC, JSON);
     }

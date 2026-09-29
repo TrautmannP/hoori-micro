@@ -53,7 +53,7 @@ Details und Grenzen: [Architektur](docs/architecture.md),
 | Service-Lifecycle | Expliziter Bootstrap, Live-/Ready-Zustände, Signal-Polling, geordneter Shutdown mit Deregistrierung |
 | Actions | `Service`-Definition, typisierte `Action`-Verträge, generische Aufrufe (`JsonTree`), ein fester Invoke-Endpunkt |
 | Registry | Zentrale In-Memory-Registry mit TTL, Heartbeats, Wiederanmeldung nach Neustart, `complete`-Markierung |
-| Broker | Lokaler Katalog, Auswahl pro Action und Hauptversion (Round Robin), direkte Aufrufe, begrenztes Katalogalter |
+| Broker | Abhängigkeitsspezifischer Katalog ohne Gateway-Metadaten, Auswahl pro Action/Hauptversion, direkte Aufrufe, begrenztes Katalogalter |
 | Gateway | Vom Anbieter deklarierte, per Policy freigegebene Routen; Konflikte werden zurückgehalten |
 | Fehler und Kontext | Sichere Fehler, Request-ID über alle Hops, keine Retries/Redirects/Credential-Weitergabe |
 | Betrieb | Hoori-HTTP-Metriken, begrenzte Bodies/Verbindungen/Timeouts, Docker Compose, nicht privilegierte Container |

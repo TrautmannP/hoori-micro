@@ -58,7 +58,7 @@ def ready_meal() -> None:
     eventually("/meals/1", {"id": 1, "title": "Kartoffelsuppe"}, "Action call did not recover")
 
 
-def registered() -> dict:
+def registered(expected=None) -> dict:
     """Services with their action names, once the registry reports a complete catalog."""
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
@@ -66,7 +66,9 @@ def registered() -> dict:
             catalog = json.loads(compose("exec", "-T", "registry", "curl", "-fsS", "--max-time", "2",
                                          "http://127.0.0.1:8080/v1/catalog", capture=True))
             if catalog["complete"]:
-                return {i["service"]: sorted(a["name"] for a in i["actions"]) for i in catalog["instances"]}
+                services = {i["service"]: sorted(a["name"] for a in i["actions"]) for i in catalog["instances"]}
+                if expected is None or services == expected:
+                    return services
         except (subprocess.SubprocessError, ValueError, KeyError):
             pass
         time.sleep(0.5)
@@ -105,6 +107,27 @@ def discovery_protocol() -> None:
         require(fields["x-hoori-catalog-epoch"] == catalog["epoch"]
                 and fields["x-hoori-catalog-revision"] == str(catalog["revision"]), "lease changed the revision")
     require(registry_request("GET", "/v1/catalog", known)[0] == 204, "conditional catalog")
+    filtered = dict(known, **{"X-Hoori-Catalog-View": "services=recipes:1"})
+    status, fields, body = registry_request("GET", "/v1/catalog", filtered)
+    consumer = json.loads(body)
+    require(status == 200 and fields["x-hoori-catalog-view"] == "services=recipes:1",
+            "a different view must receive its full snapshot")
+    require(len(consumer["instances"]) == 1 and consumer["instances"][0]["service"] == "recipes"
+            and all(set(a) == {"name"} for a in consumer["instances"][0]["actions"]),
+            "consumer view includes unrelated services or publication metadata")
+    filtered["X-Hoori-Catalog-Known-View"] = "services=recipes:1"
+    require(registry_request("GET", "/v1/catalog", filtered)[0] == 204, "filtered confirmation")
+    for view in ("none", "public"):
+        filtered["X-Hoori-Catalog-View"] = view
+        status, _, body = registry_request("GET", "/v1/catalog", filtered)
+        require(status == 200, "changed filter received the previous view's confirmation")
+        instances = json.loads(body)["instances"]
+        require(not instances if view == "none" else
+                bool(instances) and all("path" in a and "permission" in a for i in instances for a in i["actions"]),
+                "provider/public view contains foreign/private actions")
+    require(registry_request("POST", path + "/lease",
+                             dict(known, **{"X-Hoori-Catalog-View": "services=recipes:0"}))[0] == 400,
+            "invalid filter must fail before lease renewal")
     require(registry_request("PUT", path, {"X-Hoori-Catalog-Protocol": "1"}, small)[0] == 426,
             "unsupported protocol must fail before changing state")
     # Each replacement fits the HTTP document limit; their aggregate cannot fit the catalog.
@@ -123,13 +146,14 @@ def discovery_protocol() -> None:
             "rejected metadata was committed")
     require(registry_request("DELETE", path, known)[0] == 204, "deregistration")
     require(registry_request("POST", path + "/lease", known)[0] == 404, "deleted lease must require registration")
-    print("PASS: native small leases, conditional catalog, protocol transition and aggregate byte limit")
+    print("PASS: native leases, view-bound filtering, protocol transition and aggregate byte limit")
 
 
 def main() -> int:
     if not (ROOT / ".docker-context/runtime/DISTRIBUTION.json").exists():
         print("Run scripts/build.sh with a verified Hoori distribution first", file=sys.stderr)
         return 2
+    old_replica = None
     try:
         ENV["HOORI_DEMO_RECOMMEND"] = "0"
         compose("up", "--build", "--detach", "--wait", "--wait-timeout", "180")
@@ -155,17 +179,52 @@ def main() -> int:
         discovery_protocol()
 
         stable = {name: container(name) for name in ("gateway", "shopping")}
+        old_replica = compose("run", "--detach", "--no-deps", "--name", PROJECT + "-recipes-old",
+                              "-e", "HOORI_DEMO_RECOMMEND=0", "recipes", capture=True).splitlines()[-1]
         ENV["HOORI_DEMO_RECOMMEND"] = "1"
         compose("up", "--detach", "--force-recreate", "--wait", "--wait-timeout", "180", "recipes")
         eventually("/recipes/1/recommendation", {"id": 2, "title": "Apfelstrudel"}, "new action not published")
+        deadline = time.monotonic() + 60
+        while True:
+            _, _, body = registry_request("GET", "/v1/catalog")
+            providers = [i for i in json.loads(body)["instances"] if i["service"] == "recipes"]
+            if len(providers) == 2:
+                break
+            require(time.monotonic() < deadline, "old/new replicas did not register simultaneously")
+            time.sleep(.5)
+        require(sorted(len(i["actions"]) for i in providers) == [3, 4], "rolling action fixture")
+        for provider in providers:
+            # HOSTNAME advertises the individual container, never the shared recipes DNS alias.
+            status = compose("exec", "-T", "shopping", "curl", "-sS", "--max-time", "10", "-o", "/dev/null",
+                             "-w", "%{http_code}", "-X", "POST", "-H", "X-Hoori-Action: recipes.recommend",
+                             "-H", "X-Hoori-Version: 1", "-H", "Content-Type: application/json", "--data", '{"id":1}',
+                             provider["url"] + "/_hoori/invoke", capture=True)
+            require(status == ("200" if len(provider["actions"]) == 4 else "421"),
+                    "advertise URL did not reach the selected instance")
+        for _ in range(8):
+            status, _, body = request("/recipes/1/recommendation")
+            require(status == 200 and json.loads(body) == {"id": 2, "title": "Apfelstrudel"},
+                    "new action was routed to an old provider")
+        subprocess.run(["docker", "stop", "--timeout", "15", old_replica], check=True, timeout=30)
+        subprocess.run(["docker", "rm", old_replica], check=True, timeout=30)
+        old_replica = None
+        # Wait for the consumer to drop the stopped replica, rather than accepting one lucky RR pick.
+        deadline, consecutive = time.monotonic() + 60, 0
+        while consecutive < 4:
+            status, _, body = request("/meals/1")
+            consecutive = consecutive + 1 if status == 200 and json.loads(body) == {
+                "id": 1, "title": "Kartoffelsuppe"} else 0
+            require(time.monotonic() < deadline, "consumer retained the stopped old replica")
+            time.sleep(.1)
         ready_meal()
         require({name: container(name) for name in stable} == stable, "gateway/shopping were redeployed")
-        print("PASS: updated recipes adds an action; gateway and shopping unchanged")
+        print("PASS: old/new replicas select by action and exact advertise address; gateway/shopping unchanged")
 
         compose("stop", "registry")
         require(request("/meals/1")[0] == 200, "calls must not depend on a reachable registry")
         compose("up", "--detach", "--wait", "--wait-timeout", "180", "registry")
-        require(registered()["recipes"] == ["context", "get", "recommend", "slow"], "re-registration")
+        registered({"recipes": ["context", "get", "recommend", "slow"],
+                    "shopping": ["context", "meal", "slow"]})
         ready_meal()
         print("PASS: registry outage and restart with re-registration")
 
@@ -209,6 +268,8 @@ def main() -> int:
         return 1
     finally:
         # Only this uniquely named test project; never the user's normal demo/production stack.
+        if old_replica:
+            subprocess.run(["docker", "rm", "--force", old_replica], check=False, timeout=30)
         try:
             compose("down", "--remove-orphans")
         except (OSError, subprocess.SubprocessError) as error:

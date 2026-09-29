@@ -81,6 +81,31 @@ der Gesamtkatalog einschließlich Reserve für Revisionsziffern in `HOORI_BODY_B
 passen; sonst 413 ohne Metadaten-/Lease-Änderung. 256 belegte Einträge liefern 429.
 Ein bei dieser Gelegenheit fälliger TTL-Purge bleibt wirksam.
 
+**Feste Consumer-Sichten:** `X-Hoori-Catalog-View` wird einmal aus `dependsOn()`
+gebildet, z. B. `services=recipes:1`. Die Registry überträgt nur passende Instanzen
+und deren Action-Namen, keine HTTP-Publikationsfelder. Anbieter ohne Abhängigkeiten
+fordern `none` an. Das Gateway wählt ausdrücklich `public`: nur Actions mit Route
+und Permission. Ein Gateway mit eigenen Abhängigkeiten nutzt
+`public;services=recipes:1` und erhält zusätzlich deren interne Actions.
+Ohne Header bleibt die Legacy-Sicht `all` erhalten. Filter sind keine Autorisierung.
+
+Die Antwort bestätigt die Sicht im selben Header; bedingte Anfragen tragen die
+bisherige Sicht in `X-Hoori-Catalog-Known-View`. Erst Epoche, Revision **und Sicht**
+erlauben 204. Neue Broker verlangen den Sicht-Header, daher weiterhin Registry
+zuerst aktualisieren. Die globale Revision gilt auch für gefilterte Antworten;
+eine fremde Metadatenänderung kann einen kleinen vollen Abruf auslösen. Die Registry
+legt keine Caches pro Consumer an, sondern filtert vor Encoding und Übertragung.
+
+Grenzen bleiben 256 Instanzen, je 128 Actions und der Gesamt-Byte-Bound; ein Filter
+enthält höchstens 32 Abhängigkeiten und 2300 Header-Zeichen. Beim Snapshotwechsel
+können alter und neuer Katalog plus ein begrenzter Antwortbody kurz gleichzeitig
+leben. Broker halten keine Raw-Bodies; abgelaufene Zeilen werden beim nächsten
+Heartbeat/Zugriff durch kleine Versionstoken ersetzt, danach ist ein voller Abruf
+nötig. Das Gateway hält nur eine Identitätsmarke und seine begrenzten Routen bis zum
+nächsten Zugriff; deren Aktualisierung außerhalb des Request-Pfads folgt in #7.
+Ziel-URIs und typisierte Action-Namen werden einmal vorbereitet. Die Auswahl bleibt
+ein begrenzter linearer Scan; ein Action-Index braucht einen belegten CPU-Nutzen.
+
 ## 3. Wire-Protokoll, Gateway und Verträge
 
 Interner Aufruf: `POST /_hoori/invoke`, Header `X-Hoori-Action: recipes.get` und
