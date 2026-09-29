@@ -29,7 +29,7 @@ Bootstrap behandeln, nicht als produktionsreifes Framework.
 - Release-Baseline mit nacktem REST-Service vergleichen: Warmup, Latenzen, Durchsatz,
   RSS/Heap, Idle-/Last-/Recovery-Verhalten. Keine ungemessenen Optimierungen behaupten.
 
-Die mitgelieferte CI prüft nur portable Teile. Eine geschützte Integration-Pipeline
+Im aktuellen Git-Baum liegt keine CI-Konfiguration. Eine Integration-Pipeline
 benötigt autorisierten Zugriff auf die private, gepinnte Hoori-Quelle oder auf eine
 vertrauenswürdige Runtime-Distribution. Keine Tokens in Docker-Layers, keine Secrets
 an nicht vertrauenswürdige Pull-Request-Jobs durchreichen.

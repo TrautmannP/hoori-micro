@@ -1,6 +1,6 @@
 # Validierung und offene Abnahme
 
-Stand: **28. September 2026**. Baseline siehe `hoori.lock.json`.
+Stand: **29. September 2026**. Baseline siehe `hoori.lock.json`.
 
 ## Tatsächlich ausgeführt
 
@@ -10,9 +10,9 @@ Docker 29.8.1, Compose v5.5.1, Basis `debian:trixie-slim` (Tag, kein Digest).
 
 | Prüfung | Ergebnis | Aussagegrenze |
 |---|---|---|
-| Spotless-Check (auch in `mvn verify`) | **23 Java-Dateien geprüft** | Palantir 2.100.0 plus JDK-Syntaxschritt in Spotless 3.10.3; nur Host-JDK. Fehlende Leerzeilen abgewiesen, `apply` korrigiert, erneuter Check erfolgreich |
+| Spotless-Check (auch in `mvn verify`) | **24 Java-Dateien geprüft** | Palantir 2.100.0 plus JDK-Syntaxschritt in Spotless 3.10.3; nur Host-JDK. Fehlende Leerzeilen abgewiesen, `apply` korrigiert, erneuter Check erfolgreich |
 | `scripts/test-core.sh` (HotSpot) | **96 Assertions und 5 Formatter-Fixtures bestanden** | Namen, Origins, Konfiguration; Formatter mit Kommentaren/Literalen, `else if`, Guards, Switch, Idempotenz und ungültigem Input; kein Netzwerk |
-| Python `unittest` für `runtime_check.py` | **12 Tests bestanden** | Synthetische Distributionen |
+| Python `unittest` | **14 Tests bestanden** | 12 Distributionsprüfungen; Benchmark-Zählung, begrenzte offene Last und keine Generator-Retries. Lokaler Python-Peer, keine native Transport-Abnahme |
 | `scripts/build.sh` inkl. `mvn clean verify` | **9 JUnit-Tests bestanden** | Broker-Auswahl pro Action/Version, generische Aufrufe, keine Retries, Fehler ohne Peer-Body, Katalogalter, Registry-TTL/Warmup, Gateway-Konflikte, Registrierungsvalidierung. Läuft auf HotSpot mit Transport-Seam |
 | `scripts/test-hoori-core.sh`, mixed und interpreter | **96 Assertions bestanden** | Echte Guest-Ausführung der portablen Checks |
 | `scripts/smoke.py`, mixed und interpreter | **5 Phasen bestanden** | Siehe unten |
@@ -34,9 +34,16 @@ Core-Checks liefen deshalb nie auf Hoori; `hoori.lock.json` fehlte im Repository
 
 - Mehrere Replikate eines Service in Docker (Auswahl pro Action nur per JUnit belegt);
 - Rolling Update mit gleichzeitig alten und neuen Instanzen unter Last;
-- verweigerte DNS-/Connect-Capabilities, HTTPS, Überlast, erzwungene IP-Wechsel;
+- verweigerte DNS-/Connect-Capabilities, HTTPS, erzwungene IP-Wechsel und die
+  kombinierte Admission-/Budget-Abnahme aus #10;
 - Guest-Ausführung der JUnit-Vertragstests (HotSpot; Guest-Abdeckung nur über Smoke);
-- Benchmarks.
+
+A–D-Lastkontrollen liefen in Mixed und Interpreter mit je drei frischen Prozessen
+pro Variante; eine größere C/D-Katalogkontrolle lief separat. Zahlen, Runtime- und
+Artefaktidentität sowie Akzeptanzverletzungen stehen in [benchmarks.md](benchmarks.md).
+Die normale Recovery folgt jeweils einer einzelnen Lastspitze; wiederholte
+Rolling-/Recovery-Zyklen aus #10 sind damit nicht abgenommen. Die alte SDK-Baseline
+kann Pending-Acquires noch nicht messen; das ist in den Ergebnissen `null`.
 
 ## Reproduzieren
 
@@ -64,9 +71,8 @@ Abnahmepunkte stehen unter F1 in `roadmap.md`.
 
 Bei späterer Abnahme mindestens Runtime-Receipt, Java-/Maven-Version,
 Container-Basis/Digest, Engine-Modus, Testausgaben und relevante Fehler festhalten.
-Nicht ausgeführte Schritte ausdrücklich offen lassen. Die bestehende CI heißt
-bewusst `Portable bootstrap checks` und meldet keine erfolgreiche native Integration.
+Nicht ausgeführte Schritte ausdrücklich offen lassen. Im aktuellen Git-Baum liegt
+keine CI-Konfiguration; die hier genannten Prüfungen wurden lokal ausgeführt.
 
-Es gibt in diesem Bootstrap **keine gemessenen Performancegewinne**. Pool-Wiederverwendung,
-begrenzte Konfiguration und eine Registry außerhalb des Request-Pfads sind zunächst
-Architekturentscheidungen; die Messplanung steht in `architecture.md`.
+Es gibt eine gemessene Ausgangsbasis, weiterhin **keine gemessenen Gewinne einer
+Framework-Optimierung**. Kandidaten werden mit denselben Einstellungen verglichen.
