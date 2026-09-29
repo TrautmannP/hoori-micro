@@ -216,6 +216,9 @@ spätere Migration. Die bestehende Hoori-VM-Roadmap wird nicht wieder geöffnet.
 Als erster Schnitt ist ein **lesender, rückschaltbarer Dahemm-Use-Case** vorgesehen,
 nicht die sofortige Zerlegung des gesamten Backends.
 
+Reproduzierbare A–D-Lastkontrollen und ihre Messgrenzen stehen unter
+[Vergleichsbenchmarks](docs/benchmarks.md).
+
 Die Beispieldienste haben keine Authentifizierung und speichern keine Daten.
 Sie sind ausschließlich für lokale/private Entwicklungsnetze gedacht. Ein internes
 Docker-Netz ersetzt weder Service-Authentifizierung noch Mandantenautorisierung.

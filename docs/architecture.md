@@ -154,17 +154,13 @@ identität, Mandantenautorisierung beim Datenbesitzer und Secret-Management.
 Demo-Actions wie `/demo/context` und `/demo/slow` dürfen nicht produktiv
 veröffentlicht werden.
 
-## 7. Performance-Ziel, noch kein Benchmark-Ergebnis
+## 7. Messbasis und Performance-Ziel
 
-Wenig zusätzliche Schichten, ein begrenzter Pool und eine Registry außerhalb des
-Request-Pfads sind Designentscheidungen. Daraus wird **kein gemessener Performancegewinn**
-abgeleitet. Vor einer Behauptung müssen Startzeit, Warmup, RSS/Heap, Requests/s,
-p50/p95/p99, Fehlerquote und Ressourcen nach längeren Phasen gemessen werden.
-
-Vergleich: nackter `hoori-rest`-Service gegen denselben Handler mit `hoori-micro`,
-auf gleicher VM-Revision, mit identischen Limits, Release-Build und separatem
-Lastgenerator. Danach einen Action-Hop und das Gateway dazunehmen. Kalte und warme Messungen sowie
-Einzelservice- und Gesamtsystem-RSS getrennt berichten. Eine Aufteilung in Container
-kann trotz leichter Einzelprozesse den Gesamtverbrauch erhöhen.
+Die A–D-Ausgangsmessung gegen den gepinnten Release-Stand steht mit Rohdaten und
+Messgrenzen unter [benchmarks.md](benchmarks.md). Warmup, Engines, feste CPU-/RAM-
+Budgets, erfolgreiche Arbeit und Abweisungen bleiben getrennt. Die Ausgangsbasis
+ist keine Performancefreigabe: insbesondere das Gateway verfehlt die gesetzte
+p99-Grenze. Jede Optimierung benötigt denselben Vergleich und einen Nutzen oberhalb
+der beobachteten Streuung. SDK-Upgrades werden als eigene Variable gemessen.
 
 Quellgrundlagen: [Baseline und Quellen](source-baseline.md).
