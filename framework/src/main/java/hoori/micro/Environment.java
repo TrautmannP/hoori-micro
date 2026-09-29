@@ -5,5 +5,7 @@ package hoori.micro;
 public interface Environment {
     String get(String name);
 
-    static Environment system() { return System::getenv; }
+    static Environment system() {
+        return System::getenv;
+    }
 }

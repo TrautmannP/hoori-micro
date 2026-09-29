@@ -14,6 +14,11 @@ public final class ServiceCallException extends IOException {
         this.upstreamStatus = upstreamStatus;
     }
 
-    public String service() { return service; }
-    public int upstreamStatus() { return upstreamStatus; }
+    public String service() {
+        return service;
+    }
+
+    public int upstreamStatus() {
+        return upstreamStatus;
+    }
 }

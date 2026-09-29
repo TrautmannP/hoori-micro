@@ -3,9 +3,9 @@
 ## 1. Ein dünnes Framework oberhalb der Runtime
 
 ```text
-Dahemm-Controller / explizite Anwendungsdienste
+Dahemm-Actions / explizite Anwendungsdienste
                     ↓
-hoori-micro: Service-Lifecycle, Namenskonvention, Client-Helfer
+hoori-micro: Service-Definition, Broker, Registry, Gateway, Lifecycle
                     ↓
 hoori-rest-api: Router, Middleware, explizite JSON-Codecs
                     ↓
@@ -14,76 +14,80 @@ hoori-http-api: HTTP, Pooling, Bounds, Kontext, Metriken, Drain
 Hoori Guest Base / resumierbare Tasks / Host-Netzwerk
 ```
 
-Abhängigkeiten zeigen nur nach unten. Dieses Repository verändert weder Hoori-
-Quellcode noch seine Roadmap. Server und Client sind die echten Hoori-Implementierungen;
-Test-Seams ersetzen keine produktive Transportkomponente.
+Abhängigkeiten zeigen nur nach unten. Server und Client sind die echten Hoori-
+Implementierungen. Keine Annotationssuche, Laufzeit-Proxies oder automatische DI:
+Actions sind Lambdas an einer expliziten `Service`-Definition.
 
-Explizite Constructor Injection genügt zunächst. Ein Controller ist ein gewöhnliches
-Objekt, dessen Methoden am vorhandenen Router registriert werden. Keine
-Annotationssuche, keine Laufzeit-Proxies und keine automatische Dependency Injection.
-Das hält Startpfad und Abhängigkeiten sichtbar und vermeidet zusätzliche Runtime-
-Kompatibilitätsanforderungen.
+## 2. Actions, Registry und Broker
 
-## 2. Discovery: Docker-DNS statt selbst gebauter Registry
+Aufrufer adressieren eine **fachliche Action** (`recipes.get`) mit der per
+`dependsOn("recipes", 1)` deklarierten Hauptversion, nie eine Route oder Adresse.
 
-V1 legt diese Konvention fest:
+- **Service-Definition:** Aus `Service.named(..).action(..)` entstehen der lokale
+  Dispatcher hinter `POST /_hoori/invoke` und der veröffentlichte Katalogeintrag.
+  Eine neue Action braucht keine neue Route; der Router bleibt nach `freeze()` fix.
+- **Registry** (`hoori.micro.Registry`): In-Memory-Map Instanz-ID → {Service,
+  Hauptversion, Advertise-URL, Actions}, begrenzt auf 256 Instanzen, jeder Eintrag mit
+  TTL. `PUT /v1/instances/{id}` registriert bzw. verlängert und antwortet mit dem
+  Katalog; `DELETE` deregistriert; `GET /v1/catalog` liest.
+- **Heartbeat:** Nach Live und solange Ready sendet jede Instanz mit Actions ihre
+  vollständige Registrierung (Default alle 2 s, TTL 6 s). Deshalb registriert sie sich
+  nach einem Registry-Neustart automatisch neu. Reine Aufrufer holen nur den Katalog.
+- **Broker** (pro Service, Bibliothek): hält den zuletzt gültigen Katalog lokal,
+  wählt **pro Action und Hauptversion** eine anbietende Instanz (Round Robin) und
+  ruft sie direkt über den Hoori-Pool auf. Die Registry liegt nie im Request-Pfad.
 
-- Ein logischer Name entspricht einem Compose-Service oder expliziten Network Alias.
-- Alle Dienste verwenden intern Port 8080, sofern kein Origin-Override gesetzt wird.
-- Ein Aufrufer deklariert seine Abhängigkeiten einmal beim Start.
+Während eines Rolling Updates landet eine neue Action daher nur bei Instanzen, die
+sie anbieten. Eine Instanz, die eine Action nicht (mehr) anbietet oder eine andere
+Hauptversion hat, antwortet mit 421; der Broker wiederholt nicht automatisch.
 
-Beispiel: `Microservice.create("shopping", "recipes")` erlaubt im ServiceClient den
-Namen `recipes`; daraus wird `http://recipes:8080`. Erst Hooris URI-basierter
-HTTP-Client löst den Host auf. Das Framework hält keine IP-Adressen fest und
-betreibt keine Heartbeats, Container-Auflistung oder Selbstregistrierung.
+**Definiertes Ausfallverhalten:**
 
-Das beantwortet „wo ist recipes?“, nicht „welche Services existieren überhaupt?“,
-„welche API bieten sie?“ oder „wem darf ich vertrauen?“. Eine Service-Katalog-UI,
-automatische API-Vertragsfindung und instanzbasierte Lastverteilung sind nicht
-Teil der Discovery.
+| Situation | Verhalten |
+|---|---|
+| Registry nicht erreichbar | Broker nutzen ihren letzten Katalog weiter, höchstens `HOORI_CATALOG_MAX_AGE_MS` (30 s) nach der letzten erfolgreichen Aktualisierung; danach scheitern Aufrufe mit „no instance“ |
+| Registry neu gestartet | Katalog ist eine TTL lang `complete=false`; Broker mit gültigem Katalog behalten ihren bis dahin |
+| Instanz stoppt geordnet | Deregistrierung beim Stop; andere Broker sehen das beim nächsten Heartbeat |
+| Instanz stürzt ab | Eintrag läuft nach der TTL aus; bis dahin liefert der Aufruf einen Transportfehler (502) |
 
-**Grenzen:** Compose-Bridge-Netze sind kein automatisches Multi-Host-Netz. Zwei
-Compose-Projekte sehen sich nur über ein bewusst gemeinsam angeschlossenes Netz.
-Für mehrere Hosts wird später ein Orchestrator mit stabilem Service-Endpunkt oder
-ein qualifizierter Load Balancer benötigt. `ServiceDirectory` kann dessen DNS-Namen
-über das bestehende Origin-Override verwenden; der API-Vertrag muss nicht wechseln.
+Heartbeats garantieren keine Erreichbarkeit zwischen zwei Meldungen. Die Registry
+ist ein einzelner Prozess ohne Persistenz oder Hochverfügbarkeit.
 
-Docker dokumentiert stabile Service-Namen bei austauschbaren Container-IPs. Ein
-existierender TCP-Kanal kann trotzdem abbrechen. Hoori verwendet nach dem Verwerfen
-einer defekten Verbindung für neue Verbindungen wieder seine DNS-Auflösung. V1
-verspricht weder sofortige Umschaltung noch einen erfolgreichen ersten Aufruf nach
-einem Neustart. Der Smoke-Test prüft Erholung nach Container-Neuerstellung, aber
-keinen erzwungenen IP-Wechsel oder garantierte TTL-Auswertung.
+## 3. Wire-Protokoll, Gateway und Verträge
 
-## 3. Kommunikation und Verträge
+Interner Aufruf: `POST /_hoori/invoke`, Header `X-Hoori-Action: recipes.get` und
+`X-Hoori-Version: 1`, Body = JSON-Parameter der Action. Name und Version stehen in
+Headern statt in einem JSON-Umschlag, damit der Eingabe-Codec den Body direkt und
+ohne zweites Parsen liest. Antwort: 200 mit JSON-Ergebnis oder ein Fehlerstatus.
+Fachliche Fehler wirft eine Action als `RequestException(status, meldung)`.
 
-Synchrones Request/Response verwendet HTTP/1.1 und vollständige, begrenzte JSON-
-Bodies. Typisierte Helfer verwenden `JsonCodec<T>`; es gibt keine Reflection-
-Serialisierung und keinen beliebigen Objektgraphen über das Netzwerk.
+Typisierte Verträge (`Action<I, O>`) enthalten nur Name und Codecs. Generische Aufrufe
+verwenden `Map` und `JsonTree` (Map, List, String, Long, Double, Boolean, null).
+Ergebnisse müssen 2xx mit `application/json` (optional `charset=utf-8`) sein; sonst
+`ServiceCallException` mit Status, aber ohne Upstream-Body.
 
-Öffentliche/zwischen Services verwendete Ressourcenpfade beginnen in der Demo mit
-`/v1`. Das Framework führt keine versteckte zweite RPC-Sprache ein. Die Demo teilt
-nur einen kleinen DTO/Codec; daraus soll kein gemeinsames Modul mit sämtlichen
-Dahemm-Domain- oder Datenbankklassen entstehen.
+**Gateway** (`hoori.micro.Gateway`): Eine Middleware, die für sonst unbekannte Pfade
+die Routen aus dem Katalog baut. Veröffentlicht wird nur, was der Anbieter mit
+`http(method, template)` **und** `requirePermission("<service>:<scope>")` markiert
+und was die Gateway-Policy gewährt. Die Permission ist auf den eigenen Service-Namen
+begrenzt. Konflikte (gleiche Methode, überlappende Templates gleicher Spezifität,
+verschiedene Actions) werden im Service beim Start abgewiesen und im Gateway für alle
+Beteiligten zurückgehalten. Pfadparameter werden als JSON-Strings übergeben und mit
+einem optionalen JSON-Objekt-Body zusammengeführt; Query-Parameter nicht.
+Client-Fehler des Anbieters behalten ihren Status, nie ihren Body.
 
-`ServiceClient.getJson` und `postJson` verlangen 2xx und einen nicht-null JSON-Body.
-Akzeptiert wird `application/json` ohne Parameter oder nur mit `charset=utf-8`.
-`application/problem+json`, andere `+json`-Typen, 204 ohne Body und fachliche
-Nicht-2xx-Antworten benötigen explizite Behandlung über `exchange` beziehungsweise
-`ServiceCallException.upstreamStatus()`. Der Raw-Aufruf liefert HTTP-Status und Body
-unverändert zur bewussten Auswertung; er ist kein automatischer Reverse Proxy.
-
-Eingehende Header werden nie pauschal weitergereicht. Bei `request.raw()` als
-Kontext übernimmt Hoori die validierte Request-ID. Benutzer-/Service-Identitäten,
-Cookies und Mandanteninformationen benötigen später einen gesonderten,
-verifizierbaren Sicherheitsvertrag. Ein Request-ID ist keine Identität.
+Die Demo-Policy (`HOORI_GATEWAY_PERMISSIONS`) gewährt feste Permissions an jeden
+Aufrufer. Sie ist keine Authentifizierung. Eine deklarierte Abhängigkeit ist keine
+Berechtigung. Eingehende Header werden nie weitergereicht; nur Hooris validierte
+Request-ID läuft über alle Hops.
 
 ## 4. Ressourcen und Ausfallverhalten
 
-Ein `Microservice` besitzt genau einen Hoori-HTTP-Client-Pool. Dadurch werden nicht
-pro Request Clients, Idle-Reaper oder Pools angelegt. Die Gesamt- und Origin-Limits
-sowie Body- und Timeout-Limits werden beim Start geprüft. Das Service-Verzeichnis
-hat maximal 32 explizite Einträge und wächst nicht durch eingehende Request-Werte.
+Ein `Microservice` besitzt genau einen Hoori-HTTP-Client-Pool für Actions und
+Heartbeats. Dadurch werden nicht pro Request Clients oder Pools angelegt. Limits
+werden beim Start geprüft. Katalog (256 Instanzen × 128 Actions), Abhängigkeiten (32)
+und Gateway-Routen wachsen nie durch Request-Werte. Der Katalog muss in
+`HOORI_BODY_BYTES` passen; größere Installationen müssen das Limit anheben.
 
 Timeouts sind **pro HTTP-Exchange**. Der bestehende Hoori-Client umfasst Pool-Warten,
 DNS, Connect, TLS, Schreiben und Response-Lesen mit einer monotonen Deadline. Das
@@ -106,16 +110,18 @@ jede denkbare, vom Anwendungscode selbst erzeugte Menge wartender Hintergrundtas
 
 ## 5. Lifecycle und Nebenläufigkeit
 
-1. Konfiguration/Abhängigkeiten validieren, Client erzeugen, Routen registrieren.
+1. Service-Definition und Konfiguration validieren, Client erzeugen, Routen registrieren.
 2. Router einfrieren, Listener binden, Service starten.
-3. Readiness beschreibt lokale Aufnahmefähigkeit; Liveness den lokalen Server.
-4. Bei SIGTERM Readiness ausschalten und Aufnahme neuer Requests stoppen.
+3. Sobald live und ready: registrieren; Heartbeats nur solange ready.
+4. Bei SIGTERM Aufnahme neuer Requests stoppen und parallel deregistrieren.
 5. Bereits gestartete Requests innerhalb der Grace-Period abarbeiten.
-6. Erst danach den eigenen ausgehenden Client schließen und Ressourcen freigeben.
+6. Erst danach den ausgehenden Client schließen; eine noch hängende Deregistrierung
+   bricht damit ab, die TTL übernimmt.
 
 Wichtig: `HttpServer.run()` kehrt zurück, sobald die Aufnahme endet. Es wartet
-nicht selbst auf alle Handler. Deshalb löst der Signal-Watcher nur `stop()` aus;
-der `run()`-Owner führt `shutdown()` aus und schließt erst danach den Pool.
+nicht selbst auf alle Handler. Deshalb lösen Signal-Watcher und Heartbeat-Thread nur
+`stop()` bzw. die Deregistrierung aus; der `run()`-Owner führt `shutdown()` aus und
+schließt erst danach den Pool.
 `close()` ist ein ausdrücklicher Sofortabbruch; während des Betriebs für geordnetes
 Beenden `stop()` verwenden.
 
@@ -133,32 +139,31 @@ der Container-Stop-Timeout bleibt die äußere Grenze.
 
 ## 6. Sicherheitsgrenze der Demo
 
-Nur `shopping` veröffentlicht einen Loopback-Host-Port. `recipes` hängt am internen
-Backend-Netz. Container laufen ohne Root, ohne Linux-Capabilities, mit Read-only-
-Root-Dateisystem und ohne Docker-Socket. Der Launcher erteilt der Recipe-Demo keine
-Connect-/DNS-Capability; Shopping benötigt diese für seine ausgehenden Aufrufe.
+Nur das Gateway veröffentlicht einen Loopback-Host-Port. Registry, Recipes und
+Shopping hängen am internen Backend-Netz. Container laufen ohne Root, ohne Linux-
+Capabilities, mit Read-only-Root-Dateisystem und ohne Docker-Socket. Die Registry
+erhält keine Connect-/DNS-Capability; alle anderen brauchen sie für Heartbeats.
 
-Diese VM-Netzwerk-Capabilities sind grob, keine Zielhost-Allowlist. Das deklarierte
-Service-Verzeichnis beschränkt den Framework-Client, aber ersetzt keine
-Netzwerkpolicy: Anwendungscode könnte direkt den HTTP-SDK verwenden. Ebenso sind
-HTTP im internen Netz und DNS-Namen keine gegenseitige Authentifizierung.
-
-Vor echter Dahemm-Nutzung fehlen ausdrücklich: TLS am externen Rand, verifizierte
-Service-/Benutzeridentität, Mandantenautorisierung in jedem betroffenen Service,
-Secret-Management und die fachliche Behandlung von Datenzugriffen. Der Hoori-Client
-kann bereits verifiziertes ausgehendes HTTPS; dieses Framework fügt keinen
-inbound-TLS-Listener hinzu. Debug-/Demo-Routen dürfen nicht produktiv exponiert werden.
+**Registry und `/_hoori/invoke` sind unauthentifiziert.** Wer das Backend-Netz
+erreicht, kann Actions aufrufen, Instanzen registrieren oder fremde Registrierungen
+überschreiben und damit auch Gateway-Routen umlenken. Die Vertrauensgrenze ist das
+private Netz. Der geplante Ablauf (Firebase, interne Tokens, mTLS) steht in
+[security.md](security.md). Vor echter Dahemm-Nutzung fehlen ausdrücklich: Service-Identität
+(z. B. mTLS) für Registry und Invoke, TLS am externen Rand, verifizierte Benutzer-
+identität, Mandantenautorisierung beim Datenbesitzer und Secret-Management.
+Demo-Actions wie `/demo/context` und `/demo/slow` dürfen nicht produktiv
+veröffentlicht werden.
 
 ## 7. Performance-Ziel, noch kein Benchmark-Ergebnis
 
-Wenig zusätzliche Schichten, ein begrenzter Pool und kein zusätzlicher Registry-
-Prozess sind Designentscheidungen. Daraus wird **kein gemessener Performancegewinn**
+Wenig zusätzliche Schichten, ein begrenzter Pool und eine Registry außerhalb des
+Request-Pfads sind Designentscheidungen. Daraus wird **kein gemessener Performancegewinn**
 abgeleitet. Vor einer Behauptung müssen Startzeit, Warmup, RSS/Heap, Requests/s,
 p50/p95/p99, Fehlerquote und Ressourcen nach längeren Phasen gemessen werden.
 
 Vergleich: nackter `hoori-rest`-Service gegen denselben Handler mit `hoori-micro`,
 auf gleicher VM-Revision, mit identischen Limits, Release-Build und separatem
-Lastgenerator. Danach einen Service-Hop dazunehmen. Kalte und warme Messungen sowie
+Lastgenerator. Danach einen Action-Hop und das Gateway dazunehmen. Kalte und warme Messungen sowie
 Einzelservice- und Gesamtsystem-RSS getrennt berichten. Eine Aufteilung in Container
 kann trotz leichter Einzelprozesse den Gesamtverbrauch erhöhen.
 

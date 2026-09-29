@@ -24,12 +24,15 @@ def stage(runtime: Path) -> None:
     try:
         shutil.copytree(runtime, work / "runtime")
         verify(work / "runtime")
+        framework = jar("framework", "hoori-micro")
+        contracts = jar("examples/demo-contracts", "hoori-micro-demo-contracts")
+        apps = {"registry": [framework], "gateway": [framework]}
         for service in ("recipes", "shopping"):
-            target = work / "apps" / service / "lib"
+            apps[service] = [framework, contracts, jar(f"examples/{service}-service", f"{service}-service")]
+        for app, jars in apps.items():
+            target = work / "apps" / app / "lib"
             target.mkdir(parents=True)
-            for source in (jar("framework", "hoori-micro"),
-                           jar("examples/demo-contracts", "hoori-micro-demo-contracts"),
-                           jar(f"examples/{service}-service", f"{service}-service")):
+            for source in jars:
                 shutil.copy2(source, target / source.name)
         shutil.copytree(ROOT / "docker", work / "docker")
         shutil.copy2(ROOT / "docker/Dockerfile", work / "Dockerfile")

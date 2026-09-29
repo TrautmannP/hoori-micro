@@ -1,63 +1,45 @@
 package dev.hoori.micro.demo;
 
+import hoori.micro.JsonTree;
 import hoori.micro.Microservice;
+import hoori.micro.Service;
 import hoori.micro.ServiceCallException;
-import hoori.http.Response;
-import hoori.http.Headers;
-
-import java.nio.charset.StandardCharsets;
-
 import hoori.rest.RequestException;
-import hoori.rest.Responses;
+import java.util.Map;
 
 /**
- * Demonstrates an explicit service client, not a gateway or a migrated shopping domain.
+ * Calls recipes by action name only; knows no route, host, port or instance. Not a migrated domain.
  */
 public final class ShoppingMain {
     public static void main(String[] args) throws Exception {
-        try (Microservice app = Microservice.create("shopping", "recipes")) {
+        Service shopping = Service.named("shopping")
+                .version(1)
+                .dependsOn("recipes", 1)
+                .action("meal", GetRecipe.CODEC, RecipeCodec.INSTANCE, (ctx, input) -> {
+                    try {
+                        return ctx.call(Recipes.GET, input);
+                    } catch (ServiceCallException failed) {
+                        // The application decides whether an upstream status has the same domain meaning.
+                        if (failed.upstreamStatus() == 404) throw new RequestException(404, "Recipe not found");
 
-            app.routes().get("/demo/meal/{id}", request -> {
-                long id;
-                try {
-                    id = Long.parseLong(request.pathParam("id"));
-                } catch (NumberFormatException invalid) {
-                    throw new RequestException(400, "Invalid recipe ID");
-                }
-
-                if (id < 1) throw new RequestException(400, "Invalid recipe ID");
-
-                try {
-                    Recipe recipe = app.client().getJson(request.raw(), "recipes",
-                        "/v1/recipes/" + id, RecipeCodec.INSTANCE);
-                    return Responses.json(200, recipe, RecipeCodec.INSTANCE, app.jsonLimits());
-                } catch (ServiceCallException failed) {
-                    // The application decides whether an upstream status has the same domain meaning.
-                    if (failed.upstreamStatus() == 404) {
-                        return Response.text(404, "Recipe not found");
+                        throw failed;
                     }
-                    
-                    throw failed;
-                }
+                })
+                .http("GET", "/meals/{id}")
+                .requirePermission("shopping:read")
+                // Generic variant without a typed contract; the result is a JsonTree value.
+                .action(
+                        "context",
+                        JsonTree.CODEC,
+                        JsonTree.CODEC,
+                        (ctx, input) -> ctx.call("recipes.context", Map.of()))
+                .http("GET", "/demo/context")
+                .requirePermission("shopping:demo")
+                .action("slow", GetRecipe.CODEC, RecipeCodec.INSTANCE, (ctx, input) -> ctx.call(Recipes.SLOW, input))
+                .http("GET", "/demo/slow/{id}")
+                .requirePermission("shopping:demo");
 
-            });
-
-            app.routes().get("/demo/context", request -> {
-                Response observed = app
-                    .client()
-                    .exchange(request.raw(), "recipes", "GET", "/demo/context", new Headers(), new byte[0]);
-
-                if (observed.status != 200) {
-                    return Response.text(502, "Context probe failed");
-                }
-
-                return Response.text(200, new String(observed.body, StandardCharsets.UTF_8));
-            });
-
-            app.routes().get("/demo/slow", request -> Responses.json(200,
-                app.client().getJson(request.raw(), "recipes", "/demo/slow", RecipeCodec.INSTANCE),
-                RecipeCodec.INSTANCE, app.jsonLimits()));
-
+        try (Microservice app = Microservice.create(shopping)) {
             app.run();
         }
     }

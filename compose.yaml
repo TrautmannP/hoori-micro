@@ -1,4 +1,5 @@
 # Single-host, unauthenticated development demonstration. Not a production deployment.
+# Only the gateway has a host port; registry and services live on the internal backend net.
 name: hoori-micro-demo
 x-common: &common
   init: true
@@ -21,33 +22,58 @@ x-env: &env
   HOORI_CLIENT_TIMEOUT_MS: ${HOORI_DEMO_CLIENT_TIMEOUT_MS:-30000}
   HOORI_REQUEST_TIMEOUT_MS: ${HOORI_DEMO_REQUEST_TIMEOUT_MS:-60000}
   HOORI_SHUTDOWN_GRACE_MS: 10000
+x-build: &build
+  context: .docker-context
+x-after-registry: &after-registry
+  registry:
+    condition: service_healthy
 services:
+  registry:
+    <<: *common
+    build:
+      <<: *build
+      args: {SERVICE: registry, RUNTIME_BASE: '${HOORI_RUNTIME_BASE:-debian:trixie-slim}'}
+    environment:
+      <<: *env
+      HOORI_MAIN_CLASS: hoori/micro/Registry
+      HOORI_OUTBOUND: none
+    networks: [backend]
   recipes:
     <<: *common
     build:
-      context: .docker-context
-      args:
-        SERVICE: recipes
-        RUNTIME_BASE: ${HOORI_RUNTIME_BASE:-debian:trixie-slim}
+      <<: *build
+      args: {SERVICE: recipes, RUNTIME_BASE: '${HOORI_RUNTIME_BASE:-debian:trixie-slim}'}
     environment:
       <<: *env
       HOORI_MAIN_CLASS: dev/hoori/micro/demo/RecipesMain
-      HOORI_OUTBOUND: none
+      HOORI_OUTBOUND: http
+      # 1 simulates a later recipes release with an additional action.
+      HOORI_DEMO_RECOMMEND: ${HOORI_DEMO_RECOMMEND:-0}
+    depends_on: *after-registry
     networks: [backend]
   shopping:
     <<: *common
     build:
-      context: .docker-context
-      args:
-        SERVICE: shopping
-        RUNTIME_BASE: ${HOORI_RUNTIME_BASE:-debian:trixie-slim}
+      <<: *build
+      args: {SERVICE: shopping, RUNTIME_BASE: '${HOORI_RUNTIME_BASE:-debian:trixie-slim}'}
     environment:
       <<: *env
       HOORI_MAIN_CLASS: dev/hoori/micro/demo/ShoppingMain
       HOORI_OUTBOUND: http
-    depends_on:
-      recipes:
-        condition: service_healthy
+    depends_on: *after-registry
+    networks: [backend]
+  gateway:
+    <<: *common
+    build:
+      <<: *build
+      args: {SERVICE: gateway, RUNTIME_BASE: '${HOORI_RUNTIME_BASE:-debian:trixie-slim}'}
+    environment:
+      <<: *env
+      HOORI_MAIN_CLASS: hoori/micro/Gateway
+      HOORI_OUTBOUND: http
+      # Demo policy: grants these permissions to every caller. No authentication.
+      HOORI_GATEWAY_PERMISSIONS: recipes:read,shopping:read,shopping:demo
+    depends_on: *after-registry
     ports:
       - '127.0.0.1:${HOORI_DEMO_PORT:-8080}:8080'
     networks: [edge, backend]

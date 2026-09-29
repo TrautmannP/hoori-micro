@@ -4,36 +4,41 @@ Stand: **28. September 2026**. Baseline siehe `hoori.lock.json`.
 
 ## Tatsächlich ausgeführt
 
+Runtime: saubere Headless-Release-Distribution, lokal aus dem gepinnten Commit gebaut
+(`x86_64-unknown-linux-gnu`, `dirty=false`). Toolchain: Temurin 21.0.6, Maven 3.9.16,
+Docker 29.8.1, Compose v5.5.1, Basis `debian:trixie-slim` (Tag, kein Digest).
+
 | Prüfung | Ergebnis | Aussagegrenze |
 |---|---|---|
-| `scripts/test-core.sh` mit OpenJDK 21.0.11 | **99 Assertions bestanden** | Namens-/Origin-/Pfadvalidierung, Konfiguration, Grenzen und unveränderliche Kopien; kein Netzwerk |
-| Python `unittest` für `runtime_check.py` | **12 Tests bestanden** | Synthetische Distributionen: gültig, manipuliert, fehlend, zusätzliche Dateien, falsche Revision, Dirty-Zustand, Features, Symlinks und unsichere Manifestpfade |
-| `bash -n`, `sh -n` | Bestanden | Syntax der Shell-Scripte; kein erfolgreicher VM-/Docker-Start daraus ableitbar |
-| Python-Kompilation | Bestanden | Syntax der Python-Scripte |
-| XML-Parser für fünf POMs | Bestanden | Wohlgeformtes XML; kein Maven-Lifecycle ausgeführt |
-| YAML-Parser für Compose/CI | Bestanden | YAML-Syntax; keine semantische Docker-Compose-Abnahme |
-| Zusätzlicher Java-21-Syntax-/Typcheck aller 14 Java-Dateien | Bestanden | Temporäre, aus gelesenen Quellsignaturen abgeleitete API-/JUnit-Fixtures; **kein Compile gegen die echten SDK-JARs**, keine Ausführung |
+| Spotless-Check (auch in `mvn verify`) | **23 Java-Dateien geprüft** | Palantir 2.100.0 plus JDK-Syntaxschritt in Spotless 3.10.3; nur Host-JDK. Fehlende Leerzeilen abgewiesen, `apply` korrigiert, erneuter Check erfolgreich |
+| `scripts/test-core.sh` (HotSpot) | **96 Assertions und 5 Formatter-Fixtures bestanden** | Namen, Origins, Konfiguration; Formatter mit Kommentaren/Literalen, `else if`, Guards, Switch, Idempotenz und ungültigem Input; kein Netzwerk |
+| Python `unittest` für `runtime_check.py` | **12 Tests bestanden** | Synthetische Distributionen |
+| `scripts/build.sh` inkl. `mvn clean verify` | **9 JUnit-Tests bestanden** | Broker-Auswahl pro Action/Version, generische Aufrufe, keine Retries, Fehler ohne Peer-Body, Katalogalter, Registry-TTL/Warmup, Gateway-Konflikte, Registrierungsvalidierung. Läuft auf HotSpot mit Transport-Seam |
+| `scripts/test-hoori-core.sh`, mixed und interpreter | **96 Assertions bestanden** | Echte Guest-Ausführung der portablen Checks |
+| `scripts/smoke.py`, mixed und interpreter | **5 Phasen bestanden** | Siehe unten |
 
-Die temporären API-/JUnit-Fixtures des letzten Checks wurden nicht in das Archiv
-aufgenommen, sind kein Produktions-Fallback und zählen nicht als SDK-Kompatibilitäts-
-nachweis. Die normalen Build-Scripte verwenden ausschließlich die echten SDK-JARs
-aus einer geprüften Hoori-Distribution.
+Der Smoke-Test startet Registry, Recipes, Shopping und Gateway als Container und prüft:
+Veröffentlichung über das Gateway, Aufruf über zwei Action-Hops, fachliche 404/400,
+Request-ID über alle Hops ohne Authorization-Weitergabe, nicht öffentlichen
+Invoke-Endpunkt, exakten Registry-Katalog; Neuerstellung von Recipes mit zusätzlicher
+Action, die ohne Neustart von Shopping/Gateway (gleiche Container-IDs) veröffentlicht
+wird; Aufrufe bei gestoppter Registry und vollständige Wiederanmeldung nach deren
+Neustart; Anbieter-Ausfall mit sicherem 502 und Erholung; SIGTERM-Drain eines laufenden
+Aufrufs mit Exit-Code 0.
+
+Dabei gefunden und behoben: Hooris Guest-Classlib hat weder `String.repeat` noch
+`Long.toHexString`, `Double.isInfinite` oder `Math.floorMod`. Die bisherigen
+Core-Checks liefen deshalb nie auf Hoori; `hoori.lock.json` fehlte im Repository.
 
 ## Nicht ausgeführt
 
-Die Arbeitsumgebung enthält kein Maven, keine ausführbare HooriVM-Distribution und
-keine Docker Engine. Deshalb wurden **nicht** ausgeführt:
+- Mehrere Replikate eines Service in Docker (Auswahl pro Action nur per JUnit belegt);
+- Rolling Update mit gleichzeitig alten und neuen Instanzen unter Last;
+- verweigerte DNS-/Connect-Capabilities, HTTPS, Überlast, erzwungene IP-Wechsel;
+- Guest-Ausführung der JUnit-Vertragstests (HotSpot; Guest-Abdeckung nur über Smoke);
+- Benchmarks.
 
-- vollständiges `mvn clean verify` gegen Hoori-SDKs einschließlich der sechs
-  `ServiceClientTest`-Methoden und des JUnit-Wrappers der Core-Checks;
-- Guest-Ausführung der Core-Checks auf HooriVM;
-- Image-Build, Container-DNS, echte Service-Aufrufe, HTTPS oder Signal-/Drain-Integration;
-- Überlast-/Dauertests, garantierte IP-Wechsel, Multi-Instanz-Lastverteilung oder Benchmarks.
-
-Die Repository-Quellen wurden gelesen und die verwendeten Schnittstellen daran
-angepasst. Das ist eine Quellprüfung, kein Ersatz für die native Abnahme.
-
-## Reproduzierbare nächste Prüfungen
+## Reproduzieren
 
 ```bash
 ./scripts/build.sh /pfad/zur/passenden/headless/distribution
@@ -48,15 +53,11 @@ HOORI_ENGINE=interpreter python3 scripts/smoke.py
 oder anderer Hoori-Stand wird bereits vor dem Import abgewiesen. Der Dockerfile-
 Build prüft die tatsächliche Runtime auf Ausführbarkeit mit der gewählten Basis.
 
-Der Smoke-Test prüft zwei getrennte Prozesse/Container, typisiertes JSON, sichere
-Fehler, Request-ID über einen Hop, keine versehentliche Authorization-Weitergabe,
-Health/Metriken, Ausfall und Wiederanlauf, Container-Neuerstellung sowie graceful
-SIGTERM mit laufendem ausgehenden Request. Er verwendet ein eigenes Compose-Projekt;
+Der Smoke-Test verwendet ein eigenes Compose-Projekt;
 fehlende Voraussetzungen oder gescheiterte Checks liefern Fehler statt eines JVM-
 Fallbacks. Standardport 18080 muss verfügbar sein, sonst `HOORI_DEMO_PORT` setzen.
 
-Container-Neuerstellung ist kein Nachweis einer geänderten IP-Adresse. Auch der
-Smoke-Test ist keine Produktions-, Sicherheits- oder Lastfreigabe. Zusätzliche
+Auch der Smoke-Test ist keine Produktions-, Sicherheits- oder Lastfreigabe. Zusätzliche
 Abnahmepunkte stehen unter F1 in `roadmap.md`.
 
 ## Berichterstattung
@@ -67,5 +68,5 @@ Nicht ausgeführte Schritte ausdrücklich offen lassen. Die bestehende CI heißt
 bewusst `Portable bootstrap checks` und meldet keine erfolgreiche native Integration.
 
 Es gibt in diesem Bootstrap **keine gemessenen Performancegewinne**. Pool-Wiederverwendung,
-begrenzte Konfiguration und der Verzicht auf zusätzliche Infrastruktur sind zunächst
+begrenzte Konfiguration und eine Registry außerhalb des Request-Pfads sind zunächst
 Architekturentscheidungen; die Messplanung steht in `architecture.md`.

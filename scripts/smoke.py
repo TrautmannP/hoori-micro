@@ -40,18 +40,41 @@ def require(condition: bool, message: str):
         raise AssertionError(message)
 
 
-def ready_meal() -> None:
+def eventually(path: str, expected, what: str) -> None:
     deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
         try:
-            status, _, body = request("/demo/meal/1")
-            if status == 200 and json.loads(body) == {"id": 1, "title": "Kartoffelsuppe"}:
+            status, _, body = request(path)
+            if status == 200 and json.loads(body) == expected:
                 return
         except (OSError, ValueError):
             pass
         # These are NEW independent, read-only requests, not an SDK retry policy.
         time.sleep(0.5)
-    raise AssertionError("Named recipe call did not recover")
+    raise AssertionError(what)
+
+
+def ready_meal() -> None:
+    eventually("/meals/1", {"id": 1, "title": "Kartoffelsuppe"}, "Action call did not recover")
+
+
+def registered() -> dict:
+    """Services with their action names, once the registry reports a complete catalog."""
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        try:
+            catalog = json.loads(compose("exec", "-T", "registry", "curl", "-fsS", "--max-time", "2",
+                                         "http://127.0.0.1:8080/v1/catalog", capture=True))
+            if catalog["complete"]:
+                return {i["service"]: sorted(a["name"] for a in i["actions"]) for i in catalog["instances"]}
+        except (subprocess.SubprocessError, ValueError, KeyError):
+            pass
+        time.sleep(0.5)
+    raise AssertionError("Registry catalog never became complete")
+
+
+def container(service: str) -> str:
+    return compose("ps", "-q", service, capture=True)
 
 
 def main() -> int:
@@ -59,38 +82,55 @@ def main() -> int:
         print("Run scripts/build.sh with a verified Hoori distribution first", file=sys.stderr)
         return 2
     try:
+        ENV["HOORI_DEMO_RECOMMEND"] = "0"
         compose("up", "--build", "--detach", "--wait", "--wait-timeout", "180")
         ready_meal()
+        eventually("/recipes/1", {"id": 1, "title": "Kartoffelsuppe"}, "published recipes action")
         require(request("/health/live")[0] == 200, "liveness")
         require(request("/health/ready")[0] == 200, "readiness")
-        require(request("/demo/meal/999")[0] == 404, "domain 404 mapping")
-        require(request("/demo/meal/not-a-number")[0] == 400, "input validation")
+        require(request("/meals/999")[0] == 404, "domain 404 across two hops")
+        require(request("/meals/not-a-number")[0] == 400, "input validation")
+        require(request("/recipes/1/recommendation")[0] == 404, "unpublished action must not exist yet")
+        require(request("/_hoori/invoke")[0] == 404, "internal invoke endpoint is not public")
         status, headers, body = request("/demo/context", "hop-check-1")
-        require(status == 200 and body == b"hop-check-1", "upstream context / credential isolation")
+        require(status == 200 and json.loads(body) == {"requestId": "hop-check-1", "authorization": False},
+                "request ID across gateway→shopping→recipes without credential forwarding")
         normalized = {key.lower(): value for key, value in headers.items()}
         require(normalized.get("x-request-id") == "hop-check-1", "response correlation")
         status, _, body = request("/metrics")
         require(status == 200 and b"hoori_http" in body, "HTTP metrics")
-        print("PASS: routing, typed JSON, domain errors, health, metrics and context")
+        require(registered() == {"recipes": ["context", "get", "slow"], "shopping": ["context", "meal", "slow"]},
+                "catalog lists exactly the defined actions")
+        print("PASS: gateway publication, action calls, domain errors, health, metrics and context")
+
+        stable = {name: container(name) for name in ("gateway", "shopping")}
+        ENV["HOORI_DEMO_RECOMMEND"] = "1"
+        compose("up", "--detach", "--force-recreate", "--wait", "--wait-timeout", "180", "recipes")
+        eventually("/recipes/1/recommendation", {"id": 2, "title": "Apfelstrudel"}, "new action not published")
+        ready_meal()
+        require({name: container(name) for name in stable} == stable, "gateway/shopping were redeployed")
+        print("PASS: updated recipes adds an action; gateway and shopping unchanged")
+
+        compose("stop", "registry")
+        require(request("/meals/1")[0] == 200, "calls must not depend on a reachable registry")
+        compose("up", "--detach", "--wait", "--wait-timeout", "180", "registry")
+        require(registered()["recipes"] == ["context", "get", "recommend", "slow"], "re-registration")
+        ready_meal()
+        print("PASS: registry outage and restart with re-registration")
 
         compose("stop", "recipes")
-        status, _, body = request("/demo/meal/1")
+        status, _, body = request("/meals/1")
         require(status in (502, 503), "bounded upstream failure")
-        require(b"Exception" not in body and b"recipes:8080" not in body, "safe public error")
+        require(b"Exception" not in body and b"_hoori" not in body, "safe public error")
         require(request("/health/live")[0] == 200, "upstream failure must not break local liveness")
         require(request("/health/ready")[0] == 200, "no recursive readiness dependency by default")
         compose("up", "--detach", "--wait", "--wait-timeout", "180", "recipes")
         ready_meal()
-        previous = compose("ps", "-q", "recipes", capture=True)
-        compose("up", "--detach", "--force-recreate", "--wait", "--wait-timeout", "180", "recipes")
-        require(compose("ps", "-q", "recipes", capture=True) != previous, "container was not recreated")
-        ready_meal()
-        # Re-creation may reuse its IP. This gate does NOT claim proof of DNS TTL/rotation behavior.
-        print("PASS: dependency outage, recovery and container re-creation")
+        print("PASS: dependency outage and recovery")
 
-        require(request("/demo/slow", "slow-warmup")[0] == 200, "warm slow route")
+        require(request("/demo/slow/1", "slow-warmup")[0] == 200, "warm slow route")
         with ThreadPoolExecutor(max_workers=1) as executor:
-            result = executor.submit(request, "/demo/slow", "drain-in-flight")
+            result = executor.submit(request, "/demo/slow/1", "drain-in-flight")
             deadline = time.monotonic() + 45
             while time.monotonic() < deadline:
                 logs = compose("logs", "--no-color", "recipes", capture=True)

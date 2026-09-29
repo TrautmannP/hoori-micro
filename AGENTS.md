@@ -4,14 +4,18 @@
   do not move Dahemm migration into the Hoori VM MS0–MS5 roadmap.
 - Use the real `hoori-http-api` / `hoori-rest-api`. Do not replace networking with
   java.net.http, Spring, Servlet or test stubs. Do not copy the SDK implementation.
-- Keep dependencies, routes, codecs and ownership explicit. No annotation scanning,
-  DI container, registry, broker, ORM or general proxy without a concrete requirement.
+- Keep dependencies, actions, codecs and ownership explicit. No annotation scanning,
+  DI container, ORM, message broker or general proxy. The action registry, broker and
+  gateway stay limited to the model in docs/architecture.md; the registry is never
+  on the request path. Published gateway routes require http() + requirePermission().
 - Never invent API signatures or mark native acceptance complete from HotSpot tests.
   Keep hoori.lock.json and docs/validation.md honest. Prefer the smallest relevant test.
 - Do not create a client/pool per request. Do not automatically replay writes,
   follow redirects, forward credentials, or derive metric labels from request data.
+- Hoori's guest classlib is partial (no String.repeat, Long.toHexString,
+  Double.isInfinite, Math.floorMod). Check new JDK calls against it; run guest checks.
 - `HttpServer.run()` ending is not proof of a completed drain. Preserve shutdown
-  ordering: stop admission, drain handlers, close outbound clients.
+  ordering: stop admission (and deregister), drain handlers, close outbound clients.
 - Hoori currently uses cooperative guest execution. No assumptions of CPU preemption
   or arbitrary JDK compatibility. Do not add ThreadLocal request context.
 - Run scripts/test-core.sh and Python unit checks for portable changes. For transport,

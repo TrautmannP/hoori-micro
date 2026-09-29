@@ -4,12 +4,13 @@ Die Hoori-MS0–MS5-Runtime-Roadmap bleibt abgeschlossen und unabhängig. Dieses
 Repository führt eine eigene kleine Roadmap. Die Dahemm-Migration ist weder MS6
 noch bereits mit diesen zwei Demos umgesetzt.
 
-## F0 — Dieser Bootstrap: implementiert, native Abnahme offen
+## F0 — Dieser Bootstrap: implementiert, Basisabnahme gelaufen
 
-Vorhanden: eigenständige Maven-Bibliothek, expliziter Service-Lifecycle, benannte
-HTTP-/JSON-Aufrufe, Docker-DNS-Konvention, Konfigurationsvalidierung, HTTP-Metriken,
-Request-ID-Kontext, Pool-Ownership, Shutdown-Ordering, zwei Demo-Services,
-Runtime-Provenienzprüfung und ausführbare Prüf-Scripte.
+Vorhanden: eigenständige Maven-Bibliothek, expliziter Service-Lifecycle,
+Action-Definitionen mit Registry, Broker und Gateway, Konfigurationsvalidierung,
+HTTP-Metriken, Request-ID-Kontext, Pool-Ownership, Shutdown-Ordering mit
+Deregistrierung, Demo-Services, Runtime-Provenienzprüfung und Prüf-Scripte.
+Build, Guest-Checks und Smoke-Test sind gelaufen (siehe `validation.md`).
 
 **Exit-Kriterium:** alle folgenden F1-Checks grün. Bis dahin als experimentellen
 Bootstrap behandeln, nicht als produktionsreifes Framework.
@@ -20,8 +21,11 @@ Bootstrap behandeln, nicht als produktionsreifes Framework.
   ausführen. JUnit-Berichte und Runtime-/Toolchain-Identität aufbewahren.
 - `test-hoori-core.sh` und `smoke.py` in Interpreter und Mixed ausführen. Fehler
   an der passenden Schicht beheben, nicht auf HotSpot-Netzwerk umschalten.
-- Zusätzlich reale DNS-IP-Wechsel, verweigerte DNS-/Connect-Capabilities,
-  verifiziertes HTTPS/ungültige Zertifikate, Überlast und abgelaufene Grace testen.
+- Zusätzlich mehrere Replikate und Rolling Updates unter Last, verweigerte
+  DNS-/Connect-Capabilities, verifiziertes HTTPS/ungültige Zertifikate, Überlast und
+  abgelaufene Grace testen.
+- Service-Identität für Registry und `/_hoori/invoke` festlegen, bevor irgendetwas
+  außerhalb eines vertrauenswürdigen privaten Netzes läuft.
 - Release-Baseline mit nacktem REST-Service vergleichen: Warmup, Latenzen, Durchsatz,
   RSS/Heap, Idle-/Last-/Recovery-Verhalten. Keine ungemessenen Optimierungen behaupten.
 
@@ -46,7 +50,8 @@ Festzulegen und zu testen:
 - Versionierte APIs, Status-/Fehlerverträge und getrennte Wire-DTOs. Bestehende
   Android-API anfangs am bisherigen Backend/Rand stabil halten.
 - Service-Identität, Benutzer-/Haushaltskontext und Autorisierung beim tatsächlichen
-  Datenbesitzer; keine ungeprüften `X-User`-/`X-Household`-Header als Vertrauensbasis.
+  Datenbesitzer nach [security.md](security.md); keine ungeprüften `X-User`-/
+  `X-Household`-Header als Vertrauensbasis.
 - PostgreSQL-/JDBC-Laufzeitabnahme auf dem benötigten Hoori-Stand: Treiber,
   Migrationen, Timeouts, Transaktionen, Pooling und Ressourcen unter Fehlern.
 
@@ -88,11 +93,10 @@ verteilte ACID-Transaktion als implizites Framework-Versprechen.
 
 ## F5 — Skalierung erst mit Betriebsdaten
 
-Mehrere Instanzen, faire/gesundheitsbewusste Lastverteilung, Multi-Host-Betrieb,
-End-to-End-Deadline-Budgets, Circuit Breaker und verteiltes Tracing sind mögliche
-Folgeschritte. Sie benötigen eigene Nachweise. DNS und Keep-alive allein liefern
-keine faire Instanzverteilung; eine überlebende Poolverbindung kann an derselben
-Instanz bleiben.
+Hochverfügbare Registry, gesundheitsbewusste statt reiner Round-Robin-Verteilung,
+Multi-Host-Betrieb, End-to-End-Deadline-Budgets, Circuit Breaker und verteiltes
+Tracing sind mögliche Folgeschritte. Sie benötigen eigene Nachweise. Zwei
+unkoordiniert gestartete Registry-Container sind keine Hochverfügbarkeit.
 
 Die aktuelle Request-ID hilft bei Korrelation, ersetzt aber keine Trace-Spans.
 Bestehende HTTP-Metriken bleiben begrenzt; neue Labelwerte dürfen nicht aus
@@ -100,7 +104,8 @@ Benutzer-IDs, URLs oder beliebigen Request-Parametern entstehen.
 
 ## Bewusste Nicht-Ziele
 
-Keine eigene Service-Registry, Service-Mesh-Implementierung, universelle Gateway-
-Engine, Reflection-DI, automatische Controller-Erkennung, ORM, Eventbus und
-Build-Tool-Neuentwicklung im Bootstrap. Eine Erweiterung benötigt einen konkreten
+Keine Service-Mesh-Implementierung, universelle Gateway-Engine (Rewrites, Query-
+Mapping, Transformationen), Reflection-DI, automatische Controller-Erkennung, ORM,
+Eventbus und Build-Tool-Neuentwicklung im Bootstrap. Registry, Broker und Gateway
+bleiben auf das Action-Modell in `architecture.md` begrenzt. Eine Erweiterung benötigt einen konkreten
 Dahemm-Use-Case oder ein gemessenes Defizit sowie einen kleinen reproduzierbaren Test.

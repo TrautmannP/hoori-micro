@@ -4,66 +4,65 @@ Ein eigenständiger Microservice-Bootstrap auf **HooriVM**, `hoori-rest-api` und
 `hoori-http-api`. Arbeitsname: **Hoori Micro**, Maven-Artefakt: `dev.hoori:hoori-micro`.
 Kein Fork der VM, kein Servlet-/Spring-Adapter und keine zweite HTTP-Implementierung.
 
-**Status: Bootstrap, noch nicht auf HooriVM/Docker abgenommen.** Die reinen
-Konfigurations-/Discovery-Prüfungen und die Distributionsprüfungen wurden ausgeführt.
-Die vollständigen Maven-, Guest- und Container-Prüfungen sind vorbereitet, aber noch
-nicht ausgeführt. Siehe [Validierung](docs/validation.md).
+**Status: Bootstrap.** Portable Checks, Maven/JUnit, Guest-Checks und der Docker-
+Smoke-Test sind gegen die gepinnte Hoori-Distribution gelaufen; Umfang und Grenzen
+siehe [Validierung](docs/validation.md). Keine Produktionsfreigabe.
 
-## Kommunikation ohne Adressverwaltung
+## Actions statt Routen
 
-```text
-Host: 127.0.0.1:8080
-          │
-          ▼
-  shopping:8080 ── HTTP/1.1 + JSON ──► recipes:8080
-          │          Docker-DNS              │
-          └──────── privates Backend-Netz ────┘
-```
-
-Ein Service deklariert seinen Namen und seine Abhängigkeiten:
+Ein Service definiert seine Actions **einmal** bei sich. Daraus entstehen der lokale
+Dispatcher und der veröffentlichte Katalog:
 
 ```java
-try (Microservice app = Microservice.create("shopping", "recipes")) {
-    // Routen und explizite Controller-Abhängigkeiten registrieren.
-    app.run();
-}
+Service recipes = Service.named("recipes").version(1)
+        .action("get", GetRecipe.CODEC, RecipeCodec.INSTANCE, (ctx, input) -> repository.get(input.id))
+        .http("GET", "/recipes/{id}").requirePermission("recipes:read");   // optional öffentlich
 ```
 
-Der logische Name `recipes` wird standardmäßig zu `http://recipes:8080`. Docker
-Compose stellt den DNS-Namen im gemeinsamen Netzwerk bereit. Es gibt keine
-festen Container-IPs, Registrierungsschleifen, Registry-Datenbank oder
-Docker-Socket-Anbindung. Ein Service benötigt keine veröffentlichten Host-Ports,
-um von einem anderen Container im gemeinsamen Netzwerk erreichbar zu sein.
+Ein Aufrufer kennt nur den fachlichen Namen und die Hauptversion, keine Route,
+keinen Host und keine Instanz:
 
-**Automatisch heißt namensbasiert, nicht „jeder entdeckt und vertraut jedem“.**
-Die Compose-Service-Namen müssen den Abhängigkeitsnamen entsprechen. Der Port
-8080 ist eine Konvention. DNS findet einen Host, aber weder dessen API-Verträge
-noch seine Berechtigungen. Andere Hosts/Ports werden ausschließlich bei Bedarf
-overridden, beispielsweise außerhalb von Docker:
-
-```bash
-export HOORI_SERVICE_RECIPES_URL=http://127.0.0.1:8081
+```java
+Service shopping = Service.named("shopping").dependsOn("recipes", 1)
+        .action("meal", GetRecipe.CODEC, RecipeCodec.INSTANCE,
+                (ctx, input) -> ctx.call(Recipes.GET, input));        // typisiert
+// generisch, ohne Vertragsklasse:  ctx.call("recipes.get", Map.of("id", 1))
 ```
+
+```text
+                 registry  (Katalog: Instanzen × Actions, TTL)
+                  ↑   ↓ Heartbeat = Registrierung + Katalog
+ Host ─► gateway ─────► shopping ─────► recipes
+         (publizierte   POST /_hoori/invoke, direkt über hoori-http
+          Actions)
+```
+
+| Änderung an Recipes | Shopping/Gateway neu deployen? |
+|---|---|
+| Neue Action, neue Implementierung, andere Adresse/Instanzzahl | Nein; Katalog aktualisiert sich über Heartbeats |
+| Neue Action mit `http()` + `requirePermission()` | Nein; das Gateway übernimmt sie, sofern seine Policy die Permission gewährt |
+| Verwendete Action entfernt oder inkompatibel geändert | Ja: Vertragsmigration bzw. neue Hauptversion. Discovery löst das nicht |
 
 Details und Grenzen: [Architektur](docs/architecture.md),
-[Konfiguration](docs/configuration.md).
+[Konfiguration](docs/configuration.md), geplanter [Security-Ablauf](docs/security.md).
 
 ## Was enthalten ist
 
 | Bereich | Implementiert |
 |---|---|
-| Service-Lifecycle | Expliziter Bootstrap, Konfiguration, lokale Live-/Ready-Zustände, Signal-Polling und geordneter Shutdown |
-| Kommunikation | Deklarierte Service-Namen, validierte URL-Overrides, ein gemeinsam genutzter Hoori-Client-Pool pro Service |
-| Aufrufe | Raw-HTTP sowie typisierte JSON-GET/POST-Helfer mit expliziten Codecs |
-| Fehler und Kontext | Sichere öffentliche Fehler, explizite Request-ID-Weitergabe, keine automatischen Retries/Redirects oder Credential-Weitergabe |
-| Betrieb | Hoori-HTTP-Metriken, begrenzte Bodies/Verbindungen/Timeouts, Docker Compose und nicht privilegierte Container |
-| Beispiele | Zwei zustandslose, rein lesende Demo-Services mit typisiertem Aufruf, Kontext- und Drain-Prüfrouten |
-| Build | Maven-Multi-Modul, revisionsgebundene Runtime-Distribution, isoliertes Maven-Repository, Docker-Staging |
-| Prüfungen | Portable Checks, JUnit-Vertragstests, Distributionsprüfung und echte Hoori-/Docker-Abnahme-Scripte |
+| Service-Lifecycle | Expliziter Bootstrap, Live-/Ready-Zustände, Signal-Polling, geordneter Shutdown mit Deregistrierung |
+| Actions | `Service`-Definition, typisierte `Action`-Verträge, generische Aufrufe (`JsonTree`), ein fester Invoke-Endpunkt |
+| Registry | Zentrale In-Memory-Registry mit TTL, Heartbeats, Wiederanmeldung nach Neustart, `complete`-Markierung |
+| Broker | Lokaler Katalog, Auswahl pro Action und Hauptversion (Round Robin), direkte Aufrufe, begrenztes Katalogalter |
+| Gateway | Vom Anbieter deklarierte, per Policy freigegebene Routen; Konflikte werden zurückgehalten |
+| Fehler und Kontext | Sichere Fehler, Request-ID über alle Hops, keine Retries/Redirects/Credential-Weitergabe |
+| Betrieb | Hoori-HTTP-Metriken, begrenzte Bodies/Verbindungen/Timeouts, Docker Compose, nicht privilegierte Container |
+| Prüfungen | Portable Checks, JUnit-Vertragstests, Distributionsprüfung, echte Hoori-/Docker-Abnahme |
 
-Nicht enthalten: produktive Authentifizierung, Mandantenmodell, Datenbankzugriff,
-Broker/Events, Circuit Breaker, serviceübergreifendes Deadline-Budget, automatische
-Lastverteilung, API-Gateway, DI-Container oder bereits migrierte Dahemm-Fachlogik.
+Nicht enthalten: Authentifizierung (Registry, Invoke-Endpunkt und Demo-Gateway sind
+unauthentifiziert), Mandantenmodell, Datenbankzugriff, Events, Circuit Breaker,
+serviceübergreifendes Deadline-Budget, hochverfügbare Registry, DI-Container oder
+migrierte Dahemm-Fachlogik.
 
 ## Schnellstart
 
@@ -110,8 +109,9 @@ export PATH="$JAVA_HOME/bin:$PATH"
 ./scripts/build.sh /absoluter/pfad/zur/headless/release-distribution
 
 docker compose up --build --wait
-curl -fsS http://127.0.0.1:8080/demo/meal/1
+curl -fsS http://127.0.0.1:8080/meals/1     # gateway → shopping.meal → recipes.get
 # Erwartet: {"id":1,"title":"Kartoffelsuppe"}
+curl -fsS http://127.0.0.1:8080/recipes/1   # gateway → recipes.get
 
 curl -fsS http://127.0.0.1:8080/health/ready
 curl -fsS http://127.0.0.1:8080/metrics
@@ -140,68 +140,72 @@ python3 scripts/smoke.py
 ```
 
 Der Smoke-Test verwendet ein eigenes Compose-Projekt und standardmäßig Port 18080.
-Er prüft Aufrufe, JSON, Kontext, Ausfall/Wiederanlauf, Container-Neuerstellung und
-den SIGTERM-Drain eines laufenden ausgehenden Aufrufs. Die wiederholten GETs im Test
+Er prüft Gateway-Veröffentlichung, Action-Aufrufe über zwei Hops, Kontext, das
+Nachrüsten einer Action ohne Neustart von Shopping/Gateway, Registry-Ausfall und
+-Neustart, Anbieter-Ausfall und den SIGTERM-Drain eines laufenden Aufrufs. Die wiederholten GETs im Test
 sind neue Probeaufrufe, keine versteckte Retry-Funktion im Framework.
 
 ### Ohne Docker entwickeln
 
-Nach erfolgreichem `build.sh` in zwei Terminals auf derselben Linux-Maschine:
+Nach erfolgreichem `build.sh` je ein Terminal, in dieser Reihenfolge:
 
 ```bash
-HOORI_PORT=8081 ./scripts/run-local.sh recipes
+./scripts/run-local.sh registry   # 127.0.0.1:8090
+./scripts/run-local.sh recipes    # 127.0.0.1:8081
+./scripts/run-local.sh shopping   # 127.0.0.1:8082
+./scripts/run-local.sh gateway    # 127.0.0.1:8080
 ```
 
-```bash
-HOORI_SERVICE_RECIPES_URL=http://127.0.0.1:8081 ./scripts/run-local.sh shopping
-```
-
-Der lokale Launcher bindet standardmäßig an Loopback. Auch lokal startet er Hoori,
-nicht HotSpot. Für die künstlich drei Sekunden lange `/demo/slow`-Route muss der
-Client-Timeout über drei Sekunden liegen; Compose verwendet dafür längere Demo-
-Timeouts. Cold-JIT-Qualifikation und spätere Produktions-Timeouts getrennt behandeln.
+Der Launcher setzt Loopback, Registry- und Advertise-URL. Auch lokal startet er
+Hoori, nicht HotSpot. Die drei Sekunden lange `slow`-Action braucht einen
+Client-Timeout über drei Sekunden (`HOORI_CLIENT_TIMEOUT_MS`).
 
 ## Einen eigenen Service schreiben
 
 ```java
-package example;
-
-import hoori.micro.Microservice;
-import hoori.http.Response;
-
-public final class Main {
-    public static void main(String[] args) throws Exception {
-        try (Microservice app = Microservice.create("todos")) {
-            app.routes().get("/v1/ping", request -> Response.text(200, "pong"));
-            app.run();
-        }
+public static void main(String[] args) throws Exception {
+    Service todos = Service.named("todos").version(1)
+            .action("ping", JsonTree.CODEC, JsonTree.CODEC, (ctx, input) -> "pong");
+    try (Microservice app = Microservice.create(todos)) {
+        app.routes().get("/local", request -> Response.text(200, "ok")); // lokale Route, unverändert möglich
+        app.run();
     }
 }
 ```
 
-Ein aufrufender Controller verwendet den Hoori-Request explizit als Kontext:
-
-```java
-Recipe recipe = app.client().getJson(
-        request.raw(), "recipes", "/v1/recipes/1", RecipeCodec.INSTANCE);
-```
-
-`Recipe` und `RecipeCodec` stammen hier aus dem Demo-Modul. Eigene APIs definieren
-ihre eigenen versionierten Verträge. Für POST gibt es `postJson`; für andere
-Methoden, Header, leere Erfolgsantworten oder explizite Statusauswertung `exchange`.
-Kein eingehender Authorization-/Cookie-Header wird dabei automatisch übernommen.
+Action-Fehler mit fachlicher Bedeutung als `RequestException(status, öffentlicheMeldung)`
+werfen; Aufrufer sehen den Status über `ServiceCallException.upstreamStatus()`, nie den
+Body. Aus einer normalen Route heraus ruft `app.context(request).call(...)` andere
+Actions auf. Kein eingehender Authorization-/Cookie-Header wird weitergegeben.
 
 Das Framework-JAR soll später in einem eigenen internen Maven-Repository publiziert
 werden. Es ist derzeit **nicht** öffentlich auf Maven Central verfügbar. Die hier
 verwendete Snapshot-Version ist für den Bootstrap, nicht für reproduzierbare Releases.
 
+## Java formatieren
+
+Spotless mit Palantir formatiert Java-Quellen und Tests in allen Modulen. Beide
+Werkzeugversionen sind im Parent-POM festgelegt; sie laufen auf dem Host-JDK.
+Danach setzt `scripts/BlankLines.java` per JDK-Syntaxbaum eine Leerzeile vor und
+nach `if` sowie vor `return`, jeweils zwischen benachbarten Anweisungen. Direkt an
+Blockklammern entstehen keine zusätzlichen Leerzeilen; `else if` bleibt zusammen.
+Kommentare bleiben bei ihrer Anweisung. Der Schritt benötigt keine zusätzliche
+Bibliothek und wird durch `scripts/test-core.sh` mitgeprüft.
+
+```bash
+mvn spotless:apply   # im Repository-Root alle Java-Dateien formatieren
+mvn spotless:check   # Formatierung prüfen
+```
+
+Der Check läuft auch bei `mvn verify` und damit in `scripts/build.sh`.
+
 ## Struktur und nächster Schritt
 
 ```text
-framework/                  Wiederverwendbare hoori.micro-Bibliothek
-examples/demo-contracts/    Kleiner expliziter JSON-Vertrag der Demo
+framework/                  hoori.micro: Service, Broker, Registry, Gateway
+examples/demo-contracts/    Typisierte Demo-Actions (Recipes.GET) und Codecs
 examples/recipes-service/  Rein lesender Anbieter
-examples/shopping-service/ Aufrufer über logischen Service-Namen
+examples/shopping-service/ Aufrufer über Action-Namen, selbst Anbieter von meals
 docker/                    Hoori-Entrypoint und Runtime-Image
 scripts/                   Build, Integrität, lokale und native Prüfungen
 docs/                      Architektur, Konfiguration, Roadmap und Nachweise

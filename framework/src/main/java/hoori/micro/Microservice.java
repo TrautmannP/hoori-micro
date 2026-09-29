@@ -13,164 +13,228 @@ import java.io.InterruptedIOException;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Explicit startup composition on Hoori's cooperative single carrier. run() owns draining and pool
- * cleanup. Configure routes/dependencies before run(), never in handlers.
+ * Explicit startup composition on Hoori's cooperative single carrier. run() owns registration,
+ * draining and pool cleanup. Configure routes/actions before run(), never in handlers.
  */
 public final class Microservice implements AutoCloseable {
 
-  private final ServiceConfig config;
-  private final Router router = new Router();
-  private final HttpClient http;
-  private final ServiceClient client;
-  private final JsonLimits jsonLimits;
+    private final Service service;
+    private final ServiceConfig config;
+    private final Router router = new Router();
+    private final HttpClient http;
+    private final ServiceBroker broker;
+    private final JsonLimits jsonLimits;
 
-  private volatile HttpServer server;
-  private volatile boolean closed, stopRequested, applicationReady = true;
+    private volatile HttpServer server;
+    private volatile boolean closed, stopRequested, applicationReady = true;
 
-  private boolean started;
-  private Thread signalWatcher;
+    private boolean started;
+    private Thread signalWatcher;
+    private volatile Thread registrar;
 
-  private Microservice(ServiceConfig config, ServiceDirectory directory) {
-    this.config = config;
-    jsonLimits = new JsonLimits(64, 16384, 128, config.bodyBytes);
-    http =
-        new HttpClient(
-            limits(config.clientConnections, config.clientTimeoutMillis),
-            config.clientPerOrigin,
-            config.clientIdleMillis);
-    client = new ServiceClient(directory, http, jsonLimits);
-    router.get("/health/live", request -> health(isLive()));
-    router.get("/health/ready", request -> health(isReady()));
-    router.get(
-        "/metrics",
-        request ->
-            new Response(
-                200,
-                new Headers().add("Content-Type", "text/plain; version=0.0.4; charset=utf-8"),
-                server.metrics().prometheus().getBytes(StandardCharsets.UTF_8)));
-    router.onError(
-        (request, failure) -> {
-          // Intentionally no stacktrace, URI, request/response body or secret in logs/errors.
-          String id = request == null ? "unavailable" : request.id();
-          System.err.println(
-              "request_failed service="
-                  + config.name
-                  + " request_id="
-                  + id
-                  + " type="
-                  + failure.getClass().getName());
-          if (failure instanceof ServiceCallException)
-            return Response.text(502, "Upstream service unavailable");
-          if (failure instanceof InterruptedIOException)
-            return Response.text(503, "Request interrupted or expired");
-          return Response.text(500, "Internal Server Error");
+    private Microservice(Service service, ServiceConfig config) {
+        this.service = service;
+        this.config = config;
+        jsonLimits = new JsonLimits(64, 16384, 128, config.bodyBytes);
+        http = new HttpClient(
+                limits(config.clientConnections, config.clientTimeoutMillis),
+                config.clientPerOrigin,
+                config.clientIdleMillis);
+        broker = new ServiceBroker(service, config, ServiceBroker.transport(http), jsonLimits);
+
+        // One fixed internal entry point; new actions never need new routes. Absent without actions.
+        if (!service.actions.isEmpty()) router.post(ServiceBroker.INVOKE_PATH, this::invoke);
+
+        router.get("/health/live", request -> health(isLive()));
+        router.get("/health/ready", request -> health(isReady()));
+        router.get(
+                "/metrics",
+                request -> new Response(
+                        200,
+                        new Headers().add("Content-Type", "text/plain; version=0.0.4; charset=utf-8"),
+                        server.metrics().prometheus().getBytes(StandardCharsets.UTF_8)));
+        router.onError((request, failure) -> {
+            // Intentionally no stacktrace, URI, request/response body or secret in logs/errors.
+            String id = request == null ? "unavailable" : request.id();
+            System.err.println("request_failed service="
+                    + config.name
+                    + " request_id="
+                    + id
+                    + " type="
+                    + failure.getClass().getName());
+
+            if (failure instanceof ServiceCallException) return Response.text(502, "Upstream service unavailable");
+
+            if (failure instanceof InterruptedIOException) return Response.text(503, "Request interrupted or expired");
+
+            return Response.text(500, "Internal Server Error");
         });
-  }
-
-  public static Microservice create(String defaultName, String... dependencies) {
-    return create(defaultName, Environment.system(), dependencies);
-  }
-
-  public static Microservice create(String defaultName, Environment env, String... dependencies) {
-    return new Microservice(
-        ServiceConfig.from(defaultName, env), ServiceDirectory.from(env, dependencies));
-  }
-
-  public Router routes() {
-    return router;
-  }
-
-  public ServiceClient client() {
-    return client;
-  }
-
-  public ServiceConfig config() {
-    return config;
-  }
-
-  public JsonLimits jsonLimits() {
-    return jsonLimits;
-  }
-
-  /** Local application readiness, not an automatic recursive dependency health check. */
-  public void ready(boolean value) {
-    applicationReady = value;
-    HttpServer current = server;
-    if (current != null) current.setReady(value);
-  }
-
-  public boolean isLive() {
-    return server != null && server.isLive();
-  }
-
-  public boolean isReady() {
-    return server != null && server.isReady();
-  }
-
-  /** Stop admission; run() drains dispatched requests before closing the outbound pool. */
-  public void stop() {
-    stopRequested = true;
-    HttpServer current = server;
-    if (current != null) current.stopAccepting();
-  }
-
-  public void run() throws IOException {
-    if (started || closed || stopRequested)
-      throw new IllegalStateException("Service already run or closed");
-    started = true;
-    try {
-      server =
-          new HttpServer(
-              config.bindAddress,
-              config.port,
-              limits(config.serverConnections, config.requestTimeoutMillis),
-              router.freeze());
-      server.setReady(applicationReady);
-      signalWatcher =
-          new Thread(
-              () -> {
-                try {
-                  while (!closed && !isLive()) Thread.sleep(1);
-                  while (!closed && !stopRequested && !Shutdown.requested()) Thread.sleep(50);
-                  if (!closed) stop();
-                } catch (InterruptedException interrupted) {
-                  Thread.currentThread().interrupt();
-                }
-              });
-      signalWatcher.setDaemon(true);
-      signalWatcher.start();
-      System.out.println("service_starting name=" + config.name + " port=" + config.port);
-      server.run();
-    } finally {
-      try {
-        // HttpServer.run returns when admission stops, NOT when handlers have drained.
-        // Only the owner thread drains; the signal watcher must NOT close the client.
-        if (server != null) {
-          boolean drained = server.shutdown(config.shutdownGraceMillis);
-          System.out.println("service_stopped name=" + config.name + " drained=" + drained);
-        }
-      } finally {
-        close();
-      }
     }
-  }
 
-  /** Immediate abort/cleanup. Prefer stop() while run() is active for graceful shutdown. */
-  @Override
-  public void close() {
-    if (closed) return;
-    closed = true;
-    stopRequested = true;
-    if (server != null) server.close();
-    http.close();
-    if (signalWatcher != null && signalWatcher != Thread.currentThread()) signalWatcher.interrupt();
-  }
+    public static Microservice create(Service service) {
+        return create(service, Environment.system());
+    }
 
-  private Limits limits(int connections, int timeout) {
-    return new Limits(64, 16384, config.bodyBytes, connections, 100, timeout);
-  }
+    public static Microservice create(Service service, Environment env) {
+        if (service == null) throw new NullPointerException("service");
 
-  private static Response health(boolean up) {
-    return Response.text(up ? 200 : 503, up ? "UP" : "DOWN");
-  }
+        return new Microservice(service.freeze(), ServiceConfig.from(service.name, env));
+    }
+
+    public Router routes() {
+        return router;
+    }
+
+    /** Call context for a route handler; request may be null for startup/background calls. */
+    public Context context(hoori.rest.Request request) {
+        return new Context(broker, request == null ? null : request.raw());
+    }
+
+    ServiceBroker broker() {
+        return broker;
+    }
+
+    public ServiceConfig config() {
+        return config;
+    }
+
+    public JsonLimits jsonLimits() {
+        return jsonLimits;
+    }
+
+    /** Local application readiness, not an automatic recursive dependency health check. */
+    public void ready(boolean value) {
+        applicationReady = value;
+        HttpServer current = server;
+
+        if (current != null) current.setReady(value);
+    }
+
+    public boolean isLive() {
+        return server != null && server.isLive();
+    }
+
+    public boolean isReady() {
+        return server != null && server.isReady();
+    }
+
+    /** Stop admission and deregister; run() drains dispatched requests before closing the pool. */
+    public void stop() {
+        stopRequested = true;
+        HttpServer current = server;
+
+        if (current != null) current.stopAccepting();
+
+        Thread heartbeat = registrar;
+
+        if (heartbeat != null) heartbeat.interrupt();
+    }
+
+    public void run() throws IOException {
+        if (started || closed || stopRequested) throw new IllegalStateException("Service already run or closed");
+
+        started = true;
+        try {
+            server = new HttpServer(
+                    config.bindAddress,
+                    config.port,
+                    limits(config.serverConnections, config.requestTimeoutMillis),
+                    router.freeze());
+            server.setReady(applicationReady);
+            signalWatcher = new Thread(() -> {
+                try {
+                    while (!closed && !isLive()) Thread.sleep(1);
+                    while (!closed && !stopRequested && !Shutdown.requested()) Thread.sleep(50);
+
+                    if (!closed) stop();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            signalWatcher.setDaemon(true);
+            signalWatcher.start();
+            // Registers only after the listener is live and while ready; the reply refreshes the catalog.
+            Thread heartbeat = new Thread(() -> {
+                try {
+                    while (!closed && !isLive()) Thread.sleep(1);
+                    while (!closed && !stopRequested) {
+                        broker.beat(isReady());
+                        Thread.sleep(config.heartbeatMillis);
+                    }
+                } catch (InterruptedException | InterruptedIOException stopped) {
+                    // stop() or close(); fall through to deregistration.
+                }
+                Thread.interrupted();
+
+                if (!closed) broker.deregister();
+            });
+            heartbeat.setDaemon(true);
+            registrar = heartbeat;
+            heartbeat.start();
+            System.out.println("service_starting name="
+                    + config.name
+                    + " version="
+                    + service.version
+                    + " instance="
+                    + config.instanceId
+                    + " port="
+                    + config.port);
+            server.run();
+        } finally {
+            try {
+                // HttpServer.run returns when admission stops, NOT when handlers have drained.
+                // Only the owner thread drains; watcher/heartbeat threads must NOT close the client.
+                // Deregistration runs concurrently on the heartbeat thread until close() ends it.
+                if (server != null) {
+                    boolean drained = server.shutdown(config.shutdownGraceMillis);
+                    System.out.println("service_stopped name=" + config.name + " drained=" + drained);
+                }
+            } finally {
+                close();
+            }
+        }
+    }
+
+    /** Immediate abort/cleanup. Prefer stop() while run() is active for graceful shutdown. */
+    @Override
+    public void close() {
+        if (closed) return;
+
+        closed = true;
+        stopRequested = true;
+
+        if (server != null) server.close();
+
+        http.close();
+
+        if (signalWatcher != null && signalWatcher != Thread.currentThread()) signalWatcher.interrupt();
+
+        Thread heartbeat = registrar;
+
+        if (heartbeat != null && heartbeat != Thread.currentThread()) heartbeat.interrupt();
+    }
+
+    /** Only this instance's own name and major version; anything else is a stale-catalog miss. */
+    private Response invoke(hoori.rest.Request request) throws Exception {
+        Headers headers = request.raw().headers;
+        String action = headers.get(ServiceBroker.ACTION_HEADER);
+        Service.Definition<?, ?> definition = null;
+
+        if (action != null
+                && action.startsWith(service.name + ".")
+                && Integer.toString(service.version).equals(headers.get(ServiceBroker.VERSION_HEADER)))
+            definition = service.actions.get(action.substring(service.name.length() + 1));
+
+        if (definition == null) return Response.text(421, "Action not offered by this instance");
+
+        return definition.invoke(new Context(broker, request.raw()), request, jsonLimits);
+    }
+
+    private Limits limits(int connections, int timeout) {
+        return new Limits(64, 16384, config.bodyBytes, connections, 100, timeout);
+    }
+
+    private static Response health(boolean up) {
+        return Response.text(up ? 200 : 503, up ? "UP" : "DOWN");
+    }
 }
