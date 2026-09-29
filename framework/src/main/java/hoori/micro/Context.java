@@ -5,7 +5,7 @@ import java.io.IOException;
 import java.util.Map;
 
 /**
- * Explicit per-request call context: the inbound request (for correlation only) plus the broker.
+ * Explicit per-request call context: inbound correlation/local SDK deadline plus the broker.
  * Passed as a parameter, never stored in a ThreadLocal.
  */
 public final class Context {

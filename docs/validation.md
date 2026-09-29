@@ -7,6 +7,11 @@ Stand: **30. September 2026**. Baseline siehe `hoori.lock.json`.
 Runtime: saubere Headless-Release-Distribution, lokal aus dem gepinnten Commit gebaut
 (`x86_64-unknown-linux-gnu`, `dirty=false`). Toolchain: Temurin 21.0.6, Maven 3.9.16,
 Docker 29.8.1, Compose v5.5.1, Basis `debian:trixie-slim` (Tag, kein Digest).
+Der qualifizierte Satz ist jetzt `3254301` (VM, Guest Base und alle SDK-JARs gemeinsam).
+Die unten aufgeführten Core-/Maven-/Smoke-Prüfungen wurden auf diesem Pin erneut
+ausgeführt, bei unverändertem Framework-Verhalten. Er enthält die upstream gelieferten
+Pending-Acquire- und lokalen RequestBudget-APIs; Framework-Zulassung, Pool-Isolation
+und serviceübergreifende Wire-Budgets sind weiterhin #4–#6.
 
 | Prüfung | Ergebnis | Aussagegrenze |
 |---|---|---|
@@ -55,8 +60,10 @@ A–D-Lastkontrollen liefen in Mixed und Interpreter mit je drei frischen Prozes
 pro Variante; eine größere C/D-Katalogkontrolle lief separat. Zahlen, Runtime- und
 Artefaktidentität sowie Akzeptanzverletzungen stehen in [benchmarks.md](benchmarks.md).
 Die normale Recovery folgt jeweils einer einzelnen Lastspitze; wiederholte
-Rolling-/Recovery-Zyklen aus #10 sind damit nicht abgenommen. Die alte SDK-Baseline
-kann Pending-Acquires noch nicht messen; das ist in den Ergebnissen `null`.
+Rolling-/Recovery-Zyklen aus #10 sind damit nicht abgenommen. Die alten A–D-Läufe
+haben keine Pending-Acquire-Messung; das ist in den Ergebnissen `null`. Auch die
+unveränderte Pin-Vergleichsfixture erfasst diesen Zähler noch nicht. Auf dem neuen
+SDK ist die API vorhanden; die Pool-Metrikintegration folgt mit #4.
 
 ## Reproduzieren
 
