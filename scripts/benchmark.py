@@ -163,8 +163,8 @@ def runtime_sample(port: int) -> dict:
         if line.startswith(("hoori_http_connections_active ", "hoori_http_requests_active ")):
             name, value = line.split()
             result[name] = int(value)
-    # The pinned SDK has no poolStats API. Keep the missing measurement explicit.
-    result["http_pool_pending_acquires"] = None
+    # Older fixtures omit pool statistics. Keep unsampled pending acquires explicit.
+    result.setdefault("http_pool_pending_acquires", None)
     return result
 
 

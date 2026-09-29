@@ -69,7 +69,7 @@ migrierte Dahemm-Fachlogik.
 ### 1. Passende Hoori-Distribution bauen
 
 Der Bootstrap ist an Hoori-Commit
-`550d608f7885d73233c4941f185afcabf6f9b5e8` gebunden. Das verhindert, dass unterschiedliche
+`3254301e0b412669ffcc86a2c439327c18b72fe9` gebunden. Das verhindert, dass unterschiedliche
 Quellstände trotz unveränderter SDK-Version `0.1.0` vermischt werden.
 `hoori.lock.json` enthält diese Baseline.
 
@@ -82,7 +82,7 @@ Worktree vermeidet Änderungen am eigenen Arbeitsstand:
 
 ```bash
 # Einen noch nicht vorhandenen Zielpfad wählen.
-git worktree add --detach ../hoori-micro-runtime 550d608f7885d73233c4941f185afcabf6f9b5e8
+git worktree add --detach ../hoori-micro-runtime 3254301e0b412669ffcc86a2c439327c18b72fe9
 cd ../hoori-micro-runtime
 
 export JAVA_HOME=/pfad/zum/jdk-21

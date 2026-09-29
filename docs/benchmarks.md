@@ -60,8 +60,9 @@ Kosten und Hintergrundarbeit sind in den Zählerdifferenzen
 enthalten. Sie sind keine isolierte Allokation eines einzelnen Handlers. Die
 Verbindungsprobe zählt ihre eigene Verbindung/Anfrage mit. Die alte SDK-Baseline
 hat keine Pool-Statistik: `http_pool_pending_acquires: null` bezeichnet fehlende
-Messbarkeit, nicht null Wartende. Diese Sicht wird mit dem qualifizierten SDK-Pin
-aus #8 ergänzt.
+Messbarkeit, nicht null Wartende. Der qualifizierte SDK-Pin aus #8 enthält die API;
+die bisherige Vergleichsfixture lässt den noch nicht erfassten Zähler explizit `null`.
+Beide Pools werden mit #4 sichtbar gemacht.
 
 Guest-Heap ist logische Belegung; committed Heap ist dessen physische backing
 storage. RSS enthält auch JIT, native Provider und VM-Metadaten. Cgroup
@@ -211,3 +212,27 @@ for jar in "$runtime"/lib/*.jar; do cp="$cp:$jar"; done
   --class-path "$cp" --arg lookup hoori/micro/BenchmarkMain
 # Dasselbe mit --engine interpreter.
 ```
+
+## Qualifizierter SDK-Pin, 30. September 2026
+
+Der vollständige saubere Satz VM/Guest Base/SDK wechselt von `550d608f` auf
+`3254301`, ohne Framework-Optimierung. [Kleiner](benchmarks/issue-8-sdk-3254301-small.json.gz)
+und [großer](benchmarks/issue-8-sdk-3254301-large.json.gz) C-Kontrolllauf verwenden
+dieselbe kompilierte Fixture und alle Last-/Ressourceneinstellungen der #3-Kontrollen
+oben. Der Generator setzt fehlende Pool-Proben weiterhin auf `null`; die Änderung
+verändert diese Messungen nicht. Alle Artefakt-/Runtime-Identitäten sind aufgezeichnet.
+
+| Beobachtung, je ein frischer Mixed-Lauf | klein: alter → neuer SDK | 32 zusätzliche Services: alter → neuer SDK |
+|---|---:|---:|
+| erfolgreiche/s, geschlossene Last | 112,45 → 119,76 | 109,71 → 116,38 |
+| p99, ms | 550,29 → 571,05 | 507,90 → 189,64 |
+| Shopping-Heap nach ruhigem Abschnitt, MiB | 0,562 → 0,562 | 0,561 → 0,563 |
+| Shopping-RSS nach ruhigem Abschnitt, MiB | 56,438 → 56,930 | 56,711 → 57,559 |
+
+Die geschlossene Phase enthält weiterhin je einen Fehler (<1 %), beide neuen
+Recovery-Phasen je acht korrekte Antworten ohne Fehler. Shopping hält einen
+Katalogeintrag, Recipes keinen; vollständige Registry-Mengen bleiben 3/35.
+Einmalige Läufe sind eine separate SDK-Kontrolle, keine statistische Gewinnfreigabe.
+Pending-Zähler sind in dieser Fixture **noch nicht erfasst**, obwohl der neue SDK
+sie anbietet. Pool-Isolation/Admission/Budget-Wire-Protokoll folgen separat in #4–#6;
+Basisimage-Digest und weitere Image-Abnahme aus #8 bleiben offen.
