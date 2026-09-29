@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import hoori.http.Headers;
 import hoori.http.Response;
+import hoori.rest.RequestException;
 import hoori.rest.json.Json;
 import hoori.rest.json.JsonCodec;
 import hoori.rest.json.JsonLimits;
@@ -139,7 +140,7 @@ final class ServiceBrokerTest {
 
     @Test
     void registryExpiresRegistrationsAndReportsWarmup() {
-        Registry registry = new Registry(1000);
+        Registry registry = new Registry(1000, JsonLimits.DEFAULT);
         long now = System.nanoTime();
         Catalog.Instance a = parse(instance("recipes-a", 1, "http://a:8080", "get"));
         assertFalse(registry.register(a, now).complete);
@@ -148,6 +149,155 @@ final class ServiceBrokerTest {
         registry.register(a, now);
         registry.remove("recipes-a");
         assertEquals(0, registry.snapshot(now).instances.length);
+    }
+
+    @Test
+    void leasesReuseSnapshotsAndOnlyVisibleChangesAdvanceRevision() {
+        Registry registry = new Registry(1000, JsonLimits.DEFAULT);
+        long now = System.nanoTime();
+        Catalog.Instance a = parse(instance("a", 1, "http://a:8080", "get"));
+        Catalog first = registry.register(a, now);
+        Response body = registry.reply(new Headers(), now);
+        assertSame(first, registry.register(parse(instance("a", 1, "http://a:8080", "get")), now + 1));
+        assertTrue(registry.renew("a", now + 2));
+        assertSame(first, registry.snapshot(now + 2));
+        assertSame(body.body, registry.reply(new Headers(), now + 2).body);
+        Headers known = version(first);
+        assertEquals(204, registry.reply(known, now + 2).status);
+        assertEquals(0, registry.reply(known, now + 2).body.length);
+        assertEquals(200, registry.reply(new Headers().add(Catalog.EPOCH_HEADER, first.epoch), now).status);
+        assertEquals(
+                200, registry.reply(version(new Catalog("other", first.revision, true, first.instances)), now).status);
+
+        Catalog changed = registry.register(parse(instance("a", 1, "http://a:8080", "get", "recommend")), now + 3);
+        assertTrue(changed.revision > first.revision);
+        assertEquals(2, changed.instances[0].actions.length);
+        assertEquals(200, registry.reply(known, now + 3).status);
+        registry.remove("absent");
+        assertSame(changed, registry.snapshot(now + 3));
+        // Renew after warmup but before this instance's expiry, then expire the renewed lease.
+        assertTrue(registry.renew("a", now + 1_000_000_001L));
+        Catalog complete = registry.snapshot(now + 1_000_000_001L);
+        assertTrue(complete.complete);
+        assertTrue(complete.revision > changed.revision);
+        assertSame(complete, registry.snapshot(now + 1_000_000_002L));
+        assertFalse(registry.renew("a", now + 2_000_000_002L));
+        assertEquals(0, registry.snapshot(now + 2_000_000_002L).instances.length);
+        assertTrue(registry.snapshot(now + 2_000_000_002L).revision > complete.revision);
+        assertNotEquals(first.epoch, new Registry(1000, JsonLimits.DEFAULT).snapshot(now).epoch);
+    }
+
+    @Test
+    void rejectedMetadataKeepsTheCatalogAndDoesNotRenewTheLease() {
+        JsonLimits limits = new JsonLimits(64, 16384, 128, 1024);
+        Registry registry = new Registry(1000, limits);
+        long now = System.nanoTime();
+        registry.register(parse(instance("a", 1, "http://a:8080", "get")), now);
+        Catalog current = registry.register(parse(instance("b", 1, "http://b:8080", "get")), now);
+        byte[] before = registry.reply(new Headers(), now).body;
+        Catalog.Entry[] many = new Catalog.Entry[40];
+        for (int i = 0; i < many.length; i++) many[i] = new Catalog.Entry("action-" + i, null, null, null);
+        Catalog.Instance big = new Catalog.Instance("b", "recipes", 1, "http://b:8080", many);
+        assertTrue(Json.encode(big, Catalog.INSTANCE, limits).length < 1024); // Valid alone; aggregate too large.
+        assertEquals(
+                413, assertThrows(RequestException.class, () -> registry.register(big, now + 500_000_000L)).status);
+        assertSame(current, registry.snapshot(now + 500_000_000L));
+        assertSame(before, registry.reply(new Headers(), now + 500_000_000L).body);
+        assertFalse(registry.renew("b", now + 1_000_000_001L));
+
+        Registry full = new Registry(60_000, JsonLimits.DEFAULT);
+        for (int i = 0; i < Catalog.MAX_INSTANCES; i++)
+            full.register(parse(instance("node-" + i, 1, "http://a:8080", "get")), now);
+        assertEquals(
+                429,
+                assertThrows(
+                                RequestException.class,
+                                () -> full.register(parse(instance("extra", 1, "http://a:8080", "get")), now))
+                        .status);
+        assertEquals(Catalog.MAX_INSTANCES, full.snapshot(now).instances.length);
+    }
+
+    @Test
+    void brokerSendsSmallLeasesAndReregistersOnceAfterRestart() throws Exception {
+        Registry[] registry = {new Registry(60_000, JsonLimits.DEFAULT)};
+        long[] now = {System.nanoTime() + 60_001_000_000L};
+        List<String> methods = new ArrayList<>();
+        Service provider = Service.named("shopping")
+                .action("ping", STRING, STRING, (ctx, in) -> in)
+                .freeze();
+        ServiceConfig config =
+                ServiceConfig.from("shopping", key -> key.equals("HOORI_INSTANCE_ID") ? "shopping-test" : null);
+        ServiceBroker broker = new ServiceBroker(
+                provider,
+                config,
+                (context, target, method, headers, body) -> {
+                    methods.add(method);
+                    assertEquals("2", headers.get(Catalog.PROTOCOL_HEADER));
+
+                    if (method.equals("PUT")) registry[0].register(Json.decode(body, Catalog.INSTANCE), now[0]);
+                    else {
+                        assertEquals(0, body.length);
+
+                        if (!registry[0].renew(config.instanceId, now[0])) return Response.text(404, "Unknown lease");
+                    }
+
+                    return registry[0].reply(headers, now[0]);
+                },
+                JsonLimits.DEFAULT);
+        broker.beat(true);
+        Catalog first = broker.catalog();
+        for (int i = 0; i < 4; i++) {
+            broker.beat(true);
+            assertSame(first, broker.catalog());
+            int delay = broker.heartbeatDelayMillis();
+            assertTrue(delay >= 1800 && delay <= 2200 && delay < config.registryTtlMillis);
+        }
+        assertEquals(List.of("PUT", "POST", "POST", "POST", "POST"), methods);
+        registry[0] = new Registry(60_000, JsonLimits.DEFAULT);
+        now[0] = System.nanoTime() + 60_001_000_000L;
+        broker.beat(true);
+        assertEquals(List.of("PUT", "POST", "POST", "POST", "POST", "POST", "PUT"), methods);
+        assertNotEquals(first.epoch, broker.catalog().epoch);
+    }
+
+    @Test
+    void staleVersionsAndUnmatchedConfirmationsCannotExtendFreshness() throws Exception {
+        Response[] reply = {null};
+        ServiceConfig config = ServiceConfig.from(
+                "shopping",
+                key -> key.equals("HOORI_HEARTBEAT_MS")
+                        ? "100"
+                        : key.equals("HOORI_CATALOG_MAX_AGE_MS") ? "150" : null);
+        ServiceBroker broker = new ServiceBroker(shopping(), config, (c, t, m, h, b) -> reply[0], JsonLimits.DEFAULT);
+        Catalog original =
+                new Catalog("old", 10, true, new Catalog.Instance[] {parse(instance("a", 1, "http://a:8080", "get"))});
+        broker.accept(Json.encode(original, Catalog.CODEC));
+        Catalog held = broker.catalog();
+        reply[0] = new Response(204, version(new Catalog("new", 10, true, original.instances)), new byte[0]);
+        broker.beat(false);
+        assertSame(held, broker.catalog());
+        assertTrue(broker.heartbeatDelayMillis() >= 180 && broker.heartbeatDelayMillis() <= 220);
+        broker.accept(Json.encode(new Catalog("old", 9, true, new Catalog.Instance[0]), Catalog.CODEC));
+        broker.accept(Json.encode(new Catalog("new", 1, false, new Catalog.Instance[0]), Catalog.CODEC));
+        Thread.sleep(180);
+        assertSame(Catalog.EMPTY, broker.catalog());
+        broker.accept(Json.encode(new Catalog("new", 2, true, original.instances), Catalog.CODEC));
+        Catalog recovered = broker.catalog();
+        broker.accept(Json.encode(new Catalog("old", 99, true, new Catalog.Instance[0]), Catalog.CODEC));
+        assertSame(recovered, broker.catalog());
+        reply[0] = new Response(204, version(recovered), new byte[0]);
+        broker.beat(false);
+        assertSame(recovered, broker.catalog());
+        assertTrue(broker.heartbeatDelayMillis() >= 90 && broker.heartbeatDelayMillis() <= 110);
+        reply[0] = json(
+                200,
+                new String(Json.encode(original, Catalog.CODEC), StandardCharsets.UTF_8)); // Old registry lacks v2.
+        broker.beat(false);
+        Thread.sleep(180);
+        assertSame(Catalog.EMPTY, broker.catalog());
+        assertThrows(
+                RuntimeException.class,
+                () -> broker.accept("{\"complete\":true,\"instances\":[]}".getBytes(StandardCharsets.UTF_8)));
     }
 
     @Test
@@ -183,12 +333,12 @@ final class ServiceBrokerTest {
         Catalog.Entry get = new Catalog.Entry("get", "GET", "/recipes/{id}", "recipes:read");
         Catalog.Entry other = new Catalog.Entry("lookup", "GET", "/recipes/{key}", "recipes:read");
         Catalog.Entry search = new Catalog.Entry("search", "GET", "/recipes/search", "recipes:read");
-        Gateway.Route[] routes = Gateway.build(new Catalog(true, new Catalog.Instance[] {
+        Gateway.Route[] routes = Gateway.build(new Catalog("test", 1, true, new Catalog.Instance[] {
             new Catalog.Instance("a", "recipes", 1, "http://a:8080", new Catalog.Entry[] {get, search}),
             new Catalog.Instance("b", "recipes", 1, "http://b:8080", new Catalog.Entry[] {get, search})
         }));
         assertEquals(2, routes.length); // Two instances of the same actions are one route each.
-        routes = Gateway.build(new Catalog(true, new Catalog.Instance[] {
+        routes = Gateway.build(new Catalog("test", 1, true, new Catalog.Instance[] {
             new Catalog.Instance("a", "recipes", 1, "http://a:8080", new Catalog.Entry[] {get, search}),
             new Catalog.Instance("b", "recipes", 1, "http://b:8080", new Catalog.Entry[] {other})
         }));
@@ -234,12 +384,20 @@ final class ServiceBrokerTest {
     }
 
     private static byte[] catalog(boolean complete, String... instances) {
-        return ("{\"complete\":" + complete + ",\"instances\":[" + String.join(",", instances) + "]}")
+        return ("{\"epoch\":\"test\",\"revision\":1,\"complete\":" + complete + ",\"instances\":["
+                        + String.join(",", instances) + "]}")
                 .getBytes(StandardCharsets.UTF_8);
     }
 
     private static Response json(int status, String body) {
         return new Response(
                 status, new Headers().add("Content-Type", "application/json"), body.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static Headers version(Catalog catalog) {
+        return new Headers()
+                .add(Catalog.PROTOCOL_HEADER, "2")
+                .add(Catalog.EPOCH_HEADER, catalog.epoch)
+                .add(Catalog.REVISION_HEADER, Long.toString(catalog.revision));
     }
 }

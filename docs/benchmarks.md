@@ -31,6 +31,8 @@ python3 scripts/benchmark.py --engine interpreter --output .cache/baseline-inter
 python3 scripts/benchmark.py --catalog-instances 32 --output .cache/catalog-32.json
 # Getrennte Instrumentierung mit hoori stats; keine vergleichbare Zeitmessung.
 python3 scripts/benchmark.py --profile --repeats 1 --output .cache/profile.json
+# Ruhiger Kontrollverkehr vor Überlast, mit nachgewiesen gleicher Instanzmenge:
+python3 scripts/benchmark.py --variants C --stable-catalog --idle 12 --output .cache/control-idle.json
 ```
 
 Das Skript baut die vorbereiteten Images vor der Messung. Jede Variante/Wiederholung
@@ -122,3 +124,43 @@ statistisch belastbare Verbesserung gegenüber der kleinen Baseline.
 Snapshots und vollständige `hoori stats`-Ausgaben. Shopping zeigt dabei in den
 Lastproben bis zu 13 aktive Guest-Tasks, in der normalen Recovery bis zu sechs;
 die Profiling-Latenzen sind wegen zusätzlicher Probes kein Zeitvergleich.
+
+## Discovery-Protokoll 2, 30. September 2026
+
+[Gemessener C/D-Kandidat](benchmarks/issue-2-550d608f-mixed.json.gz): unveränderter
+Runtime-/SDK-Pin, gleiche Mixed-Einstellungen wie die Ausgangsmessung, drei frische
+Läufe je Variante. Erfolgreiche/s bei geschlossener Last: C **103,22 [92,67–104,20]**,
+D **85,17 [69,84–95,72]**; p99-Median **599,62/1901,18 ms**. Der beobachtete
+Gesamtdurchsatz ist niedriger; das Gateway verfehlt weiterhin die Grenze.
+Die sechs Recovery-Phasen liefern je 24 korrekte Antworten ohne Fehler.
+Die wechselnde Fremdregistrierung verhindert viele unverändert-Antworten; zusätzliche
+Versionsfelder erhöhen dann Antwortbytes. Das ist **keine Performancefreigabe**.
+
+Für pure Erneuerungen gibt es zusätzlich je einen frischen C-Lauf mit
+`--stable-catalog --seconds 2 --warmup 5 --idle 12 --repeats 1`, einmal mit
+`--catalog-instances 32`. Der ruhige Abschnitt liegt nach Warmup und vor Überlast;
+vor/nach ihm müssen exakt dieselben 3/35 Instanzen vollständig registriert sein.
+Damit kann der bekannte Registrar-Timeout aus #4 keine vermeintliche Einsparung
+vortäuschen. Rohdaten: [alt, klein](benchmarks/issue-2-control-old-small.json.gz),
+[neu, klein](benchmarks/issue-2-control-new-small.json.gz),
+[alt, groß](benchmarks/issue-2-control-old-large.json.gz),
+[neu, groß](benchmarks/issue-2-control-new-large.json.gz).
+
+| Registry, ruhiger Abschnitt | klein: alt → neu | 32 zusätzliche Instanzen: alt → neu |
+|---|---:|---:|
+| HTTP-Requests in rund 12 s, inklusive Probes/Healthchecks | 22 → 22 | 153 → 214 |
+| CPU-ms / HTTP-Request | 10,88 → 9,43 | 16,05 → 3,04 |
+| Guest-Allokation KiB / HTTP-Request | 15,41 → 12,42 | 38,88 → 14,93 |
+| empfangene / gesendete Service-Bytes | 5782/22996 → 4648/19832 | 39188/611071 → 54016/845593 |
+| beobachteter Guest-Heap nach Abschnitt, MiB | 0,68 → 0,58 | 0,66 → 1,36 |
+| Registry-RSS nach Abschnitt, MiB | 54,32 → 53,99 | 56,70 → 57,89 |
+
+Der externe Generator meldet seine zusätzlichen Anbieter weiterhin per Legacy-PUT
+seriell an und wartet erst danach 2 s. Die schnellere Registry verarbeitet im großen
+Katalog deshalb mehr davon; absolute Bytes sind dort kein Vergleich bei gleicher
+Ankunftsrate. CPU/Allokationen sind zusätzlich auf tatsächlich gezählte HTTP-Requests
+bezogen. Die beiden echten Framework-Anbieter verwenden kleine Leases. Einmalige
+Läufe sind beschreibende Kontrollen, keine statistische Gewinnfreigabe. Der Heap
+enthält auch noch nicht gesammelten Garbage; dies ist keine Live-Retentionmessung.
+Ein RSS-Gewinn ist nicht belegt. Genau ein serialisierter Registry-Snapshot wird
+gehalten; die JUnit-Prüfung belegt dessen Objekt-/Byte-Wiederverwendung bei Leases.

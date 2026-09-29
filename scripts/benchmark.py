@@ -156,7 +156,10 @@ def kernel_sample(pid: int) -> dict:
 
 def runtime_sample(port: int) -> dict:
     result = json.loads(http(port, "/bench/runtime"))
+    result["http_requests_total"] = 0
     for line in http(port, "/metrics").decode().splitlines():
+        if line.startswith("hoori_http_requests_total{"):
+            result["http_requests_total"] += int(line.rsplit(" ", 1)[1])
         if line.startswith(("hoori_http_connections_active ", "hoori_http_requests_active ")):
             name, value = line.split()
             result[name] = int(value)
@@ -242,7 +245,7 @@ def experiment(args, variant: str, repeat: int, work: Path, receipt: dict, docum
                 http(args.port, "/v1/instances/changing", "PUT", {
                     "id": "changing", "service": "changing", "version": 1, "url": "http://recipes:8080",
                     "actions": [{"name": "echo" if change % 2 else "added"}]})
-                change += 1
+                change += not args.stable_catalog
                 control_stop.wait(2)
         except Exception as error:
             control_failures.append(type(error).__name__)
@@ -288,6 +291,28 @@ def experiment(args, variant: str, repeat: int, work: Path, receipt: dict, docum
             time.sleep(.5)
         result["cold_idle"] = snapshot()
         load(port, path, payload, args.warmup, args.workers, args.rate, args.p99_ms, args.error_fraction)
+        if args.stable_catalog:
+            # Measure before the burst: #4's known registrar timeout bug must not mimic a saving.
+            def registry_ids():
+                catalog = json.loads(http(args.port, "/v1/catalog"))
+                if not catalog["complete"]:
+                    raise RuntimeError("Stable catalog has not completed warmup")
+                return sorted(instance["id"] for instance in catalog["instances"])
+
+            ids = registry_ids()
+            expected = sorted(["recipes-bench", "shopping-bench", "changing"]
+                              + [f"extra-{n}" for n in range(args.catalog_instances)])
+            if ids != expected:
+                raise RuntimeError("Stable catalog lost a provider before measurement")
+            before = snapshot()
+            start = time.monotonic()
+            time.sleep(args.idle)
+            after = snapshot()
+            elapsed = time.monotonic() - start
+            if registry_ids() != ids:
+                raise RuntimeError("Stable catalog changed during measurement")
+            result["control_idle"] = {"elapsed_seconds": elapsed, "registry_ids": ids,
+                                      "resources": resources(before, after, [], 0)}
         phases = [("closed-small", 64, 0, 0), ("open-large", 8192, args.rate, 0),
                   ("sustained", 64, args.rate, 0), ("slow", 64, args.rate, args.delay_ms),
                   ("burst", 64, args.burst_rate, args.delay_ms), ("recovery", 64, args.rate, 0)]
@@ -365,6 +390,7 @@ def main() -> int:
     parser.add_argument("--burst-rate", type=float, default=64)
     parser.add_argument("--delay-ms", type=int, default=250)
     parser.add_argument("--catalog-instances", type=int, default=0)
+    parser.add_argument("--stable-catalog", action="store_true", help="Hold metadata fixed to measure pure renewals")
     parser.add_argument("--cpus", type=float, default=.5)
     parser.add_argument("--memory-mib", type=int, default=256)
     parser.add_argument("--heap-mib", type=int, default=32)

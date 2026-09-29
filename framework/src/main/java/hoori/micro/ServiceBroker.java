@@ -11,8 +11,8 @@ import hoori.rest.json.JsonLimits;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.net.URI;
-import java.util.Arrays;
 import java.util.Map;
+import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -38,9 +38,11 @@ final class ServiceBroker {
     private final byte[] registration;
     private final AtomicInteger turn = new AtomicInteger();
     private volatile boolean followCatalog;
-    private volatile Catalog catalog = Catalog.EMPTY;
-    private volatile long fetchedNanos;
-    private byte[] fetchedBody = EMPTY; // heartbeat thread only
+    private volatile View view = new View(Catalog.EMPTY, 0);
+    private final Random jitter = new Random();
+    private boolean registered; // all control state below is heartbeat-thread owned
+    private String retiredEpoch;
+    private int failures;
     private boolean registryReachable = true; // heartbeat thread only; logs transitions, not every beat
 
     ServiceBroker(Service service, ServiceConfig config, Exchange exchange, JsonLimits limits) {
@@ -120,42 +122,73 @@ final class ServiceBroker {
 
     /** Current snapshot, or EMPTY once no refresh succeeded within HOORI_CATALOG_MAX_AGE_MS. */
     Catalog catalog() {
-        Catalog current = catalog;
-        long age = System.nanoTime() - fetchedNanos;
+        View current = view;
+        long age = System.nanoTime() - current.fetchedNanos;
 
-        return current != Catalog.EMPTY && age < config.catalogMaxAgeMillis * 1_000_000L ? current : Catalog.EMPTY;
+        return age < config.catalogMaxAgeMillis * 1_000_000L ? current.catalog : Catalog.EMPTY;
     }
 
     void followCatalog() {
         followCatalog = true;
     }
 
-    /** One heartbeat: register while ready (the reply is the catalog), else refresh only if needed. */
+    /** One control exchange; an unknown lease permits one full, idempotent re-registration. */
     void beat(boolean ready) throws InterruptedIOException {
         boolean register = ready && !service.actions.isEmpty();
 
         if (!register && !followCatalog) return;
 
         try {
-            Headers headers = new Headers().add("Accept", "application/json");
-            Response response = register
-                    ? exchange.send(
-                            null,
-                            URI.create(config.registryUrl + "/v1/instances/" + config.instanceId),
-                            "PUT",
-                            headers.add("Content-Type", "application/json"),
-                            registration)
-                    : exchange.send(null, URI.create(config.registryUrl + "/v1/catalog"), "GET", headers, EMPTY);
+            View known = view;
+            Headers headers = new Headers().add("Accept", "application/json").add(Catalog.PROTOCOL_HEADER, "2");
 
-            if (response.status != 200 || !jsonContentType(response.headers)) throw new IOException("Registry status");
+            if (known.catalog != Catalog.EMPTY)
+                headers.add(Catalog.EPOCH_HEADER, known.catalog.epoch)
+                        .add(Catalog.REVISION_HEADER, Long.toString(known.catalog.revision));
 
-            accept(response.body);
+            String path = "/v1/instances/" + config.instanceId;
+            Response response;
+
+            if (register && registered) {
+                response =
+                        exchange.send(null, URI.create(config.registryUrl + path + "/lease"), "POST", headers, EMPTY);
+
+                if (response.status == 404) registered = false;
+            } else response = null;
+
+            if (register && !registered) {
+                response = exchange.send(
+                        null,
+                        URI.create(config.registryUrl + path),
+                        "PUT",
+                        headers.add("Content-Type", "application/json"),
+                        registration);
+            } else if (!register) {
+                response = exchange.send(null, URI.create(config.registryUrl + "/v1/catalog"), "GET", headers, EMPTY);
+            }
+
+            accept(response, known);
+
+            if (register) registered = true;
+
+            failures = 0;
             reachable(true, null);
         } catch (InterruptedIOException stopped) {
             throw stopped;
         } catch (IOException | RuntimeException failed) {
+            failures = Math.min(3, failures + 1);
             reachable(false, failed);
         }
+    }
+
+    /** Successful renewals leave half the TTL for exchange/scheduling; failed attempts back off. */
+    int heartbeatDelayMillis() {
+        int base = failures == 0
+                ? Math.min(config.heartbeatMillis, config.registryTtlMillis / 2)
+                : Math.min(60_000, config.heartbeatMillis * (1 << failures));
+        int spread = Math.max(1, base / 10);
+
+        return Math.max(1, base - spread + jitter.nextInt(2 * spread + 1));
     }
 
     /** Best effort on graceful stop; TTL expiry covers crashes and an unreachable registry. */
@@ -167,7 +200,7 @@ final class ServiceBroker {
                     null,
                     URI.create(config.registryUrl + "/v1/instances/" + config.instanceId),
                     "DELETE",
-                    new Headers(),
+                    new Headers().add(Catalog.PROTOCOL_HEADER, "2"),
                     EMPTY);
         } catch (IOException ignored) {
             /* Expires after HOORI_REGISTRY_TTL_MS. */
@@ -175,19 +208,64 @@ final class ServiceBroker {
     }
 
     void accept(byte[] body) {
-        if (!Arrays.equals(body, fetchedBody)) {
-            Catalog next = Json.decode(body, Catalog.CODEC, limits);
+        accept(Json.decode(body, Catalog.CODEC, limits));
+    }
 
-            if (next == null) throw new JsonException("Null catalog");
+    private void accept(Catalog next) {
+        if (next == null) throw new JsonException("Null catalog");
 
-            // A restarted registry is incomplete until one TTL has passed; keep the last full view.
-            if (!next.complete && catalog() != Catalog.EMPTY) return;
+        View current = view;
+        Catalog old = current.catalog;
+        boolean sameEpoch = next.epoch.equals(old.epoch);
 
-            catalog = next;
-            fetchedBody = body;
+        if (next.epoch.equals(retiredEpoch)
+                || sameEpoch && (next.revision < old.revision || old.complete && !next.complete)) return;
+
+        // A new registry cannot extend the retained full view while it rebuilds for one TTL.
+        if (!sameEpoch && !next.complete && old.complete && catalog() != Catalog.EMPTY) return;
+
+        if (!sameEpoch && old != Catalog.EMPTY) retiredEpoch = old.epoch;
+
+        view = new View(sameEpoch && next.revision == old.revision ? old : next, System.nanoTime());
+    }
+
+    private void accept(Response response, View sent) throws IOException {
+        if (!"2".equals(response.headers.get(Catalog.PROTOCOL_HEADER))) throw new IOException("Registry protocol");
+
+        String epoch = response.headers.get(Catalog.EPOCH_HEADER),
+                revision = response.headers.get(Catalog.REVISION_HEADER);
+
+        if (response.status == 204) {
+            if (sent.catalog == Catalog.EMPTY
+                    || !sent.catalog.epoch.equals(epoch)
+                    || !Long.toString(sent.catalog.revision).equals(revision)
+                    || response.body.length != 0
+                    || view != sent) throw new IOException("Unmatched catalog confirmation");
+
+            view = new View(sent.catalog, System.nanoTime());
+
+            return;
         }
 
-        fetchedNanos = System.nanoTime();
+        if (response.status != 200 || !jsonContentType(response.headers)) throw new IOException("Registry status");
+
+        Catalog next = Json.decode(response.body, Catalog.CODEC, limits);
+
+        if (next == null
+                || !next.epoch.equals(epoch)
+                || !Long.toString(next.revision).equals(revision)) throw new IOException("Unmatched catalog version");
+
+        accept(next);
+    }
+
+    private static final class View {
+        final Catalog catalog;
+        final long fetchedNanos;
+
+        View(Catalog catalog, long fetchedNanos) {
+            this.catalog = catalog;
+            this.fetchedNanos = fetchedNanos;
+        }
     }
 
     private void reachable(boolean value, Exception failure) {

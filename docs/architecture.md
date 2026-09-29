@@ -28,11 +28,16 @@ Aufrufer adressieren eine **fachliche Action** (`recipes.get`) mit der per
   Eine neue Action braucht keine neue Route; der Router bleibt nach `freeze()` fix.
 - **Registry** (`hoori.micro.Registry`): In-Memory-Map Instanz-ID → {Service,
   Hauptversion, Advertise-URL, Actions}, begrenzt auf 256 Instanzen, jeder Eintrag mit
-  TTL. `PUT /v1/instances/{id}` registriert bzw. verlängert und antwortet mit dem
-  Katalog; `DELETE` deregistriert; `GET /v1/catalog` liest.
-- **Heartbeat:** Nach Live und solange Ready sendet jede Instanz mit Actions ihre
-  vollständige Registrierung (Default alle 2 s, TTL 6 s). Deshalb registriert sie sich
-  nach einem Registry-Neustart automatisch neu. Reine Aufrufer holen nur den Katalog.
+  TTL. `PUT /v1/instances/{id}` registriert Metadaten, ein leerer
+  `POST /v1/instances/{id}/lease` verlängert die Lease; `DELETE` deregistriert;
+  `GET /v1/catalog` liest. Eine unbekannte Lease (404) erlaubt eine volle Neuanmeldung.
+- **Heartbeat:** Nach Live und solange Ready erfolgt einmal die volle Registrierung,
+  danach die kleine Lease-Erneuerung (Default 2 s mit ±10 % Jitter, TTL 6 s).
+  Die erfolgreiche Periode wird auf höchstens die halbe konfigurierte TTL vor Jitter
+  begrenzt; Netzwerk- und Scheduling-Zeit brauchen zusätzlich Spielraum. Fehler
+  führen zu begrenztem Backoff (höchstens 66 s einschließlich Jitter). Reine Aufrufer
+  holen nur den Katalog. Actions/Metadaten sind während eines Service-Laufs eingefroren;
+  ein neuer Provider-Prozess registriert seinen neuen Stand.
 - **Broker** (pro Service, Bibliothek): hält den zuletzt gültigen Katalog lokal,
   wählt **pro Action und Hauptversion** eine anbietende Instanz (Round Robin) und
   ruft sie direkt über den Hoori-Pool auf. Die Registry liegt nie im Request-Pfad.
@@ -52,6 +57,29 @@ Hauptversion hat, antwortet mit 421; der Broker wiederholt nicht automatisch.
 
 Heartbeats garantieren keine Erreichbarkeit zwischen zwei Meldungen. Die Registry
 ist ein einzelner Prozess ohne Persistenz oder Hochverfügbarkeit.
+
+**Discovery-Protokoll 2:** Broker senden `X-Hoori-Catalog-Protocol: 2` und, sobald ein
+Snapshot bekannt ist, `X-Hoori-Catalog-Epoch` plus `X-Hoori-Catalog-Revision`.
+Jeder volle JSON-Katalog trägt dieselben `epoch`/`revision`-Werte und `complete`.
+Nur Metadaten, Entfernung/Ablauf und der einmalige Vollständigkeitswechsel erhöhen
+die Revision; pure Leases verändern sie nicht. Bei exakt passender Epoche/Revision
+kommt 204 ohne Body, sonst der volle 200-Katalog. Beide Antworten bestätigen ihre
+Identität in denselben Headern. Nur eine zum gesendeten und noch aktuellen Snapshot
+passende 204-Antwort erneuert dessen Frische. Eine neue, noch unvollständige Epoche
+verlängert den alten vollständigen Snapshot nicht; kleinere Revisionen derselben
+Epoche, unvollständige Rückschritte und Antworten der zuletzt verlassenen Epoche
+werden verworfen. Ein einziger Registrar verarbeitet Antworten seriell; keine
+Delta-Historie oder unbegrenzte Epochenliste.
+
+Upgrade-Reihenfolge: **Registry zuerst, dann Broker/Services/Gateway.** Anfragen ohne
+Protokollheader bleiben kompatibel: volle PUT-/GET-Antworten mit additiven JSON-Feldern;
+alte Decoder überspringen diese. Andere explizite Protokollversionen und Leases ohne
+Version 2 erhalten 426. Neue Broker akzeptieren keine unversionierten alten Registry-
+Antworten; ein Registry-Downgrade lässt ihren bisherigen Katalog daher ausaltern.
+Die Registry hält genau einen Snapshot plus dessen Bytes. Vor Metadatenannahme muss
+der Gesamtkatalog einschließlich Reserve für Revisionsziffern in `HOORI_BODY_BYTES`
+passen; sonst 413 ohne Metadaten-/Lease-Änderung. 256 belegte Einträge liefern 429.
+Ein bei dieser Gelegenheit fälliger TTL-Purge bleibt wirksam.
 
 ## 3. Wire-Protokoll, Gateway und Verträge
 

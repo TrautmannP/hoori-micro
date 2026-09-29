@@ -159,7 +159,7 @@ public final class Microservice implements AutoCloseable {
                     while (!closed && !isLive()) Thread.sleep(1);
                     while (!closed && !stopRequested) {
                         broker.beat(isReady());
-                        Thread.sleep(config.heartbeatMillis);
+                        Thread.sleep(broker.heartbeatDelayMillis());
                     }
                 } catch (InterruptedException | InterruptedIOException stopped) {
                     // stop() or close(); fall through to deregistration.

@@ -32,8 +32,8 @@ damit lassen sich Konfigurationen ohne Prozess-Environment testen.
 | `HOORI_REGISTRY_URL` | `http://registry:8080` | Origin der Registry |
 | `HOORI_ADVERTISE_URL` | `http://$HOSTNAME:<port>` | Unter dieser Adresse erreichen andere Instanzen diese; ohne `HOSTNAME` der Service-Name |
 | `HOORI_INSTANCE_ID` | `<name>-<zufällig>` | Registry-Schlüssel dieser Instanz |
-| `HOORI_HEARTBEAT_MS` | 2000 | 100–60000; Registrierung bzw. Katalogabruf |
-| `HOORI_REGISTRY_TTL_MS` | 3 × Heartbeat | Nur Registry: Ablauf einer Registrierung und Dauer von `complete=false` nach dem Start |
+| `HOORI_HEARTBEAT_MS` | 2000 | 100–60000; Lease-/Katalogperiode mit ±10 % Jitter; bei Fehlern begrenztes Backoff |
+| `HOORI_REGISTRY_TTL_MS` | 3 × Heartbeat | Ablauf einer Registrierung und Dauer von `complete=false`; Broker begrenzen die erfolgreiche Periode vor Jitter auf TTL/2. Zwischen Registry und Anbietern passend konfigurieren |
 | `HOORI_CATALOG_MAX_AGE_MS` | 30000 | Größer als Heartbeat; so lange bleibt ein Katalog ohne erfolgreiche Aktualisierung gültig |
 
 Weitere feste Bootstrap-Limits: 64 Header, 16 KiB Headerbytes, 100 Requests je
