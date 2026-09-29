@@ -46,7 +46,7 @@ public final class BenchmarkMain {
                     .requirePermission("shopping:read");
 
         try (Microservice app = Microservice.create(service)) {
-            if (ROLE.equals("registry")) new Registry(app.config().registryTtlMillis).mount(app);
+            if (ROLE.equals("registry")) new Registry(app.config().registryTtlMillis, app.jsonLimits()).mount(app);
 
             if (ROLE.equals("gateway") && VARIANT.equals("D"))
                 Gateway.mount(app, (request, permission) -> permission.equals("shopping:read"));
@@ -103,7 +103,7 @@ public final class BenchmarkMain {
                 instances[0] = new Catalog.Instance("recipes-fixed", "recipes", 1, "http://recipes:8080", actions);
                 for (int i = 1; i < instances.length; i++)
                     instances[i] = new Catalog.Instance("extra-" + i, "extra-" + i, 1, "http://recipes:8080", actions);
-                broker.accept(Json.encode(new Catalog(true, instances), Catalog.CODEC, JSON));
+                broker.accept(Json.encode(new Catalog("fixed", 1, true, instances), Catalog.CODEC, JSON));
             }
 
             URI direct = URI.create("http://recipes:8080/direct");

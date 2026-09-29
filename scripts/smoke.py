@@ -77,6 +77,55 @@ def container(service: str) -> str:
     return compose("ps", "-q", service, capture=True)
 
 
+def registry_request(method: str, path: str, headers=None, payload=None):
+    args = ["exec", "-T", "registry", "curl", "-sS", "--max-time", "10", "--dump-header", "-",
+            "--write-out", "\nEND", "-X", method]
+    for name, value in (headers or {}).items():
+        args += ["-H", name + ": " + value]
+    if payload is not None:
+        args += ["-H", "Content-Type: application/json", "--data-binary", json.dumps(payload)]
+    text = compose(*args, "http://127.0.0.1:8080" + path, capture=True)
+    head, body = text.removesuffix("\nEND").split("\n\n", 1)
+    fields = dict(line.split(":", 1) for line in head.splitlines()[1:])
+    return int(head.split()[1]), {name.lower(): value.strip() for name, value in fields.items()}, body
+
+
+def discovery_protocol() -> None:
+    path = "/v1/instances/legacy-probe"
+    small = {"id": "legacy-probe", "service": "probe", "version": 1,
+             "url": "http://recipes:8080", "actions": [{"name": "ping"}]}
+    status, _, body = registry_request("PUT", path, payload=small)
+    require(status == 200, "legacy registration compatibility")
+    catalog = json.loads(body)
+    known = {"X-Hoori-Catalog-Protocol": "2", "X-Hoori-Catalog-Epoch": catalog["epoch"],
+             "X-Hoori-Catalog-Revision": str(catalog["revision"])}
+    for _ in range(3):
+        status, fields, body = registry_request("POST", path + "/lease", known)
+        require(status == 204 and body == "", "unchanged lease must have no catalog body")
+        require(fields["x-hoori-catalog-epoch"] == catalog["epoch"]
+                and fields["x-hoori-catalog-revision"] == str(catalog["revision"]), "lease changed the revision")
+    require(registry_request("GET", "/v1/catalog", known)[0] == 204, "conditional catalog")
+    require(registry_request("PUT", path, {"X-Hoori-Catalog-Protocol": "1"}, small)[0] == 426,
+            "unsupported protocol must fail before changing state")
+    # Each replacement fits the HTTP document limit; their aggregate cannot fit the catalog.
+    big = dict(small)
+    big["actions"] = [{"name": f"action-{i}", "method": "GET", "path": "/probe/" + str(i) + "/" + "x" * 220,
+                       "permission": "probe:read"} for i in range(128)]
+    require(len(json.dumps(big).encode()) < 65536, "metadata fixture exceeds individual body bound")
+    status, _, _ = registry_request("PUT", path, known, big)
+    # This fits once, but another provider with equally sized metadata would overflow the full view.
+    require(status == 200, "first bounded large registration")
+    other = dict(big, id="overflow-probe")
+    require(registry_request("PUT", "/v1/instances/overflow-probe", known, other)[0] == 413,
+            "aggregate overflow must be rejected")
+    status, _, body = registry_request("GET", "/v1/catalog")
+    require(status == 200 and all(i["id"] != "overflow-probe" for i in json.loads(body)["instances"]),
+            "rejected metadata was committed")
+    require(registry_request("DELETE", path, known)[0] == 204, "deregistration")
+    require(registry_request("POST", path + "/lease", known)[0] == 404, "deleted lease must require registration")
+    print("PASS: native small leases, conditional catalog, protocol transition and aggregate byte limit")
+
+
 def main() -> int:
     if not (ROOT / ".docker-context/runtime/DISTRIBUTION.json").exists():
         print("Run scripts/build.sh with a verified Hoori distribution first", file=sys.stderr)
@@ -102,6 +151,8 @@ def main() -> int:
         require(registered() == {"recipes": ["context", "get", "slow"], "shopping": ["context", "meal", "slow"]},
                 "catalog lists exactly the defined actions")
         print("PASS: gateway publication, action calls, domain errors, health, metrics and context")
+
+        discovery_protocol()
 
         stable = {name: container(name) for name in ("gateway", "shopping")}
         ENV["HOORI_DEMO_RECOMMEND"] = "1"

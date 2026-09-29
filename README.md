@@ -31,7 +31,7 @@ Service shopping = Service.named("shopping").dependsOn("recipes", 1)
 
 ```text
                  registry  (Katalog: Instanzen × Actions, TTL)
-                  ↑   ↓ Heartbeat = Registrierung + Katalog
+                  ↑   ↓ Registrierung, kleine Lease / bedingter Katalog
  Host ─► gateway ─────► shopping ─────► recipes
          (publizierte   POST /_hoori/invoke, direkt über hoori-http
           Actions)

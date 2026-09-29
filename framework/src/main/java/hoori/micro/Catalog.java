@@ -5,6 +5,7 @@ import hoori.rest.json.JsonException;
 import hoori.rest.json.JsonReader;
 import hoori.rest.json.JsonWriter;
 import java.util.ArrayList;
+import java.util.Objects;
 
 /**
  * Immutable registry snapshot: instances and the actions each one actually offers. Unknown JSON
@@ -12,12 +13,18 @@ import java.util.ArrayList;
  */
 final class Catalog {
     static final int MAX_INSTANCES = 256;
-    static final Catalog EMPTY = new Catalog(false, new Instance[0]);
+    static final String PROTOCOL_HEADER = "X-Hoori-Catalog-Protocol";
+    static final String EPOCH_HEADER = "X-Hoori-Catalog-Epoch", REVISION_HEADER = "X-Hoori-Catalog-Revision";
+    static final Catalog EMPTY = new Catalog("", 0, false, new Instance[0]);
 
+    final String epoch;
+    final long revision;
     final boolean complete;
     final Instance[] instances;
 
-    Catalog(boolean complete, Instance[] instances) {
+    Catalog(String epoch, long revision, boolean complete, Instance[] instances) {
+        this.epoch = epoch;
+        this.revision = revision;
         this.complete = complete;
         this.instances = instances;
     }
@@ -66,6 +73,25 @@ final class Catalog {
             for (Entry entry : actions) if (entry.name.equals(action)) return true;
 
             return false;
+        }
+
+        boolean sameMetadata(Instance other) {
+            if (!id.equals(other.id)
+                    || !service.equals(other.service)
+                    || version != other.version
+                    || !url.equals(other.url)
+                    || actions.length != other.actions.length) return false;
+
+            for (int i = 0; i < actions.length; i++) {
+                Entry a = actions[i], b = other.actions[i];
+
+                if (!a.name.equals(b.name)
+                        || !Objects.equals(a.method, b.method)
+                        || !Objects.equals(a.path, b.path)
+                        || !Objects.equals(a.permission, b.permission)) return false;
+            }
+
+            return true;
         }
     }
 
@@ -176,11 +202,15 @@ final class Catalog {
     static final JsonCodec<Catalog> CODEC = new JsonCodec<>() {
         @Override
         public Catalog read(JsonReader input) {
+            String epoch = null;
+            long revision = 0;
             boolean complete = false;
             ArrayList<Instance> instances = new ArrayList<>();
             input.beginObject();
             while (input.hasNext()) {
                 switch (input.nextName()) {
+                    case "epoch" -> epoch = input.nextString();
+                    case "revision" -> revision = input.nextLong();
                     case "complete" -> complete = input.nextBoolean();
                     case "instances" -> {
                         input.beginArray();
@@ -195,13 +225,24 @@ final class Catalog {
                 }
             }
             input.endObject();
+            try {
+                ServiceName.require(epoch);
 
-            return new Catalog(complete, instances.toArray(new Instance[0]));
+                if (revision < 1) throw new IllegalArgumentException();
+            } catch (IllegalArgumentException invalid) {
+                throw new JsonException("Invalid catalog version");
+            }
+
+            return new Catalog(epoch, revision, complete, instances.toArray(new Instance[0]));
         }
 
         @Override
         public void write(Catalog value, JsonWriter output) {
             output.beginObject()
+                    .name("epoch")
+                    .value(value.epoch)
+                    .name("revision")
+                    .value(value.revision)
                     .name("complete")
                     .value(value.complete)
                     .name("instances")
