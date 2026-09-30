@@ -3,7 +3,9 @@ package hoori.micro;
 import hoori.http.Headers;
 import hoori.http.HttpClient;
 import hoori.http.HttpClientClosedException;
+import hoori.http.PoolOverloadedException;
 import hoori.http.Request;
+import hoori.http.RequestBudget;
 import hoori.http.Response;
 import hoori.rest.json.Json;
 import hoori.rest.json.JsonCodec;
@@ -26,7 +28,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 final class ServiceBroker {
     @FunctionalInterface
     interface Exchange {
-        Response send(Request context, URI target, String method, Headers headers, byte[] body) throws IOException;
+        Response send(Request context, URI target, String method, Headers headers, byte[] body, RequestBudget budget)
+                throws IOException;
     }
 
     static final String INVOKE_PATH = "/_hoori/invoke";
@@ -37,6 +40,7 @@ final class ServiceBroker {
     private final ServiceConfig config;
     private final Exchange exchange, control;
     private final JsonLimits limits;
+    private final Admission outgoing;
     private final byte[] registration;
     private final AtomicInteger turn = new AtomicInteger();
     private volatile Catalog.Filter filter;
@@ -60,6 +64,7 @@ final class ServiceBroker {
         this.exchange = exchange;
         this.control = control;
         this.limits = limits;
+        outgoing = new Admission(config.outgoingCalls, config.outgoingPendingCalls);
         Catalog.Entry[] entries = new Catalog.Entry[service.actions.size()];
         int i = 0;
         for (Service.Definition<?, ?> action : service.actions.values()) entries[i++] = action.entry();
@@ -73,36 +78,74 @@ final class ServiceBroker {
     static Exchange transport(HttpClient http) {
         if (http == null) throw new NullPointerException("http");
 
-        return (context, target, method, headers, body) -> context == null
-                ? http.exchange(target, method, headers, body)
-                : http.exchange(context, target, method, headers, body);
+        return (context, target, method, headers, body, budget) -> {
+            if (budget == null) return http.exchange(target, method, headers, body);
+
+            return context == null
+                    ? http.exchange(target, method, headers, body, budget)
+                    : http.exchange(context, target, method, headers, body, budget);
+        };
+    }
+
+    Admission.Permit admit(Request context) throws IOException {
+        RequestBudget budget = context == null
+                ? RequestBudget.afterMillis(config.clientTimeoutMillis)
+                : context.budget().limitedToMillis(config.clientTimeoutMillis);
+
+        // A dispatched request may still make immediate calls during drain; no waiting/new background work.
+        return outgoing.acquire(budget, context != null);
+    }
+
+    Admission.Stats admissionStats() {
+        return outgoing.stats();
+    }
+
+    void stop() {
+        outgoing.stop();
+    }
+
+    void close() {
+        outgoing.close();
     }
 
     <I, O> O call(Request context, Action<I, O> action, I input) throws IOException {
         if (action == null || input == null) throw new NullPointerException();
 
-        byte[] result = invoke(
-                context,
-                action.service,
-                dependency(action.service),
-                action.operation,
-                Json.encode(input, action.input, limits));
+        int version = dependency(action.service);
+        try (Admission.Permit permit = admit(context)) {
+            byte[] result = invoke(
+                    permit,
+                    context,
+                    action.service,
+                    version,
+                    action.operation,
+                    Json.encode(input, action.input, limits));
+            O decoded = decode(action.service, result, action.output);
+            permit.check(outgoing);
 
-        return decode(action.service, result, action.output);
+            return decoded;
+        }
     }
 
     Object call(Request context, String action, Map<String, ?> params) throws IOException {
         if (params == null) throw new NullPointerException("params");
 
         String[] name = ServiceName.qualified(action);
-        byte[] result =
-                invoke(context, name[0], dependency(name[0]), name[1], Json.encode(params, JsonTree.CODEC, limits));
+        int version = dependency(name[0]);
+        try (Admission.Permit permit = admit(context)) {
+            byte[] result =
+                    invoke(permit, context, name[0], version, name[1], Json.encode(params, JsonTree.CODEC, limits));
+            Object decoded = decode(name[0], result, JsonTree.CODEC);
+            permit.check(outgoing);
 
-        return decode(name[0], result, JsonTree.CODEC);
+            return decoded;
+        }
     }
 
     /** Returns the successful JSON body. Also used by the gateway with the catalog's version. */
-    byte[] invoke(Request context, String service, int version, String action, byte[] params) throws IOException {
+    byte[] invoke(Admission.Permit permit, Request context, String service, int version, String action, byte[] params)
+            throws IOException {
+        permit.check(outgoing);
         Catalog.Instance target = catalog().select(service, version, action, turn.getAndIncrement());
 
         if (target == null) throw new ServiceCallException(service, 0, "no instance offers " + action, null);
@@ -114,7 +157,12 @@ final class ServiceBroker {
                 .add(VERSION_HEADER, Integer.toString(version));
         Response response;
         try {
-            response = exchange.send(context, target.invokeTarget, "POST", headers, params);
+            response = exchange.send(context, target.invokeTarget, "POST", headers, params, permit.budget);
+        } catch (PoolOverloadedException overloaded) {
+            throw new CallRejectedException();
+        } catch (SocketTimeoutException expired) {
+            permit.expired();
+            throw expired;
         } catch (InterruptedIOException cancelledOrExpired) {
             // Keep the SDK's cancellation/timeout semantics and interrupt status intact.
             throw cancelledOrExpired;
@@ -127,6 +175,8 @@ final class ServiceBroker {
 
         if (!jsonContentType(response.headers))
             throw new ServiceCallException(service, response.status, "expected application/json", null);
+
+        permit.check(outgoing);
 
         return response.body;
     }
@@ -189,7 +239,8 @@ final class ServiceBroker {
             Response response;
 
             if (register && registered) {
-                response = control.send(null, URI.create(config.registryUrl + path + "/lease"), "POST", headers, EMPTY);
+                response = control.send(
+                        null, URI.create(config.registryUrl + path + "/lease"), "POST", headers, EMPTY, null);
 
                 if (response.status == 404) registered = false;
             } else response = null;
@@ -200,9 +251,11 @@ final class ServiceBroker {
                         URI.create(config.registryUrl + path),
                         "PUT",
                         headers.add("Content-Type", "application/json"),
-                        registration);
+                        registration,
+                        null);
             } else if (!register) {
-                response = control.send(null, URI.create(config.registryUrl + "/v1/catalog"), "GET", headers, EMPTY);
+                response =
+                        control.send(null, URI.create(config.registryUrl + "/v1/catalog"), "GET", headers, EMPTY, null);
             }
 
             accept(response, known, requested);
@@ -247,7 +300,8 @@ final class ServiceBroker {
                     URI.create(config.registryUrl + "/v1/instances/" + config.instanceId),
                     "DELETE",
                     new Headers().add(Catalog.PROTOCOL_HEADER, "2"),
-                    EMPTY);
+                    EMPTY,
+                    null);
         } catch (IOException ignored) {
             /* Expires after HOORI_REGISTRY_TTL_MS. */
         }

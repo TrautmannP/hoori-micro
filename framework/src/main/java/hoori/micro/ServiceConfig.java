@@ -8,6 +8,7 @@ public final class ServiceConfig {
     public final int port, bodyBytes, serverConnections, clientConnections, clientPerOrigin, clientPendingAcquires;
     public final int requestTimeoutMillis, clientTimeoutMillis, clientIdleMillis, shutdownGraceMillis;
     public final int heartbeatMillis, registryTtlMillis, catalogMaxAgeMillis, controlTimeoutMillis;
+    public final int incomingCalls, incomingPendingCalls, outgoingCalls, outgoingPendingCalls;
 
     private ServiceConfig(String serviceName, Environment env) {
         name = ServiceName.require(serviceName);
@@ -18,7 +19,11 @@ public final class ServiceConfig {
         serverConnections = number(env, "HOORI_SERVER_CONNECTIONS", 32, 1, 512);
         clientConnections = number(env, "HOORI_CLIENT_CONNECTIONS", 16, 1, 512);
         clientPerOrigin = number(env, "HOORI_CLIENT_PER_ORIGIN", Math.min(8, clientConnections), 1, clientConnections);
-        clientPendingAcquires = number(env, "HOORI_CLIENT_PENDING_ACQUIRES", clientConnections, 0, 4096);
+        clientPendingAcquires = number(env, "HOORI_CLIENT_PENDING_ACQUIRES", 0, 0, 4096);
+        incomingCalls = number(env, "HOORI_INCOMING_CALLS", Math.min(16, serverConnections), 1, serverConnections);
+        incomingPendingCalls = number(env, "HOORI_INCOMING_PENDING_CALLS", 0, 0, serverConnections - incomingCalls);
+        outgoingCalls = number(env, "HOORI_OUTGOING_CALLS", clientPerOrigin, 1, clientConnections);
+        outgoingPendingCalls = number(env, "HOORI_OUTGOING_PENDING_CALLS", outgoingCalls, 0, 512);
         requestTimeoutMillis = number(env, "HOORI_REQUEST_TIMEOUT_MS", 10000, 1, 600000);
         clientTimeoutMillis = number(env, "HOORI_CLIENT_TIMEOUT_MS", 2000, 1, 600000);
         clientIdleMillis = number(env, "HOORI_CLIENT_IDLE_MS", 5000, 1, 600000);

@@ -150,26 +150,28 @@ def discovery_protocol() -> None:
     print("PASS: native leases, view-bound filtering, protocol transition and aggregate byte limit")
 
 
-def pool_stats(service: str) -> dict:
+def runtime_stats(service: str) -> dict:
     text = compose("exec", "-T", service, "curl", "-fsS", "--max-time", "2",
                    "http://127.0.0.1:8080/metrics", capture=True)
     return {line.split()[0]: int(line.split()[1]) for line in text.splitlines()
-            if line.startswith("hoori_micro_pool_")}
+            if line.startswith(("hoori_micro_pool_", "hoori_micro_calls_"))}
 
 
 def saturated_pool() -> None:
-    # Three accepted calls hold one data connection and two bounded waiters for > registry TTL.
+    # Three calls hold one outgoing permit and two waiters before encoding for > registry TTL.
     started = time.monotonic()
-    require(all(value == 0 for value in pool_stats("registry").values()), "Registry has an active control pool")
+    require(all(value == 0 for value in runtime_stats("registry").values()), "Registry has active business/control work")
     with ThreadPoolExecutor(max_workers=3) as executor:
         calls = [executor.submit(request, "/demo/slow/1", "pool-saturated-" + str(i)) for i in range(3)]
         deadline, saturated = time.monotonic() + 30, False
         while not all(call.done() for call in calls):
-            stats = pool_stats("shopping")
-            active = stats['hoori_micro_pool_active_connections{pool="data"}']
-            pending = stats['hoori_micro_pool_pending_acquires{pool="data"}']
+            stats = runtime_stats("shopping")
+            active = stats['hoori_micro_calls_active{direction="outgoing"}']
+            pending = stats['hoori_micro_calls_pending{direction="outgoing"}']
             saturated |= active == 1 and pending == 2
-            require(active <= 1 and pending <= 2, "data pool exceeded bounds")
+            require(active <= 1 and pending <= 2, "outgoing admission exceeded bounds")
+            require(stats['hoori_micro_pool_pending_acquires{pool="data"}'] == 0,
+                    "a second SDK queue formed behind application admission")
             require(stats['hoori_micro_pool_pending_acquires{pool="control"}'] == 0
                     and stats['hoori_micro_pool_active_connections{pool="control"}'] <= 1,
                     "control pool exceeded bounds")
@@ -191,7 +193,8 @@ def main() -> int:
     work = tempfile.TemporaryDirectory(prefix="hoori-micro-smoke-")
     override = Path(work.name) / "pool.json"
     override.write_text(json.dumps({"services": {"shopping": {"environment": {
-        "HOORI_CLIENT_CONNECTIONS": "1", "HOORI_CLIENT_PER_ORIGIN": "1", "HOORI_CLIENT_PENDING_ACQUIRES": "2"}}}}))
+        "HOORI_CLIENT_CONNECTIONS": "1", "HOORI_CLIENT_PER_ORIGIN": "1", "HOORI_CLIENT_PENDING_ACQUIRES": "0",
+        "HOORI_OUTGOING_CALLS": "1", "HOORI_OUTGOING_PENDING_CALLS": "2"}}}}))
     COMPOSE.extend(["--file", str(override)])
     try:
         ENV["HOORI_DEMO_RECOMMEND"] = "0"
@@ -287,22 +290,22 @@ def main() -> int:
             deadline = time.monotonic() + 45
             while time.monotonic() < deadline:
                 logs = compose("logs", "--no-color", "recipes", capture=True)
-                if any("demo_slow_started id=" + name in logs for name in ("drain-in-flight", "drain-pending")) and pool_stats("shopping")[
-                        'hoori_micro_pool_pending_acquires{pool="data"}'] == 1:
+                if any("demo_slow_started id=" + name in logs for name in ("drain-in-flight", "drain-pending")) and runtime_stats("shopping")[
+                        'hoori_micro_calls_pending{direction="outgoing"}'] == 1:
                     break
                 time.sleep(0.1)
             else:
                 raise AssertionError("Upstream never observed the in-flight drain request")
             require(all(not result.done() for result in results), "Drain fixture already completed before shutdown")
             compose("stop", "shopping")
-            require(all(result.result(timeout=20)[0] == 200 for result in results),
-                    "active/pending data call was aborted instead of drained")
+            require(sorted(result.result(timeout=20)[0] for result in results) == [200, 503],
+                    "stop must drain admitted data and reject work still waiting before encoding")
         logs = compose("logs", "--no-color", "shopping", capture=True)
         require("drained=true" in logs, "graceful shutdown was not reported")
         cid = compose("ps", "--all", "-q", "shopping", capture=True)
         code = subprocess.check_output(["docker", "inspect", "--format", "{{.State.ExitCode}}", cid], text=True).strip()
         require(code == "0", "non-zero runtime exit: " + code)
-        print("PASS: SIGTERM drains active and pending outbound calls before both pool cleanups")
+        print("PASS: SIGTERM drains admitted data, rejects waiting work before encoding, then closes pools")
         return 0
     except (OSError, ValueError, AssertionError, subprocess.SubprocessError) as error:
         print(f"SMOKE FAILED: {error}", file=sys.stderr)

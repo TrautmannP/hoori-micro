@@ -25,9 +25,13 @@ damit lassen sich Konfigurationen ohne Prozess-Environment testen.
 | `HOORI_SERVER_CONNECTIONS` | 32 | 1–512 zugelassene Serververbindungen |
 | `HOORI_CLIENT_CONNECTIONS` | 16 | 1–512 Verbindungen im Datenpool; zusätzlich höchstens eine Control-Verbindung |
 | `HOORI_CLIENT_PER_ORIGIN` | min(8, Gesamtlimit) | 1 bis Gesamtlimit |
-| `HOORI_CLIENT_PENDING_ACQUIRES` | Datenverbindungen | 0–4096 Wartende im Datenpool; Control hat immer null Wartende |
+| `HOORI_CLIENT_PENDING_ACQUIRES` | 0 | 0–4096 SDK-Wartende im Datenpool; normalerweise bei null lassen, um keine zweite Queue zu bilden. Control hat immer null Wartende |
+| `HOORI_INCOMING_CALLS` | min(16, Serververbindungen) | 1 bis Serverlimit; eingehende Action-Ausführungen vor DTO-Decoding |
+| `HOORI_INCOMING_PENDING_CALLS` | 0 | 0 bis Serverlimit minus Incoming-Calls; vor DTO-Decoding wartende Actions |
+| `HOORI_OUTGOING_CALLS` | Client-Per-Origin-Limit | 1 bis Datenverbindungen; ein globales Permit für Encoding, RPC und Ergebnis-Decoding |
+| `HOORI_OUTGOING_PENDING_CALLS` | Outgoing-Calls | 0–512 Wartende vor Encoding; null bedeutet Fail-fast |
 | `HOORI_REQUEST_TIMEOUT_MS` | 10000 | 1–600000; Deadline eines eingehenden HTTP-Exchanges |
-| `HOORI_CLIENT_TIMEOUT_MS` | 2000 | 1–600000; gesamter ausgehender Exchange inklusive Pool-Warten |
+| `HOORI_CLIENT_TIMEOUT_MS` | 2000 | 1–600000; ausgehender Framework-Aufruf inklusive Admission, Encoding und SDK-Exchange, begrenzt durch das lokale eingehende Restbudget |
 | `HOORI_CONTROL_TIMEOUT_MS` | min(1000, TTL/2) | 1 bis min(10000, TTL/2); Registry-Exchange, unabhängig vom Daten-Timeout |
 | `HOORI_CLIENT_IDLE_MS` | 5000 | 1–600000; Aufbewahrung ungenutzter Poolverbindungen |
 | `HOORI_SHUTDOWN_GRACE_MS` | 10000 | 0–600000; Drain, danach Abbruch verbleibender Arbeit |
@@ -83,6 +87,14 @@ tragen ausschließlich `pool="data"` oder `pool="control"`. Aktive Verbindungen 
 auch reservierte DNS-/Connect-/TLS-Slots. Ziele stammen ausschließlich aus dem
 Registry-Katalog, nie aus Request-Werten. HTTPS-Origins erfordern passende CA-Konfiguration und Netzwerkfreigaben.
 Ein DNS-Name allein ist kein Service-Zertifikat oder Berechtigungsnachweis.
+
+Die Admission-Metriken `hoori_micro_calls_{active,pending,rejected_total,expired_total}`
+haben nur `direction="incoming"`/`"outgoing"`. Health, lokale Routen und Discovery
+liegen außerhalb der eingehenden Action-Grenze; eigene Anwendungstasks/DTOs sind
+damit nicht global begrenzt. Das SDK hat den begrenzten Raw-Body vor Admission bereits
+gelesen. Sättigung und Stop weisen Wartende sicher mit 503 ab; es gibt keine Retries.
+Bereits zugelassene Handler dürfen beim Drain sofort weitere Calls starten, sofern
+ein Slot frei ist; neue Wartende und Hintergrundcalls werden dann abgewiesen.
 
 Für lokale Entwicklung `run-local.sh` nutzen: es setzt Loopback und startet trotzdem
 die echte HooriVM. `java -jar ...` ist kein unterstützter Networking-Modus.

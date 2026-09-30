@@ -283,6 +283,55 @@ aufeinanderfolgende Timeouts; nach unbekannter Lease folgt volle Registrierung,
 etwa 700/677 ms (Mixed/Interpreter) nach Beginn der letzten verzögerten Lease.
 SIGTERM während einer langsamen erneuten Registrierung wartet auf ein 150 ms
 zurückgehaltenes DELETE, beendet mit Exit 0/`drained=true` und leeren Pools.
-Docker-Smoke prüft zusätzlich echte Registry-Leases bei Daten-Sättigung über eine
-TTL und den Drain aktiver plus wartender Datenaufrufe. CPU-unkooperative Handler
+Der damalige #4-Docker-Smoke prüfte zusätzlich echte Registry-Leases bei Daten-Sättigung
+über eine TTL und den Drain aktiver plus wartender Datenaufrufe. Mit #5 werden vor
+Encoding Wartende beim Stop abgewiesen. CPU-unkooperative Handler
 bleiben Hooris Single-Carrier-Grenze; Pool-Trennung schafft keine Präemption.
+
+## Admission, 30. September 2026
+
+Vorher: `3667c144`, nachher: derselbe Stand mit der Admission-Änderung; beide auf
+dem sauberen SDK-Satz `3254301`. Je drei frische Mixed-C/D-Läufe, gleicher Generator,
+8 Worker, pro Rolle 0,5 CPU/256 MiB und 32 MiB Guest-Heap, Pool 4, 5 s Warmup,
+2 s je Phase und 3 s Ruhe. Keine eigenen Tests/Builds während der Lastphasen.
+Vorher warteten bis zu vier Calls im SDK; nachher vor Encoding in der Framework-Queue
+(4 aktive/4 wartende Calls, SDK-Pending 0). Die neue Fixture ergänzt Admission-Zähler;
+Business-Pfade und Generator bleiben gleich, Fixture-Hashes unterscheiden sich.
+Rohdaten mit Receipt, Hashes und Quellpatch:
+[vorher](benchmarks/issue-5-before-3254301-mixed.json.gz),
+[nachher](benchmarks/issue-5-after-3254301-mixed.json.gz).
+
+| Median, vorher → nachher | C: direkter Broker | D: zusätzlich Gateway |
+|---|---:|---:|
+| erfolgreiche/s, geschlossene Last | 121,34 → 122,70 | 109,51 → 102,68 |
+| geschlossene p99, ms | 502,08 → 591,19 | 1628,68 → 903,44 |
+| System-CPU pro Erfolg, ms | 7,191 → 7,183 | 11,833 → 13,261 |
+| System-Allokation pro Erfolg, KiB | 21,472 → 21,599 | 33,735 → 34,162 |
+| offene Normallast (4/s): p99, ms | 33,20 → 14,89 | 21,90 → 22,26 |
+| Recovery-p99, ms | 10,34 → 10,74 | 16,07 → 16,43 |
+| Guest-Heap aller Rollen nach Ruhe, MiB | 4,548 → 4,852 | 2,827 → 2,734 |
+| RSS aller Rollen nach Ruhe, MiB (Bereich) | 247,469–367,441 → 250,859–372,633 | 381,070–381,336 → 388,051–389,488 |
+| cgroup-Speicher nach Ruhe, MiB (Bereich) | 205,535–325,742 → 209,297–331,832 | 338,828–339,781 → 346,910–352,496 |
+
+Die geschlossene C-Phase hat vorher/nachher insgesamt je einen Fehler; D zwei/fünf.
+Je Variante/Stand liefern Normallast, langsame Calls und Recovery jeweils 24 korrekte
+Antworten ohne Fehler. Die Burst-Phasen haben jeweils 102 Erfolge, sechs Timeout-
+Fehler und 276 vom begrenzten Generator nicht gestartete Ankünfte; diese sind keine
+erfolgreiche Arbeit oder Server-Abweisungen. Nachher zeigen die Snapshot-Zähler nach
+Ruhe null Framework-/SDK-Wartende; vorher gab es keine Framework-Zähler.
+Task-Snapshots sind vorher/nachher gleich.
+
+Unter geschlossener Gateway-Last kostet Admission hier rund 6,2 % Durchsatz und
+12,1 % mehr System-CPU pro Erfolg. Die häufige Permit-Prüfung nimmt keine weitere
+Queue-Sperre; Acquire/Release behalten ihre notwendige Synchronisation. Die offene
+Normallast bleibt bei 4/s ohne Fehler. Das ist eine Kostenkontrolle, kein
+Performancegewinn oder allgemeine Freigabe. Registry-RSS streut in beiden Ständen
+zwischen rund 63 und 185 MiB; Heap/RSS/cgroup sind Snapshots ohne erzwungenen GC,
+keine Messung lebender Retention. Die kurze Ruhe beweist keinen langfristigen Plateauwert.
+
+[Native Admission-Rohdaten](benchmarks/issue-5-admission-native.json.gz) belegen in
+beiden Engines separat: begrenzte Calls/Wartende, Abweisung vor DTO-Read bzw.
+Encoding/HTTP-Exchange, zwei Lastspitzen ohne Neustart, Budgetverbrauch beim Encoding/
+Warten und Stop mit Abweisung Wartender, Drain zugelassener Arbeit und leeren Gates/Pools.
+Health und Discovery bleiben erreichbar. Der SDK hat den begrenzten Raw-Body vor
+eingehender Admission bereits gelesen; Wire-Restbudgets über Service-Hops bleiben #6.

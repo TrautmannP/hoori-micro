@@ -79,7 +79,11 @@ public final class CoreChecks {
         equal(16, c.clientConnections);
         equal(8, c.clientPerOrigin);
         equal(2000, c.clientTimeoutMillis);
-        equal(16, c.clientPendingAcquires);
+        equal(0, c.clientPendingAcquires);
+        equal(16, c.incomingCalls);
+        equal(0, c.incomingPendingCalls);
+        equal(8, c.outgoingCalls);
+        equal(8, c.outgoingPendingCalls);
         equal(1000, c.controlTimeoutMillis);
         equal(10000, c.requestTimeoutMillis);
         equal("http://registry:8080", c.registryUrl);
@@ -110,6 +114,22 @@ public final class CoreChecks {
         env.put("HOORI_CLIENT_PER_ORIGIN", "3");
         reject(() -> ServiceConfig.from("shopping", env::get));
         env.clear();
+        env.put("HOORI_SERVER_CONNECTIONS", "2");
+        equal(2, ServiceConfig.from("shopping", env::get).incomingCalls);
+        env.put("HOORI_INCOMING_PENDING_CALLS", "1");
+        reject(() -> ServiceConfig.from("shopping", env::get));
+        env.put("HOORI_INCOMING_CALLS", "1");
+        equal(1, ServiceConfig.from("shopping", env::get).incomingPendingCalls);
+        env.clear();
+        env.put("HOORI_CLIENT_CONNECTIONS", "2");
+        env.put("HOORI_OUTGOING_CALLS", "3");
+        reject(() -> ServiceConfig.from("shopping", env::get));
+        env.put("HOORI_OUTGOING_CALLS", "1");
+        env.put("HOORI_OUTGOING_PENDING_CALLS", "0");
+        equal(0, ServiceConfig.from("shopping", env::get).outgoingPendingCalls);
+        env.put("HOORI_OUTGOING_PENDING_CALLS", "513");
+        reject(() -> ServiceConfig.from("shopping", env::get));
+        env.clear();
         env.put("HOORI_CLIENT_PENDING_ACQUIRES", "0");
         equal(0, ServiceConfig.from("shopping", env::get).clientPendingAcquires);
         for (String invalid : new String[] {"-1", "4097"}) {
@@ -132,6 +152,8 @@ public final class CoreChecks {
             "HOORI_REQUEST_TIMEOUT_MS",
             "HOORI_CLIENT_TIMEOUT_MS",
             "HOORI_CONTROL_TIMEOUT_MS",
+            "HOORI_INCOMING_CALLS",
+            "HOORI_OUTGOING_CALLS",
             "HOORI_CLIENT_IDLE_MS"
         }) {
             env.put(key, "0");
