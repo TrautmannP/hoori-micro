@@ -70,7 +70,8 @@ public final class BenchmarkMain {
             app.routes()
                     .get(
                             "/bench/runtime",
-                            request -> runtime(app.broker(), app.dataPoolStats(), app.controlPoolStats()));
+                            request -> runtime(
+                                    app.broker(), app.dataPoolStats(), app.controlPoolStats(), app.incomingStats()));
             app.run();
             for (HttpClient.PoolStats stats :
                     new HttpClient.PoolStats[] {app.dataPoolStats(), app.controlPoolStats()}) {
@@ -79,6 +80,12 @@ public final class BenchmarkMain {
                     throw new AssertionError("Pool retained resources after shutdown");
             }
             System.out.println("pools_closed=true");
+            for (Admission.Stats stats :
+                    new Admission.Stats[] {app.incomingStats(), app.broker().admissionStats()}) {
+                if (stats != null && (stats.active != 0 || stats.pending != 0))
+                    throw new AssertionError("Admission retained work after shutdown");
+            }
+            System.out.println("admission_closed=true");
         }
     }
 
@@ -137,7 +144,7 @@ public final class BenchmarkMain {
         ServiceConfig config = ServiceConfig.from(ROLE, Environment.system());
         Limits clientLimits = new Limits(
                         64, 16384, config.bodyBytes, config.clientConnections, 100, config.clientTimeoutMillis)
-                .withPendingAcquires(config.clientPendingAcquires);
+                .withPendingAcquires(VARIANT.equals("A") ? config.outgoingPendingCalls : config.clientPendingAcquires);
         try (HttpClient client = new HttpClient(clientLimits, config.clientPerOrigin, config.clientIdleMillis)) {
             ServiceBroker broker = VARIANT.equals("B")
                     ? new ServiceBroker(service, config, ServiceBroker.transport(client), JSON)
@@ -159,9 +166,13 @@ public final class BenchmarkMain {
             router.get(
                     "/metrics",
                     request -> Response.text(
-                            200, owner[0].metrics().prometheus() + Microservice.poolMetrics(client.poolStats(), null)));
+                            200,
+                            owner[0].metrics().prometheus()
+                                    + Microservice.poolMetrics(client.poolStats(), null)
+                                    + Microservice.admissionMetrics(
+                                            null, broker == null ? null : broker.admissionStats())));
             router.get("/health/ready", request -> Response.text(200, "UP"));
-            router.get("/bench/runtime", request -> runtime(broker, client.poolStats(), null));
+            router.get("/bench/runtime", request -> runtime(broker, client.poolStats(), null, null));
 
             if (ROLE.equals("recipes")) {
                 router.post(
@@ -212,6 +223,8 @@ public final class BenchmarkMain {
                     try {
                         while (!Shutdown.requested()) Thread.sleep(50);
                         server.stopAccepting();
+
+                        if (broker != null) broker.stop();
                     } catch (InterruptedException stopped) {
                         Thread.currentThread().interrupt();
                     }
@@ -222,13 +235,17 @@ public final class BenchmarkMain {
                     server.run();
                 } finally {
                     server.shutdown(config.shutdownGraceMillis);
+
+                    if (broker != null) broker.close();
+
                     watcher.interrupt();
                 }
             }
         }
     }
 
-    private static Response runtime(ServiceBroker broker, HttpClient.PoolStats data, HttpClient.PoolStats control) {
+    private static Response runtime(
+            ServiceBroker broker, HttpClient.PoolStats data, HttpClient.PoolStats control, Admission.Stats incoming) {
         RuntimeMetrics.Snapshot s = RuntimeMetrics.snapshot();
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("heap_used_bytes", s.heapUsedBytes);
@@ -264,6 +281,9 @@ public final class BenchmarkMain {
 
         if (control != null) poolValues(values, "control", control);
 
+        callValues(values, "incoming", incoming);
+        callValues(values, "outgoing", broker == null ? null : broker.admissionStats());
+
         return Responses.json(200, values, JsonTree.CODEC, JSON);
     }
 
@@ -272,5 +292,12 @@ public final class BenchmarkMain {
         values.put(pool + "_pool_idle_connections", stats.idleConnections);
         values.put(pool + "_pool_pending_acquires", stats.pendingAcquires);
         values.put(pool + "_pool_rejected_acquires", stats.rejectedAcquires);
+    }
+
+    private static void callValues(Map<String, Object> values, String direction, Admission.Stats stats) {
+        values.put(direction + "_calls_active", stats == null ? null : stats.active);
+        values.put(direction + "_calls_pending", stats == null ? null : stats.pending);
+        values.put(direction + "_calls_rejected", stats == null ? null : stats.rejected);
+        values.put(direction + "_calls_expired", stats == null ? null : stats.expired);
     }
 }

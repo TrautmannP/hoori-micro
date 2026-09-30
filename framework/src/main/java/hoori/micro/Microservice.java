@@ -23,6 +23,7 @@ public final class Microservice implements AutoCloseable {
     private final Router router = new Router();
     private final HttpClient http, control;
     private final ServiceBroker broker;
+    private final Admission incoming;
     private final JsonLimits jsonLimits;
 
     private volatile HttpServer server;
@@ -36,6 +37,7 @@ public final class Microservice implements AutoCloseable {
         this.service = service;
         this.config = config;
         jsonLimits = new JsonLimits(64, 16384, 128, config.bodyBytes);
+        incoming = new Admission(config.incomingCalls, config.incomingPendingCalls);
         http = new HttpClient(
                 limits(config.clientConnections, config.clientTimeoutMillis)
                         .withPendingAcquires(config.clientPendingAcquires),
@@ -56,7 +58,9 @@ public final class Microservice implements AutoCloseable {
                 request -> new Response(
                         200,
                         new Headers().add("Content-Type", "text/plain; version=0.0.4; charset=utf-8"),
-                        (server.metrics().prometheus() + poolMetrics(http.poolStats(), control.poolStats()))
+                        (server.metrics().prometheus()
+                                        + poolMetrics(http.poolStats(), control.poolStats())
+                                        + admissionMetrics(incoming.stats(), broker.admissionStats()))
                                 .getBytes(StandardCharsets.UTF_8)));
         router.onError((request, failure) -> {
             // Intentionally no stacktrace, URI, request/response body or secret in logs/errors.
@@ -68,7 +72,10 @@ public final class Microservice implements AutoCloseable {
                     + " type="
                     + failure.getClass().getName());
 
-            if (failure instanceof ServiceCallException) return Response.text(502, "Upstream service unavailable");
+            if (failure instanceof CallRejectedException) return Response.text(503, "Local call capacity unavailable");
+
+            if (failure instanceof ServiceCallException upstream)
+                return Response.text(upstream.upstreamStatus() == 503 ? 503 : 502, "Upstream service unavailable");
 
             if (failure instanceof InterruptedIOException) return Response.text(503, "Request interrupted or expired");
 
@@ -105,6 +112,43 @@ public final class Microservice implements AutoCloseable {
 
     HttpClient.PoolStats controlPoolStats() {
         return control.poolStats();
+    }
+
+    Admission.Stats incomingStats() {
+        return incoming.stats();
+    }
+
+    static String admissionMetrics(Admission.Stats incoming, Admission.Stats outgoing) {
+        StringBuilder result = new StringBuilder();
+
+        if (incoming != null) appendAdmissionMetrics(result, "incoming", incoming);
+
+        if (outgoing != null) appendAdmissionMetrics(result, "outgoing", outgoing);
+
+        return result.toString();
+    }
+
+    private static void appendAdmissionMetrics(StringBuilder result, String direction, Admission.Stats stats) {
+        result.append("hoori_micro_calls_active{direction=\"")
+                .append(direction)
+                .append("\"} ")
+                .append(stats.active)
+                .append('\n');
+        result.append("hoori_micro_calls_pending{direction=\"")
+                .append(direction)
+                .append("\"} ")
+                .append(stats.pending)
+                .append('\n');
+        result.append("hoori_micro_calls_rejected_total{direction=\"")
+                .append(direction)
+                .append("\"} ")
+                .append(stats.rejected)
+                .append('\n');
+        result.append("hoori_micro_calls_expired_total{direction=\"")
+                .append(direction)
+                .append("\"} ")
+                .append(stats.expired)
+                .append('\n');
     }
 
     static String poolMetrics(HttpClient.PoolStats data, HttpClient.PoolStats control) {
@@ -171,6 +215,9 @@ public final class Microservice implements AutoCloseable {
         HttpServer current = server;
 
         if (current != null) current.stopAccepting();
+
+        incoming.stop();
+        broker.stop();
 
         Thread heartbeat = registrar;
 
@@ -285,6 +332,9 @@ public final class Microservice implements AutoCloseable {
 
         if (server != null) server.close();
 
+        incoming.close();
+        broker.close();
+
         http.close();
         control.close();
 
@@ -297,18 +347,24 @@ public final class Microservice implements AutoCloseable {
 
     /** Only this instance's own name and major version; anything else is a stale-catalog miss. */
     private Response invoke(hoori.rest.Request request) throws Exception {
-        Headers headers = request.raw().headers;
-        String action = headers.get(ServiceBroker.ACTION_HEADER);
-        Service.Definition<?, ?> definition = null;
+        // The SDK already read the bounded raw body; DTO decoding starts only after admission.
+        try (Admission.Permit permit = incoming.acquire(request.raw().budget(), false)) {
+            Headers headers = request.raw().headers;
+            String action = headers.get(ServiceBroker.ACTION_HEADER);
+            Service.Definition<?, ?> definition = null;
 
-        if (action != null
-                && action.startsWith(service.name + ".")
-                && Integer.toString(service.version).equals(headers.get(ServiceBroker.VERSION_HEADER)))
-            definition = service.actions.get(action.substring(service.name.length() + 1));
+            if (action != null
+                    && action.startsWith(service.name + ".")
+                    && Integer.toString(service.version).equals(headers.get(ServiceBroker.VERSION_HEADER)))
+                definition = service.actions.get(action.substring(service.name.length() + 1));
 
-        if (definition == null) return Response.text(421, "Action not offered by this instance");
+            if (definition == null) return Response.text(421, "Action not offered by this instance");
 
-        return definition.invoke(new Context(broker, request.raw()), request, jsonLimits);
+            Response response = definition.invoke(new Context(broker, request.raw()), request, jsonLimits);
+            permit.check(incoming);
+
+            return response;
+        }
     }
 
     private Limits limits(int connections, int timeout) {

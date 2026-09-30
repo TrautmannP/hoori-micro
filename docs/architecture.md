@@ -146,7 +146,18 @@ Limits werden beim Start geprüft. Katalog (256 Instanzen × 128 Actions), Abhä
 und Gateway-Routen wachsen nie durch Request-Werte. Der Katalog muss in
 `HOORI_BODY_BYTES` passen; größere Installationen müssen das Limit anheben.
 
-Timeouts sind **pro HTTP-Exchange**. Der bestehende Hoori-Client umfasst Pool-Warten,
+Pro Richtung begrenzt eine globale Admission laufende und wartende Framework-Calls.
+Ausgehend beginnt sie vor Encoding und Gateway-Parametern, eingehend vor DTO-Decoding
+und Action-Handler; der begrenzte Raw-Body ist dann bereits vom SDK gelesen.
+Typisierte, generische und Gateway-Calls halten genau ein ausgehendes Permit bis zum
+Ergebnis. Wartende sind begrenzt und starten nach Stop nicht mehr; Fehler/Timeout/
+Interrupt geben ihre Slots frei. Health und Control laufen weiter. Sättigung liefert
+einen sicheren 503, auch über einen weiteren Service-Hop. Standardmäßig wartet nur
+die Framework-Queue, der SDK-Datenpool hat null Pending-Slots. Größere Limits stehen
+in [configuration.md](configuration.md); eigene Anwendungstasks sind davon nicht erfasst.
+
+Das lokale Budget beginnt vor Admission/Encoding und wird dem SDK unverändert
+weitergegeben. Der bestehende Hoori-Client umfasst Pool-Warten,
 DNS, Connect, TLS, Schreiben und Response-Lesen mit einer monotonen Deadline. Das
 ist noch kein transitive Request-Budget über mehrere Service-Hops. Serielles Fan-out
 kann mehrere einzelne Budgets verbrauchen; Aufrufer dürfen dies nicht als globale
@@ -160,8 +171,8 @@ Idempotenzvertrag potentiell ein doppelter Geschäftsprozess. Redirects werden
 ebenfalls nicht automatisch verfolgt. Ausgehende Fehler werden sicher nach außen
 übersetzt; fachliche 404 können Controller explizit abbilden.
 
-Der Bootstrap ist kein Circuit-Breaker-Framework. Abweisungsstrategien,
-Retry-Budgets, Idempotency Keys und begrenztes Fan-out folgen nur bei einem
+Der Bootstrap ist kein Circuit-Breaker-Framework. Retry-Budgets,
+Idempotency Keys und begrenztes Fan-out folgen nur bei einem
 konkreten Use-Case und mit passenden Tests. Insbesondere begrenzt ein Pool nicht
 jede denkbare, vom Anwendungscode selbst erzeugte Menge wartender Hintergrundtasks.
 
@@ -179,7 +190,9 @@ Peer-Body/Stacktrace geloggt. Zwei Pools schaffen keine CPU-Präemption.
 4. Bei SIGTERM Aufnahme und weitere Heartbeats stoppen; der Registrar deregistriert
    best effort. Der Owner wartet begrenzt auf ihn (höchstens drei Control-Timeouts,
    einschließlich Close-Fallback), bevor er den Daten-Drain startet.
-5. Bereits gestartete Requests innerhalb der Grace-Period abarbeiten.
+5. Bereits zugelassene Requests innerhalb der Grace-Period abarbeiten; vor Encoding/
+   Decoding Wartende aufwecken und mit 503 abweisen. Zugelassene Handler dürfen weitere
+   sofortige Calls starten, sofern ein Slot frei ist, aber keine neue Queue bilden.
 6. Erst danach den Datenpool schließen; Control wird ebenfalls geschlossen. Die TTL
    deckt eine gescheiterte Deregistrierung ab. Kein neuer lokaler Beat folgt dem Stop;
    entfernte bereits gesendete Operationen bleiben eine Best-effort-Netzwerkgrenze.

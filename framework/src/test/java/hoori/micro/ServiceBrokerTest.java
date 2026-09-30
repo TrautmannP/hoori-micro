@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import hoori.http.Headers;
 import hoori.http.HttpClientClosedException;
+import hoori.http.RequestBudget;
 import hoori.http.Response;
 import hoori.rest.RequestException;
 import hoori.rest.json.Json;
@@ -37,7 +38,7 @@ final class ServiceBrokerTest {
     @Test
     void selectsPerActionAndMajorVersionDuringRollingUpdate() throws IOException {
         List<String> targets = new ArrayList<>();
-        ServiceBroker broker = broker((context, target, method, headers, body) -> {
+        ServiceBroker broker = broker((context, target, method, headers, body, budget) -> {
             targets.add(target.toString());
             assertEquals("POST", method);
             assertEquals("1", headers.get(ServiceBroker.VERSION_HEADER));
@@ -63,7 +64,7 @@ final class ServiceBrokerTest {
 
     @Test
     void genericCallUsesTheSameBroker() throws IOException {
-        ServiceBroker broker = broker((context, target, method, headers, body) -> {
+        ServiceBroker broker = broker((context, target, method, headers, body, budget) -> {
             assertEquals("{\"id\":7}", new String(body, StandardCharsets.UTF_8));
 
             return json(200, "{\"id\":7,\"title\":\"Suppe\",\"tags\":[1,2.5,true,null]}");
@@ -76,6 +77,134 @@ final class ServiceBrokerTest {
     }
 
     @Test
+    void admissionRejectsBeforeEncodingAndReleasesEveryFailure() throws Exception {
+        int[] writes = {0}, sends = {0};
+        JsonCodec<String> counted = new JsonCodec<>() {
+            public String read(JsonReader reader) {
+                return STRING.read(reader);
+            }
+
+            public void write(String value, JsonWriter writer) {
+                writes[0]++;
+                STRING.write(value, writer);
+            }
+        };
+        Action<String, String> get = new Action<>("recipes.get", counted, STRING);
+        Action<String, String> bill = new Action<>("billing.get", counted, STRING);
+        ServiceConfig config = ServiceConfig.from(
+                "shopping",
+                key -> key.equals("HOORI_OUTGOING_CALLS")
+                        ? "1"
+                        : key.equals("HOORI_OUTGOING_PENDING_CALLS") ? "0" : null);
+        ServiceBroker broker = new ServiceBroker(
+                Service.named("shopping")
+                        .dependsOn("recipes", 1)
+                        .dependsOn("billing", 1)
+                        .freeze(),
+                config,
+                (context, target, method, headers, body, budget) -> {
+                    assertNotNull(budget);
+                    sends[0]++;
+
+                    return json(200, "\"ok\"");
+                },
+                JsonLimits.DEFAULT);
+        broker.accept(catalog(true, instance("recipes-a", 1, "http://a:8080", "get")));
+        try (Admission.Permit held = broker.admit(null)) {
+            assertThrows(CallRejectedException.class, () -> broker.call(null, get, "x"));
+            assertThrows(CallRejectedException.class, () -> broker.call(null, bill, "x"));
+            // This would fail JSON encoding if the generic path materialized it before admission.
+            assertThrows(
+                    CallRejectedException.class, () -> broker.call(null, "recipes.get", Map.of("bad", new Object())));
+            assertEquals(0, writes[0]);
+            assertEquals(0, sends[0]);
+            assertEquals(1, broker.admissionStats().active);
+        }
+        assertEquals("ok", broker.call(null, get, "x")); // max=1 proves no second permit in invoke().
+        assertEquals("ok", broker.call(null, "recipes.get", Map.of("id", 7)));
+        assertThrows(ServiceCallException.class, () -> broker.call(null, bill, "x"));
+        JsonCodec<String> broken = new JsonCodec<>() {
+            public String read(JsonReader reader) {
+                return STRING.read(reader);
+            }
+
+            public void write(String value, JsonWriter writer) {
+                throw new IllegalStateException("codec failed");
+            }
+        };
+        assertThrows(
+                IllegalStateException.class, () -> broker.call(null, new Action<>("recipes.get", broken, STRING), "x"));
+        assertEquals(0, broker.admissionStats().active);
+        assertEquals(0, broker.admissionStats().pending);
+        broker.stop();
+        int encoded = writes[0];
+        assertThrows(CallRejectedException.class, () -> broker.call(null, get, "x"));
+        assertEquals(encoded, writes[0]);
+        assertEquals(2, sends[0]);
+    }
+
+    @Test
+    void admissionWaitConsumesTheSameBudgetSentToTheSdk() throws Exception {
+        int[] writes = {0}, sends = {0};
+        JsonCodec<String> counted = new JsonCodec<>() {
+            public String read(JsonReader reader) {
+                return STRING.read(reader);
+            }
+
+            public void write(String value, JsonWriter writer) {
+                writes[0]++;
+                STRING.write(value, writer);
+            }
+        };
+        ServiceConfig config = ServiceConfig.from(
+                "shopping",
+                key -> key.equals("HOORI_OUTGOING_CALLS")
+                        ? "1"
+                        : key.equals("HOORI_OUTGOING_PENDING_CALLS")
+                                ? "1"
+                                : key.equals("HOORI_CLIENT_TIMEOUT_MS") ? "1000" : null);
+        RequestBudget[] observed = {null};
+        ServiceBroker broker = new ServiceBroker(
+                shopping(),
+                config,
+                (context, target, method, headers, body, budget) -> {
+                    observed[0] = budget;
+                    sends[0]++;
+                    assertTrue(budget.remainingMillis() < 950, "Admission wait restarted the exchange budget");
+
+                    return json(200, "\"ok\"");
+                },
+                JsonLimits.DEFAULT);
+        broker.accept(catalog(true, instance("recipes-a", 1, "http://a:8080", "get")));
+        Throwable[] failed = {null};
+        Thread caller;
+        try (Admission.Permit held = broker.admit(null)) {
+            caller = new Thread(() -> {
+                try {
+                    assertEquals("ok", broker.call(null, new Action<>("recipes.get", counted, STRING), "x"));
+                } catch (Throwable error) {
+                    failed[0] = error;
+                }
+            });
+            caller.start();
+            long deadline = System.nanoTime() + 2_000_000_000L;
+            while (broker.admissionStats().pending == 0 && System.nanoTime() - deadline < 0) Thread.sleep(1);
+            assertEquals(1, broker.admissionStats().pending);
+            assertEquals(0, writes[0]);
+            assertEquals(0, sends[0]);
+            Thread.sleep(100);
+        }
+        caller.join(2000);
+        assertFalse(caller.isAlive());
+        assertNull(failed[0]);
+        assertNotNull(observed[0]);
+        assertEquals(1, writes[0]);
+        assertEquals(1, sends[0]);
+        assertEquals(0, broker.admissionStats().active);
+        assertEquals(0, broker.admissionStats().pending);
+    }
+
+    @Test
     void controlTimeoutsRecoverWhileCancellationAndCloseStop() throws Exception {
         Registry registry = new Registry(60_000, JsonLimits.DEFAULT);
         long now = System.nanoTime() + 60_001_000_000L;
@@ -85,12 +214,12 @@ final class ServiceBrokerTest {
         ServiceBroker broker = new ServiceBroker(
                 shopping(),
                 config,
-                (context, target, method, headers, body) -> {
+                (context, target, method, headers, body, budget) -> {
                     assertEquals(ServiceBroker.INVOKE_PATH, target.getPath());
 
                     return json(200, "\"ok\"");
                 },
-                (context, target, method, headers, body) -> {
+                (context, target, method, headers, body, budget) -> {
                     methods.add(method);
                     assertFalse(target.getPath().equals(ServiceBroker.INVOKE_PATH));
 
@@ -130,7 +259,7 @@ final class ServiceBrokerTest {
         ServiceBroker inactive = new ServiceBroker(
                 Service.named("static").freeze(),
                 config,
-                (c, t, m, h, b) -> fail("Inactive discovery"),
+                (c, t, m, h, b, budget) -> fail("Inactive discovery"),
                 JsonLimits.DEFAULT);
         assertFalse(inactive.needsDiscovery());
         inactive.beat(false);
@@ -138,7 +267,8 @@ final class ServiceBrokerTest {
 
     @Test
     void failsBeforeIoWithoutDependencyOrOfferingInstance() {
-        ServiceBroker broker = broker((context, target, method, headers, body) -> fail("No transport call expected"));
+        ServiceBroker broker =
+                broker((context, target, method, headers, body, budget) -> fail("No transport call expected"));
         assertThrows(
                 IllegalArgumentException.class,
                 () -> broker.call(null, new Action<>("billing.get", STRING, STRING), "x"));
@@ -150,7 +280,7 @@ final class ServiceBrokerTest {
     @Test
     void noRetryAndNoPeerBodyInErrors() throws IOException {
         int[] calls = {0};
-        ServiceBroker failing = broker((context, target, method, headers, body) -> {
+        ServiceBroker failing = broker((context, target, method, headers, body, budget) -> {
             calls[0]++;
             throw new IOException("peer may already have committed");
         });
@@ -161,26 +291,35 @@ final class ServiceBrokerTest {
                 assertThrows(ServiceCallException.class, () -> failing.call(null, GET, "x"))
                         .upstreamStatus());
         assertEquals(1, calls[0]);
+        assertEquals(0, failing.admissionStats().active);
 
         for (int status : new int[] {301, 404, 421, 500}) {
-            ServiceBroker broker = broker((context, target, method, headers, body) -> json(status, "sensitive body"));
+            ServiceBroker broker =
+                    broker((context, target, method, headers, body, budget) -> json(status, "sensitive body"));
             broker.accept(catalog(true, instance("a", 1, "http://a:8080", "get")));
             ServiceCallException failure = assertThrows(ServiceCallException.class, () -> broker.call(null, GET, "x"));
             assertEquals(status, failure.upstreamStatus());
             assertFalse(failure.getMessage().contains("sensitive"));
+            assertEquals(0, broker.admissionStats().active);
         }
         for (String type : new String[] {"text/html", "application/problem+json", "application/json; charset=latin1"}) {
-            ServiceBroker broker = broker((context, target, method, headers, body) -> new Response(
+            ServiceBroker broker = broker((context, target, method, headers, body, budget) -> new Response(
                     200, new Headers().add("Content-Type", type), "\"ok\"".getBytes(StandardCharsets.UTF_8)));
             broker.accept(catalog(true, instance("a", 1, "http://a:8080", "get")));
             assertThrows(ServiceCallException.class, () -> broker.call(null, GET, "x"));
+            assertEquals(0, broker.admissionStats().active);
         }
         InterruptedIOException original = new InterruptedIOException("cancelled");
-        ServiceBroker cancelled = broker((context, target, method, headers, body) -> {
+        ServiceBroker cancelled = broker((context, target, method, headers, body, budget) -> {
             throw original;
         });
         cancelled.accept(catalog(true, instance("a", 1, "http://a:8080", "get")));
         assertSame(original, assertThrows(InterruptedIOException.class, () -> cancelled.call(null, GET, "x")));
+        assertEquals(0, cancelled.admissionStats().active);
+        ServiceBroker badJson = broker((context, target, method, headers, body, budget) -> json(200, "{"));
+        badJson.accept(catalog(true, instance("a", 1, "http://a:8080", "get")));
+        assertThrows(ServiceCallException.class, () -> badJson.call(null, GET, "x"));
+        assertEquals(0, badJson.admissionStats().active);
     }
 
     @Test
@@ -192,7 +331,7 @@ final class ServiceBrokerTest {
                         key -> key.equals("HOORI_HEARTBEAT_MS")
                                 ? "100"
                                 : key.equals("HOORI_CATALOG_MAX_AGE_MS") ? "150" : null),
-                (context, target, method, headers, body) -> json(200, "\"ok\""),
+                (context, target, method, headers, body, budget) -> json(200, "\"ok\""),
                 JsonLimits.DEFAULT);
         broker.accept(catalog(true, instance("a", 1, "http://a:8080", "get")));
         broker.accept(catalog(false)); // Restarted registry before re-registrations: keep the full view.
@@ -293,7 +432,7 @@ final class ServiceBrokerTest {
         ServiceBroker broker = new ServiceBroker(
                 provider,
                 config,
-                (context, target, method, headers, body) -> {
+                (context, target, method, headers, body, budget) -> {
                     methods.add(method);
                     assertEquals("2", headers.get(Catalog.PROTOCOL_HEADER));
 
@@ -332,7 +471,8 @@ final class ServiceBrokerTest {
                 key -> key.equals("HOORI_HEARTBEAT_MS")
                         ? "100"
                         : key.equals("HOORI_CATALOG_MAX_AGE_MS") ? "150" : null);
-        ServiceBroker broker = new ServiceBroker(shopping(), config, (c, t, m, h, b) -> reply[0], JsonLimits.DEFAULT);
+        ServiceBroker broker =
+                new ServiceBroker(shopping(), config, (c, t, m, h, b, budget) -> reply[0], JsonLimits.DEFAULT);
         Catalog original =
                 new Catalog("old", 10, true, new Catalog.Instance[] {parse(instance("a", 1, "http://a:8080", "get"))});
         broker.accept(Json.encode(original, Catalog.CODEC));
@@ -458,7 +598,7 @@ final class ServiceBrokerTest {
         ServiceBroker broker = new ServiceBroker(
                 shopping(),
                 config,
-                (c, t, m, h, b) -> {
+                (c, t, m, h, b, budget) -> {
                     Response response = registry.reply(h, now);
                     statuses.add(response.status);
                     assertEquals("services=recipes:1", h.get(Catalog.VIEW_HEADER));

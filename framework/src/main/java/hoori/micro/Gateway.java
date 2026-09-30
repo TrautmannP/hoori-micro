@@ -77,33 +77,37 @@ public final class Gateway implements Middleware {
         // Static routes (health, metrics, local controllers) always win over published actions.
         if (!request.routeTemplate().equals("<unmatched>")) return next.handle(request);
 
-        String target = request.raw().target;
-        int query = target.indexOf('?');
-        String[] segments = segments(query < 0 ? target : target.substring(0, query));
-        Route route = null;
-        for (Route candidate : routes())
-            if (candidate.method.equals(request.method())
-                    && candidate.matches(segments)
-                    && (route == null || candidate.specificity > route.specificity)) route = candidate;
+        // One outgoing permit covers route parameters, input encoding and the direct RPC.
+        try (Admission.Permit permit = broker.admit(request.raw())) {
 
-        if (route == null) return next.handle(request);
+            String target = request.raw().target;
+            int query = target.indexOf('?');
+            String[] segments = segments(query < 0 ? target : target.substring(0, query));
+            Route route = null;
+            for (Route candidate : routes())
+                if (candidate.method.equals(request.method())
+                        && candidate.matches(segments)
+                        && (route == null || candidate.specificity > route.specificity)) route = candidate;
 
-        if (!policy.test(request, route.permission)) return Response.text(403, "Forbidden");
+            if (route == null) return next.handle(request);
 
-        byte[] params = Json.encode(params(request, route, segments), JsonTree.CODEC, limits);
-        byte[] result;
-        try {
-            result = broker.invoke(request.raw(), route.service, route.version, route.action, params);
-        } catch (ServiceCallException rejected) {
-            int status = rejected.upstreamStatus();
+            if (!policy.test(request, route.permission)) return Response.text(403, "Forbidden");
 
-            // Keep the status of a provider's client error, never its body. 421/5xx stay upstream failures.
-            if (status >= 400 && status < 500 && status != 421) return Response.text(status, "Request rejected");
+            byte[] params = Json.encode(params(request, route, segments), JsonTree.CODEC, limits);
+            byte[] result;
+            try {
+                result = broker.invoke(permit, request.raw(), route.service, route.version, route.action, params);
+            } catch (ServiceCallException rejected) {
+                int status = rejected.upstreamStatus();
 
-            throw rejected;
+                // Keep the status of a provider's client error, never its body. 421/5xx stay upstream failures.
+                if (status >= 400 && status < 500 && status != 421) return Response.text(status, "Request rejected");
+
+                throw rejected;
+            }
+
+            return new Response(200, new Headers().add("Content-Type", "application/json; charset=utf-8"), result);
         }
-
-        return new Response(200, new Headers().add("Content-Type", "application/json; charset=utf-8"), result);
     }
 
     private Route[] routes() {
