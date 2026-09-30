@@ -62,7 +62,7 @@ Verbindungsprobe zählt ihre eigene Verbindung/Anfrage mit. Die alte SDK-Baselin
 hat keine Pool-Statistik: `http_pool_pending_acquires: null` bezeichnet fehlende
 Messbarkeit, nicht null Wartende. Der qualifizierte SDK-Pin aus #8 enthält die API;
 die bisherige Vergleichsfixture lässt den noch nicht erfassten Zähler explizit `null`.
-Beide Pools werden mit #4 sichtbar gemacht.
+Die #4-Kontrolle unten erfasst beide Pools und ihre Summe.
 
 Guest-Heap ist logische Belegung; committed Heap ist dessen physische backing
 storage. RSS enthält auch JIT, native Provider und VM-Metadaten. Cgroup
@@ -236,3 +236,53 @@ Einmalige Läufe sind eine separate SDK-Kontrolle, keine statistische Gewinnfrei
 Pending-Zähler sind in dieser Fixture **noch nicht erfasst**, obwohl der neue SDK
 sie anbietet. Pool-Isolation/Admission/Budget-Wire-Protokoll folgen separat in #4–#6;
 Basisimage-Digest und weitere Image-Abnahme aus #8 bleiben offen.
+
+## Control-Isolation, 30. September 2026
+
+Framework `43c0b6e` vor #4 und neuer Stand verwenden denselben sauberen SDK-Satz
+`3254301` sowie dieselbe kompilierte Fixture (`78692ef128e2…`) und denselben Generator.
+Der alte Stand erhielt ausschließlich Messzugriffe für seinen vorhandenen Pool;
+sein C-Transport, Lifecycle und seine SDK-Pending-Policy bleiben unverändert.
+Die Patches stehen in den Rohdaten. Je ein frischer Mixed-C-Lauf mit denselben
+Limits und 2 s Last/5 s Warmup/12 s Ruhe wie oben, keine parallel laufenden eigenen
+Tests während der Messung. Rohdaten: [alt klein](benchmarks/issue-4-control-old-small.json.gz),
+[neu klein](benchmarks/issue-4-control-new-small.json.gz),
+[alt mit 32 zusätzlichen Services](benchmarks/issue-4-control-old-large.json.gz),
+[neu mit 32 zusätzlichen Services](benchmarks/issue-4-control-new-large.json.gz).
+
+| Beobachtung | klein: alt → neu | 32 zusätzliche Services: alt → neu |
+|---|---:|---:|
+| Control-Ruhe: CPU gesamt, ms | 537,13 → 552,50 | 956,68 → 940,75 |
+| RSS aller vier Rollen nach Ruhe, MiB | 218,238 → 218,961 | 223,945 → 224,754 |
+| Task-Snapshots aller Rollen nach Ruhe | 20 → 19 | 20 → 19 |
+| aktive + idle ausgehende Poolverbindungen nach Ruhe | 2 → 2 | 2 → 2 |
+| erfolgreiche/s, geschlossene Last | 117,33 → 118,57 | 117,65 → 113,92 |
+| p99, ms | 410,25 → 293,10 | 552,05 → 607,12 |
+| Recovery-p99, ms | 10,78 → 10,64 | 15,19 → 10,12 |
+
+Shopping/Recipes halten nach Ruhe je eine Registry-Verbindung: vorher im gemeinsamen,
+jetzt im separaten Control-Pool. Datenverbindungen sind nach 12 s Ruhe abgelaufen;
+Control-Pending ist immer null. Shopping hat einen zusätzlichen Reaper-Task, Registry
+und das in C inaktive Gateway je einen Registrar weniger. Task-Zahlen sind Snapshots
+während Metrikprobes, keine gemessenen Spitzen. Das Verbindungsbudget steigt pro
+Discovery-Service von vier gemeinsamen auf vier Daten- plus eine Control-Verbindung;
+es bleiben dieselben Gesamt-CPU-/RAM-Limits. Alte Pending-Policy: SDK-Default 64;
+neu: ausdrücklich vier für Daten, null für Control. Raw-Proben erfassen nun diese
+Zähler, einschließlich Ablehnungen, statt `null` für ungemessene Werte.
+
+Alle vier Recovery-Phasen liefern acht korrekte Antworten ohne Fehler. Die kleine
+geschlossene Phase enthält alt/neu je einen Fehler (<1 %), die große keinen.
+Die höheren RSS-Werte und kleinen CPU-/Durchsatzunterschiede sind Einzellauf-
+Beobachtungen, **kein Performancegewinn oder Retention-/Lastfreigabe**.
+
+[Native Fault-Rohdaten](benchmarks/issue-4-control-faults.json.gz) enthalten beide
+Engines, Runtime-/Fixture-/Framework-Identitäten und den kontrollierten Peer-Verlauf.
+Auf gleichem SDK beendet der alte Framework-Stand nach einem 300-ms-Timeout den
+Registrar und meldet weiter Ready. Neu erholen sich ein einzelner und zwei
+aufeinanderfolgende Timeouts; nach unbekannter Lease folgt volle Registrierung,
+etwa 700/677 ms (Mixed/Interpreter) nach Beginn der letzten verzögerten Lease.
+SIGTERM während einer langsamen erneuten Registrierung wartet auf ein 150 ms
+zurückgehaltenes DELETE, beendet mit Exit 0/`drained=true` und leeren Pools.
+Docker-Smoke prüft zusätzlich echte Registry-Leases bei Daten-Sättigung über eine
+TTL und den Drain aktiver plus wartender Datenaufrufe. CPU-unkooperative Handler
+bleiben Hooris Single-Carrier-Grenze; Pool-Trennung schafft keine Präemption.

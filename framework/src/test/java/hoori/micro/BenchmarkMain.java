@@ -67,8 +67,18 @@ public final class BenchmarkMain {
                                         JsonTree.CODEC,
                                         JSON));
 
-            app.routes().get("/bench/runtime", request -> runtime(app.broker()));
+            app.routes()
+                    .get(
+                            "/bench/runtime",
+                            request -> runtime(app.broker(), app.dataPoolStats(), app.controlPoolStats()));
             app.run();
+            for (HttpClient.PoolStats stats :
+                    new HttpClient.PoolStats[] {app.dataPoolStats(), app.controlPoolStats()}) {
+                if (stats != null
+                        && (stats.activeConnections != 0 || stats.idleConnections != 0 || stats.pendingAcquires != 0))
+                    throw new AssertionError("Pool retained resources after shutdown");
+            }
+            System.out.println("pools_closed=true");
         }
     }
 
@@ -125,8 +135,9 @@ public final class BenchmarkMain {
 
         service.freeze();
         ServiceConfig config = ServiceConfig.from(ROLE, Environment.system());
-        Limits clientLimits =
-                new Limits(64, 16384, config.bodyBytes, config.clientConnections, 100, config.clientTimeoutMillis);
+        Limits clientLimits = new Limits(
+                        64, 16384, config.bodyBytes, config.clientConnections, 100, config.clientTimeoutMillis)
+                .withPendingAcquires(config.clientPendingAcquires);
         try (HttpClient client = new HttpClient(clientLimits, config.clientPerOrigin, config.clientIdleMillis)) {
             ServiceBroker broker = VARIANT.equals("B")
                     ? new ServiceBroker(service, config, ServiceBroker.transport(client), JSON)
@@ -146,9 +157,11 @@ public final class BenchmarkMain {
             Router router = new Router();
             HttpServer[] owner = new HttpServer[1];
             router.get(
-                    "/metrics", request -> Response.text(200, owner[0].metrics().prometheus()));
+                    "/metrics",
+                    request -> Response.text(
+                            200, owner[0].metrics().prometheus() + Microservice.poolMetrics(client.poolStats(), null)));
             router.get("/health/ready", request -> Response.text(200, "UP"));
-            router.get("/bench/runtime", request -> runtime(broker));
+            router.get("/bench/runtime", request -> runtime(broker, client.poolStats(), null));
 
             if (ROLE.equals("recipes")) {
                 router.post(
@@ -215,7 +228,7 @@ public final class BenchmarkMain {
         }
     }
 
-    private static Response runtime(ServiceBroker broker) {
+    private static Response runtime(ServiceBroker broker, HttpClient.PoolStats data, HttpClient.PoolStats control) {
         RuntimeMetrics.Snapshot s = RuntimeMetrics.snapshot();
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("heap_used_bytes", s.heapUsedBytes);
@@ -237,7 +250,27 @@ public final class BenchmarkMain {
         for (Catalog.Instance instance : catalog.instances) actions += instance.actions.length;
         values.put("catalog_instances", catalog.instances.length);
         values.put("catalog_actions", actions);
+        values.put(
+                "http_pool_active_connections",
+                data.activeConnections + (control == null ? 0 : control.activeConnections));
+        values.put(
+                "http_pool_idle_connections", data.idleConnections + (control == null ? 0 : control.idleConnections));
+        values.put(
+                "http_pool_pending_acquires", data.pendingAcquires + (control == null ? 0 : control.pendingAcquires));
+        values.put(
+                "http_pool_rejected_acquires",
+                data.rejectedAcquires + (control == null ? 0 : control.rejectedAcquires));
+        poolValues(values, "data", data);
+
+        if (control != null) poolValues(values, "control", control);
 
         return Responses.json(200, values, JsonTree.CODEC, JSON);
+    }
+
+    private static void poolValues(Map<String, Object> values, String pool, HttpClient.PoolStats stats) {
+        values.put(pool + "_pool_active_connections", stats.activeConnections);
+        values.put(pool + "_pool_idle_connections", stats.idleConnections);
+        values.put(pool + "_pool_pending_acquires", stats.pendingAcquires);
+        values.put(pool + "_pool_rejected_acquires", stats.rejectedAcquires);
     }
 }

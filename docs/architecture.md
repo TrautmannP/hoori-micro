@@ -136,9 +136,13 @@ Request-ID läuft über alle Hops.
 
 ## 4. Ressourcen und Ausfallverhalten
 
-Ein `Microservice` besitzt genau einen Hoori-HTTP-Client-Pool für Actions und
-Heartbeats. Dadurch werden nicht pro Request Clients oder Pools angelegt. Limits
-werden beim Start geprüft. Katalog (256 Instanzen × 128 Actions), Abhängigkeiten (32)
+Ein `Microservice` besitzt einen Hoori-Datenpool für Actions und einen Control-Pool
+für Registrierung/Katalog/Deregistrierung. Control hat höchstens eine Verbindung,
+null Wartende und einen eigenen kurzen Timeout. Der Datenpool begrenzt auch Pending-
+Acquires ausdrücklich; `/metrics` zeigt beide Pools mit festen Labels. Ohne Actions,
+Abhängigkeiten oder öffentliche Gateway-Sicht startet kein Registrar; der inaktive
+Control-Client erzeugt keine Sockets/Reaper. Keine Pools pro Request oder Action.
+Limits werden beim Start geprüft. Katalog (256 Instanzen × 128 Actions), Abhängigkeiten (32)
 und Gateway-Routen wachsen nie durch Request-Werte. Der Katalog muss in
 `HOORI_BODY_BYTES` passen; größere Installationen müssen das Limit anheben.
 
@@ -161,15 +165,24 @@ Retry-Budgets, Idempotency Keys und begrenztes Fan-out folgen nur bei einem
 konkreten Use-Case und mit passenden Tests. Insbesondere begrenzt ein Pool nicht
 jede denkbare, vom Anwendungscode selbst erzeugte Menge wartender Hintergrundtasks.
 
+Control-Timeouts (`SocketTimeoutException`) und Transportfehler führen zum bestehenden
+begrenzten Backoff/Jitter, dann Lease bzw. nach 404 voller Neuregistrierung. Nur SDK-
+Cancellation oder Client-Close beendet den Registrar. Timeouts löschen keinen Interrupt;
+ein gleichzeitig gesetzter Interrupt bleibt ein Stop-Signal. Übergänge werden ohne
+Peer-Body/Stacktrace geloggt. Zwei Pools schaffen keine CPU-Präemption.
+
 ## 5. Lifecycle und Nebenläufigkeit
 
-1. Service-Definition und Konfiguration validieren, Client erzeugen, Routen registrieren.
+1. Service-Definition und Konfiguration validieren, beide Clients erzeugen, Routen registrieren.
 2. Router einfrieren, Listener binden, Service starten.
 3. Sobald live und ready: registrieren; Heartbeats nur solange ready.
-4. Bei SIGTERM Aufnahme neuer Requests stoppen und parallel deregistrieren.
+4. Bei SIGTERM Aufnahme und weitere Heartbeats stoppen; der Registrar deregistriert
+   best effort. Der Owner wartet begrenzt auf ihn (höchstens drei Control-Timeouts,
+   einschließlich Close-Fallback), bevor er den Daten-Drain startet.
 5. Bereits gestartete Requests innerhalb der Grace-Period abarbeiten.
-6. Erst danach den ausgehenden Client schließen; eine noch hängende Deregistrierung
-   bricht damit ab, die TTL übernimmt.
+6. Erst danach den Datenpool schließen; Control wird ebenfalls geschlossen. Die TTL
+   deckt eine gescheiterte Deregistrierung ab. Kein neuer lokaler Beat folgt dem Stop;
+   entfernte bereits gesendete Operationen bleiben eine Best-effort-Netzwerkgrenze.
 
 Wichtig: `HttpServer.run()` kehrt zurück, sobald die Aufnahme endet. Es wartet
 nicht selbst auf alle Handler. Deshalb lösen Signal-Watcher und Heartbeat-Thread nur

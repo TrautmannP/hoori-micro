@@ -8,19 +8,19 @@ Runtime: saubere Headless-Release-Distribution, lokal aus dem gepinnten Commit g
 (`x86_64-unknown-linux-gnu`, `dirty=false`). Toolchain: Temurin 21.0.6, Maven 3.9.16,
 Docker 29.8.1, Compose v5.5.1, Basis `debian:trixie-slim` (Tag, kein Digest).
 Der qualifizierte Satz ist jetzt `3254301` (VM, Guest Base und alle SDK-JARs gemeinsam).
-Die unten aufgeführten Core-/Maven-/Smoke-Prüfungen wurden auf diesem Pin erneut
-ausgeführt, bei unverändertem Framework-Verhalten. Er enthält die upstream gelieferten
-Pending-Acquire- und lokalen RequestBudget-APIs; Framework-Zulassung, Pool-Isolation
-und serviceübergreifende Wire-Budgets sind weiterhin #4–#6.
+Er enthält die upstream gelieferten Pending-Acquire- und lokalen RequestBudget-APIs.
+Pool-Isolation und Registrar-Recovery aus #4 sind auf diesem Satz geprüft;
+Framework-Zulassung und serviceübergreifende Wire-Budgets bleiben #5/#6.
 
 | Prüfung | Ergebnis | Aussagegrenze |
 |---|---|---|
 | Spotless-Check (auch in `mvn verify`) | **24 Java-Dateien geprüft** | Palantir 2.100.0 plus JDK-Syntaxschritt in Spotless 3.10.3; nur Host-JDK. Fehlende Leerzeilen abgewiesen, `apply` korrigiert, erneuter Check erfolgreich |
-| `scripts/test-core.sh` (HotSpot) | **96 Assertions und 5 Formatter-Fixtures bestanden** | Namen, Origins, Konfiguration; Formatter mit Kommentaren/Literalen, `else if`, Guards, Switch, Idempotenz und ungültigem Input; kein Netzwerk |
+| `scripts/test-core.sh` (HotSpot) | **104 Assertions und 5 Formatter-Fixtures bestanden** | Namen, Origins, Konfiguration einschließlich Pending-/Control-Bounds; kein Netzwerk |
 | Python `unittest` | **14 Tests bestanden** | 12 Distributionsprüfungen; Benchmark-Zählung, begrenzte offene Last und keine Generator-Retries. Lokaler Python-Peer, keine native Transport-Abnahme |
-| `scripts/build.sh` inkl. `mvn clean verify` | **15 JUnit-Tests bestanden** | Zusätzlich: Lease-/Byte-Wiederverwendung, monotone Revisionen, transaktionale Limits, gefilterte Sichten und ihre Bestätigungen, Freigabe abgelaufener Zeilen und voller Wiederabruf. HotSpot mit Transport-Seam |
-| `scripts/test-hoori-core.sh`, mixed und interpreter | **96 Assertions bestanden** | Echte Guest-Ausführung der portablen Checks |
-| `scripts/smoke.py`, mixed und interpreter | **6 Phasen bestanden** | Einschließlich nativer Sichten, Lease-/Byte-Grenzen und gleichzeitiger alter/neuer Anbieter; siehe unten |
+| `scripts/build.sh` inkl. `mvn clean verify` | **16 JUnit-Tests bestanden** | Lease-/Byte-Wiederverwendung, Revisionen, Limits, gefilterte Sichten/Frische sowie Timeout vs. Cancellation/Close und getrennte Exchanges. HotSpot mit Transport-Seam |
+| `scripts/test-hoori-core.sh`, mixed und interpreter | **104 Assertions bestanden** | Echte Guest-Ausführung der portablen Checks |
+| `scripts/test_control.py`, mixed und interpreter | **bestanden** | Realer gepinnter SDK/Guest; absichtlich verzögerter Loopback-Peer, siehe unten |
+| `scripts/smoke.py`, mixed und interpreter | **7 Phasen bestanden** | Einschließlich Daten-Sättigung, nativer Sichten, Lease-/Byte-Grenzen und gleichzeitiger alter/neuer Anbieter |
 
 Der Smoke-Test startet Registry, Recipes, Shopping und Gateway als Container und prüft:
 Veröffentlichung über das Gateway, Aufruf über zwei Action-Hops, fachliche 404/400,
@@ -31,8 +31,10 @@ Shopping/Gateway (gleiche Container-IDs) veröffentlicht wird. Acht neue Aufrufe
 erreichen die neue Instanz; direkte Advertise-URLs liefern dort 200 und bei der alten
 Instanz 421. Nach deren Stop wird die Auswahlkonvergenz geprüft; Aufrufe bei
 gestoppter Registry und vollständige Wiederanmeldung nach deren
-Neustart; Anbieter-Ausfall mit sicherem 502 und Erholung; SIGTERM-Drain eines laufenden
-Aufrufs mit Exit-Code 0.
+Neustart; Anbieter-Ausfall mit sicherem 502 und Erholung. Shopping hat im Test eine
+Datenverbindung und zwei Pending-Slots: Drei kooperativ wartende Aufrufe halten die
+Lease länger als eine TTL frisch, bei Control ≤1 Verbindung/null Wartenden.
+SIGTERM drainiert einen aktiven und einen wartenden Datenaufruf mit Exit-Code 0.
 
 Discovery-Protokoll 2 wurde zusätzlich im echten Registry-Container geprüft:
 legacy PUT/GET, unveränderte leere Leases/bedingte Abrufe (204 und gleiche Revision),
@@ -42,8 +44,16 @@ anschließend unbekannte Lease (404). Consumer bekommen nur deklarierte Services
 und Action-Namen; `none` bleibt leer, `public` enthält nur publizierte Actions,
 Sichtwechsel erzwingen 200 und passende Bestätigungen erlauben 204. Snapshot-/Byte-
 Identität, verworfene Versionsrückschritte und falsche Sichten sowie Freigabe
-abgelaufener Broker-Zeilen sind zusätzlich per JUnit belegt. Registrar-Timeout-Recovery
-und Datenpool-Isolation bleiben die offene Arbeit aus #4.
+abgelaufener Broker-Zeilen sind zusätzlich per JUnit belegt.
+
+Der Control-Fault-Check reproduziert auf dem alten Framework/gleichen SDK: Ein
+Timeout beendet den Registrar, DELETE folgt und Ready bleibt 200. Der neue Stand
+übersteht einen einzelnen und zwei aufeinanderfolgende Timeouts, meldet sich nach
+404 erneut vollständig an und setzt Leases ohne Prozessneustart fort. SIGTERM
+während einer weiteren langsamen vollen Registrierung wartet auf ein verzögertes
+DELETE; danach `drained=true`, Exit 0 und aktive/idle/Pending-Zähler beider Pools null.
+Das ist ein kontrollierter Peer-Check; die Registry-/Action-Integration läuft separat
+im Docker-Smoke. Rohdaten und Kostenvergleich stehen unter [benchmarks.md](benchmarks.md).
 
 Dabei gefunden und behoben: Hooris Guest-Classlib hat weder `String.repeat` noch
 `Long.toHexString`, `Double.isInfinite` oder `Math.floorMod`. Die bisherigen
@@ -63,16 +73,18 @@ Die normale Recovery folgt jeweils einer einzelnen Lastspitze; wiederholte
 Rolling-/Recovery-Zyklen aus #10 sind damit nicht abgenommen. Die alten A–D-Läufe
 haben keine Pending-Acquire-Messung; das ist in den Ergebnissen `null`. Auch die
 unveränderte Pin-Vergleichsfixture erfasst diesen Zähler noch nicht. Auf dem neuen
-SDK ist die API vorhanden; die Pool-Metrikintegration folgt mit #4.
+SDK ist die API vorhanden; die #4-Fixture erfasst beide Pools und ihre Summe.
 
 ## Reproduzieren
 
 ```bash
 ./scripts/build.sh /pfad/zur/passenden/headless/distribution
 ./scripts/test-hoori-core.sh
+python3 scripts/test_control.py
 python3 scripts/smoke.py
 
 HOORI_ENGINE=interpreter ./scripts/test-hoori-core.sh
+HOORI_ENGINE=interpreter python3 scripts/test_control.py
 HOORI_ENGINE=interpreter python3 scripts/smoke.py
 ```
 

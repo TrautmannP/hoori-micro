@@ -3,6 +3,7 @@ package hoori.micro;
 import static org.junit.jupiter.api.Assertions.*;
 
 import hoori.http.Headers;
+import hoori.http.HttpClientClosedException;
 import hoori.http.Response;
 import hoori.rest.RequestException;
 import hoori.rest.json.Json;
@@ -12,6 +13,7 @@ import hoori.rest.json.JsonReader;
 import hoori.rest.json.JsonWriter;
 import java.io.IOException;
 import java.io.InterruptedIOException;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -71,6 +73,67 @@ final class ServiceBrokerTest {
         assertEquals(7L, result.get("id"));
         assertEquals("Suppe", result.get("title"));
         assertEquals(Arrays.asList(1L, 2.5, true, null), result.get("tags"));
+    }
+
+    @Test
+    void controlTimeoutsRecoverWhileCancellationAndCloseStop() throws Exception {
+        Registry registry = new Registry(60_000, JsonLimits.DEFAULT);
+        long now = System.nanoTime() + 60_001_000_000L;
+        ServiceConfig config = ServiceConfig.from("shopping", key -> null);
+        IOException[] failure = {new SocketTimeoutException("expired")};
+        List<String> methods = new ArrayList<>();
+        ServiceBroker broker = new ServiceBroker(
+                shopping(),
+                config,
+                (context, target, method, headers, body) -> {
+                    assertEquals(ServiceBroker.INVOKE_PATH, target.getPath());
+
+                    return json(200, "\"ok\"");
+                },
+                (context, target, method, headers, body) -> {
+                    methods.add(method);
+                    assertFalse(target.getPath().equals(ServiceBroker.INVOKE_PATH));
+
+                    if (failure[0] != null) throw failure[0];
+
+                    return registry.reply(headers, now);
+                },
+                JsonLimits.DEFAULT);
+        assertTrue(broker.needsDiscovery());
+        for (int i = 0; i < 2; i++) {
+            broker.beat(false);
+            assertFalse(Thread.currentThread().isInterrupted());
+        }
+        failure[0] = new IOException("transport failure");
+        broker.beat(false);
+        int delay = broker.heartbeatDelayMillis();
+        assertTrue(delay >= 14400 && delay <= 17600);
+        failure[0] = null;
+        registry.register(parse(instance("recipes-a", 1, "http://a:8080", "get")), now);
+        broker.beat(false);
+        assertEquals("ok", broker.call(null, GET, "x"));
+        delay = broker.heartbeatDelayMillis();
+        assertTrue(delay >= 1800 && delay <= 2200);
+        failure[0] = new InterruptedIOException("cancelled");
+        assertSame(failure[0], assertThrows(InterruptedIOException.class, () -> broker.beat(false)));
+        failure[0] = new HttpClientClosedException();
+        assertSame(failure[0], assertThrows(HttpClientClosedException.class, () -> broker.beat(false)));
+        failure[0] = new SocketTimeoutException("timeout racing stop");
+        Thread.currentThread().interrupt();
+        try {
+            assertSame(failure[0], assertThrows(SocketTimeoutException.class, () -> broker.beat(false)));
+            assertTrue(Thread.currentThread().isInterrupted());
+        } finally {
+            Thread.interrupted();
+        }
+        assertEquals(List.of("GET", "GET", "GET", "GET", "GET", "GET", "GET"), methods);
+        ServiceBroker inactive = new ServiceBroker(
+                Service.named("static").freeze(),
+                config,
+                (c, t, m, h, b) -> fail("Inactive discovery"),
+                JsonLimits.DEFAULT);
+        assertFalse(inactive.needsDiscovery());
+        inactive.beat(false);
     }
 
     @Test
