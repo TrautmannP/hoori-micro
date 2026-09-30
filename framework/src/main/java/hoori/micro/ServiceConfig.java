@@ -5,9 +5,9 @@ import java.net.URI;
 /** Validated startup configuration; no per-request environment reads. */
 public final class ServiceConfig {
     public final String name, bindAddress, instanceId, registryUrl, advertiseUrl;
-    public final int port, bodyBytes, serverConnections, clientConnections, clientPerOrigin;
+    public final int port, bodyBytes, serverConnections, clientConnections, clientPerOrigin, clientPendingAcquires;
     public final int requestTimeoutMillis, clientTimeoutMillis, clientIdleMillis, shutdownGraceMillis;
-    public final int heartbeatMillis, registryTtlMillis, catalogMaxAgeMillis;
+    public final int heartbeatMillis, registryTtlMillis, catalogMaxAgeMillis, controlTimeoutMillis;
 
     private ServiceConfig(String serviceName, Environment env) {
         name = ServiceName.require(serviceName);
@@ -18,12 +18,19 @@ public final class ServiceConfig {
         serverConnections = number(env, "HOORI_SERVER_CONNECTIONS", 32, 1, 512);
         clientConnections = number(env, "HOORI_CLIENT_CONNECTIONS", 16, 1, 512);
         clientPerOrigin = number(env, "HOORI_CLIENT_PER_ORIGIN", Math.min(8, clientConnections), 1, clientConnections);
+        clientPendingAcquires = number(env, "HOORI_CLIENT_PENDING_ACQUIRES", clientConnections, 0, 4096);
         requestTimeoutMillis = number(env, "HOORI_REQUEST_TIMEOUT_MS", 10000, 1, 600000);
         clientTimeoutMillis = number(env, "HOORI_CLIENT_TIMEOUT_MS", 2000, 1, 600000);
         clientIdleMillis = number(env, "HOORI_CLIENT_IDLE_MS", 5000, 1, 600000);
         shutdownGraceMillis = number(env, "HOORI_SHUTDOWN_GRACE_MS", 10000, 0, 600000);
         heartbeatMillis = number(env, "HOORI_HEARTBEAT_MS", 2000, 100, 60000);
         registryTtlMillis = number(env, "HOORI_REGISTRY_TTL_MS", 3 * heartbeatMillis, heartbeatMillis + 1, 600000);
+        controlTimeoutMillis = number(
+                env,
+                "HOORI_CONTROL_TIMEOUT_MS",
+                Math.min(1000, registryTtlMillis / 2),
+                1,
+                Math.min(10000, registryTtlMillis / 2));
         catalogMaxAgeMillis = number(env, "HOORI_CATALOG_MAX_AGE_MS", 30000, heartbeatMillis + 1, 3600000);
         registryUrl = origin(text(env, "HOORI_REGISTRY_URL", "http://registry:8080"), "HOORI_REGISTRY_URL");
         String host = env.get("HOSTNAME");

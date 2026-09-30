@@ -56,7 +56,7 @@ Details und Grenzen: [Architektur](docs/architecture.md),
 | Broker | Abhängigkeitsspezifischer Katalog ohne Gateway-Metadaten, Auswahl pro Action/Hauptversion, direkte Aufrufe, begrenztes Katalogalter |
 | Gateway | Vom Anbieter deklarierte, per Policy freigegebene Routen; Konflikte werden zurückgehalten |
 | Fehler und Kontext | Sichere Fehler, Request-ID über alle Hops, keine Retries/Redirects/Credential-Weitergabe |
-| Betrieb | Hoori-HTTP-Metriken, begrenzte Bodies/Verbindungen/Timeouts, Docker Compose, nicht privilegierte Container |
+| Betrieb | Hoori-HTTP-/Pool-Metriken, eigener begrenzter Control-Pool, begrenzte Bodies/Verbindungen/Wartende/Timeouts, Docker Compose |
 | Prüfungen | Portable Checks, JUnit-Vertragstests, Distributionsprüfung, echte Hoori-/Docker-Abnahme |
 
 Nicht enthalten: Authentifizierung (Registry, Invoke-Endpunkt und Demo-Gateway sind

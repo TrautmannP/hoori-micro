@@ -23,10 +23,12 @@ damit lassen sich Konfigurationen ohne Prozess-Environment testen.
 | `HOORI_PORT` | 8080 | 1–65535; ein Override ändert nicht automatisch Client-Destinationsports |
 | `HOORI_BODY_BYTES` | 65536 | 1024–16777216; HTTP-Body-Limit und JSON-Ausgabelimit |
 | `HOORI_SERVER_CONNECTIONS` | 32 | 1–512 zugelassene Serververbindungen |
-| `HOORI_CLIENT_CONNECTIONS` | 16 | 1–512 Verbindungen im gesamten Client-Pool |
+| `HOORI_CLIENT_CONNECTIONS` | 16 | 1–512 Verbindungen im Datenpool; zusätzlich höchstens eine Control-Verbindung |
 | `HOORI_CLIENT_PER_ORIGIN` | min(8, Gesamtlimit) | 1 bis Gesamtlimit |
+| `HOORI_CLIENT_PENDING_ACQUIRES` | Datenverbindungen | 0–4096 Wartende im Datenpool; Control hat immer null Wartende |
 | `HOORI_REQUEST_TIMEOUT_MS` | 10000 | 1–600000; Deadline eines eingehenden HTTP-Exchanges |
 | `HOORI_CLIENT_TIMEOUT_MS` | 2000 | 1–600000; gesamter ausgehender Exchange inklusive Pool-Warten |
+| `HOORI_CONTROL_TIMEOUT_MS` | min(1000, TTL/2) | 1 bis min(10000, TTL/2); Registry-Exchange, unabhängig vom Daten-Timeout |
 | `HOORI_CLIENT_IDLE_MS` | 5000 | 1–600000; Aufbewahrung ungenutzter Poolverbindungen |
 | `HOORI_SHUTDOWN_GRACE_MS` | 10000 | 0–600000; Drain, danach Abbruch verbleibender Arbeit |
 | `HOORI_REGISTRY_URL` | `http://registry:8080` | Origin der Registry |
@@ -67,14 +69,19 @@ Default-Advertise-URL nutzt die Container-ID als Hostnamen, die Docker im
 gemeinsamen Netz auflöst; damit funktionieren auch mehrere Replikate.
 
 `stop_grace_period` ist in der Demo 15 Sekunden, die Framework-Grace 10 Sekunden.
-Bei längerer Grace den äußeren Container-Timeout mit Sicherheitsabstand erhöhen.
+Vor dem Daten-Drain wartet der Owner höchstens zweimal den Control-Timeout auf
+Deregistrierung; bei Bedarf schließt er Control und wartet einmal zusätzlich.
+Bei längerer Grace/Control-Deadline den äußeren Container-Timeout mit Abstand erhöhen.
 Die Healthchecks sind lokale HTTP-Probes, keine garantierte Request-Verteilung und
 kein automatischer Neustartmechanismus bei jedem ungesunden Zustand.
 
 ## Weitere Betriebsregeln
 
 Pro Prozess ein `Microservice` besitzen und schließen; keine neuen Clients je
-Aufruf. Ziele stammen ausschließlich aus dem Registry-Katalog, nie aus Request-Werten. HTTPS-Origins erfordern passende CA-Konfiguration und Netzwerkfreigaben.
+Aufruf. Die festen Pool-Metriken `hoori_micro_pool_{active_connections,idle_connections,pending_acquires,rejected_acquires_total}`
+tragen ausschließlich `pool="data"` oder `pool="control"`. Aktive Verbindungen zählen
+auch reservierte DNS-/Connect-/TLS-Slots. Ziele stammen ausschließlich aus dem
+Registry-Katalog, nie aus Request-Werten. HTTPS-Origins erfordern passende CA-Konfiguration und Netzwerkfreigaben.
 Ein DNS-Name allein ist kein Service-Zertifikat oder Berechtigungsnachweis.
 
 Für lokale Entwicklung `run-local.sh` nutzen: es setzt Loopback und startet trotzdem

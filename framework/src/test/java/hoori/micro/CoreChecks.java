@@ -79,6 +79,8 @@ public final class CoreChecks {
         equal(16, c.clientConnections);
         equal(8, c.clientPerOrigin);
         equal(2000, c.clientTimeoutMillis);
+        equal(16, c.clientPendingAcquires);
+        equal(1000, c.controlTimeoutMillis);
         equal(10000, c.requestTimeoutMillis);
         equal("http://registry:8080", c.registryUrl);
         equal("http://shopping:8080", c.advertiseUrl);
@@ -108,6 +110,19 @@ public final class CoreChecks {
         env.put("HOORI_CLIENT_PER_ORIGIN", "3");
         reject(() -> ServiceConfig.from("shopping", env::get));
         env.clear();
+        env.put("HOORI_CLIENT_PENDING_ACQUIRES", "0");
+        equal(0, ServiceConfig.from("shopping", env::get).clientPendingAcquires);
+        for (String invalid : new String[] {"-1", "4097"}) {
+            env.put("HOORI_CLIENT_PENDING_ACQUIRES", invalid);
+            reject(() -> ServiceConfig.from("shopping", env::get));
+        }
+        env.clear();
+        env.put("HOORI_HEARTBEAT_MS", "100");
+        env.put("HOORI_REGISTRY_TTL_MS", "600");
+        equal(300, ServiceConfig.from("shopping", env::get).controlTimeoutMillis);
+        env.put("HOORI_CONTROL_TIMEOUT_MS", "301");
+        reject(() -> ServiceConfig.from("shopping", env::get));
+        env.clear();
         for (String key : new String[] {
             "HOORI_PORT",
             "HOORI_BODY_BYTES",
@@ -116,6 +131,7 @@ public final class CoreChecks {
             "HOORI_CLIENT_PER_ORIGIN",
             "HOORI_REQUEST_TIMEOUT_MS",
             "HOORI_CLIENT_TIMEOUT_MS",
+            "HOORI_CONTROL_TIMEOUT_MS",
             "HOORI_CLIENT_IDLE_MS"
         }) {
             env.put(key, "0");

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -149,11 +150,49 @@ def discovery_protocol() -> None:
     print("PASS: native leases, view-bound filtering, protocol transition and aggregate byte limit")
 
 
+def pool_stats(service: str) -> dict:
+    text = compose("exec", "-T", service, "curl", "-fsS", "--max-time", "2",
+                   "http://127.0.0.1:8080/metrics", capture=True)
+    return {line.split()[0]: int(line.split()[1]) for line in text.splitlines()
+            if line.startswith("hoori_micro_pool_")}
+
+
+def saturated_pool() -> None:
+    # Three accepted calls hold one data connection and two bounded waiters for > registry TTL.
+    started = time.monotonic()
+    require(all(value == 0 for value in pool_stats("registry").values()), "Registry has an active control pool")
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        calls = [executor.submit(request, "/demo/slow/1", "pool-saturated-" + str(i)) for i in range(3)]
+        deadline, saturated = time.monotonic() + 30, False
+        while not all(call.done() for call in calls):
+            stats = pool_stats("shopping")
+            active = stats['hoori_micro_pool_active_connections{pool="data"}']
+            pending = stats['hoori_micro_pool_pending_acquires{pool="data"}']
+            saturated |= active == 1 and pending == 2
+            require(active <= 1 and pending <= 2, "data pool exceeded bounds")
+            require(stats['hoori_micro_pool_pending_acquires{pool="control"}'] == 0
+                    and stats['hoori_micro_pool_active_connections{pool="control"}'] <= 1,
+                    "control pool exceeded bounds")
+            _, _, body = registry_request("GET", "/v1/catalog")
+            require(any(i["service"] == "shopping" for i in json.loads(body)["instances"]),
+                    "saturated data pool prevented lease renewal")
+            require(time.monotonic() < deadline, "saturation calls exceeded native test deadline")
+            time.sleep(.25)
+        require(saturated and all(call.result()[0] == 200 for call in calls), "bounded saturation fixture")
+        require(time.monotonic() - started > 6, "saturation did not cover one registry TTL")
+    print("PASS: data saturation preserves discovery, one control connection and zero control waiters")
+
+
 def main() -> int:
     if not (ROOT / ".docker-context/runtime/DISTRIBUTION.json").exists():
         print("Run scripts/build.sh with a verified Hoori distribution first", file=sys.stderr)
         return 2
     old_replica = None
+    work = tempfile.TemporaryDirectory(prefix="hoori-micro-smoke-")
+    override = Path(work.name) / "pool.json"
+    override.write_text(json.dumps({"services": {"shopping": {"environment": {
+        "HOORI_CLIENT_CONNECTIONS": "1", "HOORI_CLIENT_PER_ORIGIN": "1", "HOORI_CLIENT_PENDING_ACQUIRES": "2"}}}}))
+    COMPOSE.extend(["--file", str(override)])
     try:
         ENV["HOORI_DEMO_RECOMMEND"] = "0"
         compose("up", "--build", "--detach", "--wait", "--wait-timeout", "180")
@@ -177,6 +216,9 @@ def main() -> int:
         print("PASS: gateway publication, action calls, domain errors, health, metrics and context")
 
         discovery_protocol()
+        # Warm compilation before making the cooperative waiting/saturation assertion.
+        require(request("/demo/slow/1", "saturation-warmup")[0] == 200, "warm saturation route")
+        saturated_pool()
 
         stable = {name: container(name) for name in ("gateway", "shopping")}
         old_replica = compose("run", "--detach", "--no-deps", "--name", PROJECT + "-recipes-old",
@@ -239,25 +281,28 @@ def main() -> int:
         print("PASS: dependency outage and recovery")
 
         require(request("/demo/slow/1", "slow-warmup")[0] == 200, "warm slow route")
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            result = executor.submit(request, "/demo/slow/1", "drain-in-flight")
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = [executor.submit(request, "/demo/slow/1", "drain-in-flight"),
+                       executor.submit(request, "/demo/slow/1", "drain-pending")]
             deadline = time.monotonic() + 45
             while time.monotonic() < deadline:
                 logs = compose("logs", "--no-color", "recipes", capture=True)
-                if "demo_slow_started id=drain-in-flight" in logs:
+                if any("demo_slow_started id=" + name in logs for name in ("drain-in-flight", "drain-pending")) and pool_stats("shopping")[
+                        'hoori_micro_pool_pending_acquires{pool="data"}'] == 1:
                     break
                 time.sleep(0.1)
             else:
                 raise AssertionError("Upstream never observed the in-flight drain request")
-            require(not result.done(), "Drain fixture already completed before shutdown; rerun")
+            require(all(not result.done() for result in results), "Drain fixture already completed before shutdown")
             compose("stop", "shopping")
-            require(result.result(timeout=20)[0] == 200, "in-flight call was aborted instead of drained")
+            require(all(result.result(timeout=20)[0] == 200 for result in results),
+                    "active/pending data call was aborted instead of drained")
         logs = compose("logs", "--no-color", "shopping", capture=True)
         require("drained=true" in logs, "graceful shutdown was not reported")
         cid = compose("ps", "--all", "-q", "shopping", capture=True)
         code = subprocess.check_output(["docker", "inspect", "--format", "{{.State.ExitCode}}", cid], text=True).strip()
         require(code == "0", "non-zero runtime exit: " + code)
-        print("PASS: SIGTERM drains an active outbound call before pool cleanup")
+        print("PASS: SIGTERM drains active and pending outbound calls before both pool cleanups")
         return 0
     except (OSError, ValueError, AssertionError, subprocess.SubprocessError) as error:
         print(f"SMOKE FAILED: {error}", file=sys.stderr)
@@ -274,6 +319,7 @@ def main() -> int:
             compose("down", "--remove-orphans")
         except (OSError, subprocess.SubprocessError) as error:
             print(f"Test project cleanup failed ({PROJECT}): {error}", file=sys.stderr)
+        work.cleanup()
 
 
 if __name__ == "__main__":

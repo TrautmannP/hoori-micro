@@ -21,7 +21,7 @@ public final class Microservice implements AutoCloseable {
     private final Service service;
     private final ServiceConfig config;
     private final Router router = new Router();
-    private final HttpClient http;
+    private final HttpClient http, control;
     private final ServiceBroker broker;
     private final JsonLimits jsonLimits;
 
@@ -37,10 +37,14 @@ public final class Microservice implements AutoCloseable {
         this.config = config;
         jsonLimits = new JsonLimits(64, 16384, 128, config.bodyBytes);
         http = new HttpClient(
-                limits(config.clientConnections, config.clientTimeoutMillis),
+                limits(config.clientConnections, config.clientTimeoutMillis)
+                        .withPendingAcquires(config.clientPendingAcquires),
                 config.clientPerOrigin,
                 config.clientIdleMillis);
-        broker = new ServiceBroker(service, config, ServiceBroker.transport(http), jsonLimits);
+        control = new HttpClient(
+                limits(1, config.controlTimeoutMillis).withPendingAcquires(0), 1, config.clientIdleMillis);
+        broker = new ServiceBroker(
+                service, config, ServiceBroker.transport(http), ServiceBroker.transport(control), jsonLimits);
 
         // One fixed internal entry point; new actions never need new routes. Absent without actions.
         if (!service.actions.isEmpty()) router.post(ServiceBroker.INVOKE_PATH, this::invoke);
@@ -52,7 +56,8 @@ public final class Microservice implements AutoCloseable {
                 request -> new Response(
                         200,
                         new Headers().add("Content-Type", "text/plain; version=0.0.4; charset=utf-8"),
-                        server.metrics().prometheus().getBytes(StandardCharsets.UTF_8)));
+                        (server.metrics().prometheus() + poolMetrics(http.poolStats(), control.poolStats()))
+                                .getBytes(StandardCharsets.UTF_8)));
         router.onError((request, failure) -> {
             // Intentionally no stacktrace, URI, request/response body or secret in logs/errors.
             String id = request == null ? "unavailable" : request.id();
@@ -94,6 +99,46 @@ public final class Microservice implements AutoCloseable {
         return broker;
     }
 
+    HttpClient.PoolStats dataPoolStats() {
+        return http.poolStats();
+    }
+
+    HttpClient.PoolStats controlPoolStats() {
+        return control.poolStats();
+    }
+
+    static String poolMetrics(HttpClient.PoolStats data, HttpClient.PoolStats control) {
+        StringBuilder result = new StringBuilder();
+        appendPoolMetrics(result, "data", data);
+
+        if (control != null) appendPoolMetrics(result, "control", control);
+
+        return result.toString();
+    }
+
+    private static void appendPoolMetrics(StringBuilder result, String pool, HttpClient.PoolStats stats) {
+        result.append("hoori_micro_pool_active_connections{pool=\"")
+                .append(pool)
+                .append("\"} ")
+                .append(stats.activeConnections)
+                .append('\n');
+        result.append("hoori_micro_pool_idle_connections{pool=\"")
+                .append(pool)
+                .append("\"} ")
+                .append(stats.idleConnections)
+                .append('\n');
+        result.append("hoori_micro_pool_pending_acquires{pool=\"")
+                .append(pool)
+                .append("\"} ")
+                .append(stats.pendingAcquires)
+                .append('\n');
+        result.append("hoori_micro_pool_rejected_acquires_total{pool=\"")
+                .append(pool)
+                .append("\"} ")
+                .append(stats.rejectedAcquires)
+                .append('\n');
+    }
+
     public ServiceConfig config() {
         return config;
     }
@@ -119,7 +164,9 @@ public final class Microservice implements AutoCloseable {
     }
 
     /** Stop admission and deregister; run() drains dispatched requests before closing the pool. */
-    public void stop() {
+    public synchronized void stop() {
+        if (stopRequested) return;
+
         stopRequested = true;
         HttpServer current = server;
 
@@ -153,24 +200,35 @@ public final class Microservice implements AutoCloseable {
             });
             signalWatcher.setDaemon(true);
             signalWatcher.start();
-            // Registers only after the listener is live and while ready; the reply refreshes the catalog.
-            Thread heartbeat = new Thread(() -> {
-                try {
-                    while (!closed && !isLive()) Thread.sleep(1);
-                    while (!closed && !stopRequested) {
-                        broker.beat(isReady());
-                        Thread.sleep(broker.heartbeatDelayMillis());
-                    }
-                } catch (InterruptedException | InterruptedIOException stopped) {
-                    // stop() or close(); fall through to deregistration.
-                }
-                Thread.interrupted();
 
-                if (!closed) broker.deregister();
-            });
-            heartbeat.setDaemon(true);
-            registrar = heartbeat;
-            heartbeat.start();
+            // Inactive clients allocate no sockets/reaper; services without discovery need no registrar.
+            if (broker.needsDiscovery()) {
+                Thread heartbeat = new Thread(() -> {
+                    try {
+                        while (!closed && !isLive()) Thread.sleep(1);
+                        while (!closed && !stopRequested) {
+                            broker.beat(isReady());
+                            Thread.sleep(broker.heartbeatDelayMillis());
+                        }
+                    } catch (InterruptedException stopped) {
+                        Thread.currentThread().interrupt();
+                    } catch (IOException stopped) {
+                        // Only actual SDK cancellation/client close escapes beat().
+                    } finally {
+                        // One best-effort DELETE after stopping; preserve the cancellation status afterwards.
+                        boolean interrupted = Thread.interrupted();
+                        try {
+                            if (!closed) broker.deregister();
+                        } finally {
+                            if (interrupted) Thread.currentThread().interrupt();
+                        }
+                    }
+                });
+                heartbeat.setDaemon(true);
+                registrar = heartbeat;
+                heartbeat.start();
+            }
+
             System.out.println("service_starting name="
                     + config.name
                     + " version="
@@ -182,9 +240,11 @@ public final class Microservice implements AutoCloseable {
             server.run();
         } finally {
             try {
+                stop();
+                finishRegistrar();
+
                 // HttpServer.run returns when admission stops, NOT when handlers have drained.
                 // Only the owner thread drains; watcher/heartbeat threads must NOT close the client.
-                // Deregistration runs concurrently on the heartbeat thread until close() ends it.
                 if (server != null) {
                     boolean drained = server.shutdown(config.shutdownGraceMillis);
                     System.out.println("service_stopped name=" + config.name + " drained=" + drained);
@@ -192,6 +252,26 @@ public final class Microservice implements AutoCloseable {
             } finally {
                 close();
             }
+        }
+    }
+
+    private void finishRegistrar() {
+        Thread heartbeat = registrar;
+
+        if (heartbeat == null || heartbeat == Thread.currentThread()) return;
+
+        try {
+            heartbeat.join(2L * config.controlTimeoutMillis);
+
+            if (heartbeat.isAlive()) {
+                control.close();
+                heartbeat.interrupt();
+                heartbeat.join(config.controlTimeoutMillis);
+            }
+        } catch (InterruptedException interrupted) {
+            control.close();
+            heartbeat.interrupt();
+            Thread.currentThread().interrupt();
         }
     }
 
@@ -206,6 +286,7 @@ public final class Microservice implements AutoCloseable {
         if (server != null) server.close();
 
         http.close();
+        control.close();
 
         if (signalWatcher != null && signalWatcher != Thread.currentThread()) signalWatcher.interrupt();
 

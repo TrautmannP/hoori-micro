@@ -2,6 +2,7 @@ package hoori.micro;
 
 import hoori.http.Headers;
 import hoori.http.HttpClient;
+import hoori.http.HttpClientClosedException;
 import hoori.http.Request;
 import hoori.http.Response;
 import hoori.rest.json.Json;
@@ -10,6 +11,7 @@ import hoori.rest.json.JsonException;
 import hoori.rest.json.JsonLimits;
 import java.io.IOException;
 import java.io.InterruptedIOException;
+import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.util.Map;
 import java.util.Random;
@@ -18,7 +20,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * Per-service broker. Resolves "service.action" against a local catalog copy, picks an instance
  * that offers exactly this action and version, and calls its /_hoori/invoke over the service's
- * single Hoori pool. Only the heartbeat thread talks to the registry, never a business call.
+ * data Hoori pool. Only the heartbeat thread uses the separate control pool for the registry.
  * No retries, redirects, ambient identity or peer bodies in errors.
  */
 final class ServiceBroker {
@@ -33,7 +35,7 @@ final class ServiceBroker {
 
     private final Service service;
     private final ServiceConfig config;
-    private final Exchange exchange;
+    private final Exchange exchange, control;
     private final JsonLimits limits;
     private final byte[] registration;
     private final AtomicInteger turn = new AtomicInteger();
@@ -46,11 +48,17 @@ final class ServiceBroker {
     private boolean registryReachable = true; // heartbeat thread only; logs transitions, not every beat
 
     ServiceBroker(Service service, ServiceConfig config, Exchange exchange, JsonLimits limits) {
-        if (service == null || config == null || exchange == null || limits == null) throw new NullPointerException();
+        this(service, config, exchange, exchange, limits);
+    }
+
+    ServiceBroker(Service service, ServiceConfig config, Exchange exchange, Exchange control, JsonLimits limits) {
+        if (service == null || config == null || exchange == null || control == null || limits == null)
+            throw new NullPointerException();
 
         this.service = service;
         this.config = config;
         this.exchange = exchange;
+        this.control = control;
         this.limits = limits;
         Catalog.Entry[] entries = new Catalog.Entry[service.actions.size()];
         int i = 0;
@@ -152,8 +160,12 @@ final class ServiceBroker {
         filter = Catalog.Filter.consumer(service.dependencies, true);
     }
 
+    boolean needsDiscovery() {
+        return !service.actions.isEmpty() || !filter.key.equals("none");
+    }
+
     /** One control exchange; an unknown lease permits one full, idempotent re-registration. */
-    void beat(boolean ready) throws InterruptedIOException {
+    void beat(boolean ready) throws IOException {
         boolean register = ready && !service.actions.isEmpty();
 
         catalog(); // Also releases expired rows during idle/control failures; version tokens stay bounded.
@@ -177,21 +189,20 @@ final class ServiceBroker {
             Response response;
 
             if (register && registered) {
-                response =
-                        exchange.send(null, URI.create(config.registryUrl + path + "/lease"), "POST", headers, EMPTY);
+                response = control.send(null, URI.create(config.registryUrl + path + "/lease"), "POST", headers, EMPTY);
 
                 if (response.status == 404) registered = false;
             } else response = null;
 
             if (register && !registered) {
-                response = exchange.send(
+                response = control.send(
                         null,
                         URI.create(config.registryUrl + path),
                         "PUT",
                         headers.add("Content-Type", "application/json"),
                         registration);
             } else if (!register) {
-                response = exchange.send(null, URI.create(config.registryUrl + "/v1/catalog"), "GET", headers, EMPTY);
+                response = control.send(null, URI.create(config.registryUrl + "/v1/catalog"), "GET", headers, EMPTY);
             }
 
             accept(response, known, requested);
@@ -200,12 +211,20 @@ final class ServiceBroker {
 
             failures = 0;
             reachable(true, null);
-        } catch (InterruptedIOException stopped) {
+        } catch (SocketTimeoutException expired) {
+            if (Thread.currentThread().isInterrupted()) throw expired;
+
+            failedBeat(expired);
+        } catch (InterruptedIOException | HttpClientClosedException stopped) {
             throw stopped;
         } catch (IOException | RuntimeException failed) {
-            failures = Math.min(3, failures + 1);
-            reachable(false, failed);
+            failedBeat(failed);
         }
+    }
+
+    private void failedBeat(Exception failed) {
+        failures = Math.min(3, failures + 1);
+        reachable(false, failed);
     }
 
     /** Successful renewals leave half the TTL for exchange/scheduling; failed attempts back off. */
@@ -223,7 +242,7 @@ final class ServiceBroker {
         if (service.actions.isEmpty()) return;
 
         try {
-            exchange.send(
+            control.send(
                     null,
                     URI.create(config.registryUrl + "/v1/instances/" + config.instanceId),
                     "DELETE",
