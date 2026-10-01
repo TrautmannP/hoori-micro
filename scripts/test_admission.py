@@ -146,7 +146,7 @@ def main():
                 until(lambda s: s["outgoing_active"] == 1 and s["writes"] == writes + 1)
                 expired = executor.submit(request, "/generic", b"{}")
                 until(lambda s: s["outgoing_pending"] == 1)
-                assert expired.result()[0] == encoding.result()[0] == 503
+                assert expired.result()[0] == encoding.result()[0] == 504
                 assert len(calls) == count and stats()["writes"] == writes + 1, "Expired work reached encoding/network"
                 until(lambda s: s["outgoing_active"] == s["outgoing_pending"] == 0)
                 assert request("/billing", b"{}")[0] == 200

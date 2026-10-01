@@ -44,7 +44,8 @@ final class ServiceBroker {
     private final byte[] registration;
     private final AtomicInteger turn = new AtomicInteger();
     private volatile Catalog.Filter filter;
-    private volatile View view = new View(Catalog.EMPTY, 0, "", false);
+    private volatile View view = View.EMPTY;
+    private boolean publicCatalog;
     private final Random jitter = new Random();
     private boolean registered; // all control state below is heartbeat-thread owned
     private String retiredEpoch;
@@ -87,13 +88,22 @@ final class ServiceBroker {
         };
     }
 
-    Admission.Permit admit(Request context) throws IOException {
-        RequestBudget budget = context == null
+    RequestBudget defaultBudget(Request context) {
+        return context == null
                 ? RequestBudget.afterMillis(config.clientTimeoutMillis)
                 : context.budget().limitedToMillis(config.clientTimeoutMillis);
+    }
+
+    Admission.Permit admit(Request context) throws IOException {
+        return admit(context, defaultBudget(context));
+    }
+
+    Admission.Permit admit(Request context, RequestBudget budget) throws IOException {
 
         // A dispatched request may still make immediate calls during drain; no waiting/new background work.
-        return outgoing.acquire(budget, context != null);
+        return outgoing.acquire(
+                budget.limitedToMillis(config.clientTimeoutMillis).withRemainingMillisHeader(Context.BUDGET_HEADER),
+                context != null);
     }
 
     Admission.Stats admissionStats() {
@@ -109,10 +119,15 @@ final class ServiceBroker {
     }
 
     <I, O> O call(Request context, Action<I, O> action, I input) throws IOException {
+        return call(context, defaultBudget(context), action, input);
+    }
+
+    <I, O> O call(Request context, RequestBudget budget, Action<I, O> action, I input) throws IOException {
         if (action == null || input == null) throw new NullPointerException();
 
         int version = dependency(action.service);
-        try (Admission.Permit permit = admit(context)) {
+        try (Admission.Permit permit = admit(context, budget)) {
+            permit.check(outgoing);
             byte[] result = invoke(
                     permit,
                     context,
@@ -128,11 +143,16 @@ final class ServiceBroker {
     }
 
     Object call(Request context, String action, Map<String, ?> params) throws IOException {
+        return call(context, defaultBudget(context), action, params);
+    }
+
+    Object call(Request context, RequestBudget budget, String action, Map<String, ?> params) throws IOException {
         if (params == null) throw new NullPointerException("params");
 
         String[] name = ServiceName.qualified(action);
         int version = dependency(name[0]);
-        try (Admission.Permit permit = admit(context)) {
+        try (Admission.Permit permit = admit(context, budget)) {
+            permit.check(outgoing);
             byte[] result =
                     invoke(permit, context, name[0], version, name[1], Json.encode(params, JsonTree.CODEC, limits));
             Object decoded = decode(name[0], result, JsonTree.CODEC);
@@ -145,8 +165,21 @@ final class ServiceBroker {
     /** Returns the successful JSON body. Also used by the gateway with the catalog's version. */
     byte[] invoke(Admission.Permit permit, Request context, String service, int version, String action, byte[] params)
             throws IOException {
+        return invoke(permit, context, service, version, action, params, snapshot());
+    }
+
+    byte[] invoke(
+            Admission.Permit permit,
+            Request context,
+            String service,
+            int version,
+            String action,
+            byte[] params,
+            View source)
+            throws IOException {
         permit.check(outgoing);
-        Catalog.Instance target = catalog().select(service, version, action, turn.getAndIncrement());
+        Catalog.Instance target = (fresh(source) ? source.catalog : Catalog.EMPTY)
+                .select(service, version, action, turn.getAndIncrement());
 
         if (target == null) throw new ServiceCallException(service, 0, "no instance offers " + action, null);
 
@@ -183,14 +216,22 @@ final class ServiceBroker {
 
     /** Current snapshot, or EMPTY once no refresh succeeded within HOORI_CATALOG_MAX_AGE_MS. */
     Catalog catalog() {
-        View current = view;
-        long age = System.nanoTime() - current.fetchedNanos;
+        return snapshot().catalog;
+    }
 
-        if (current.live && age < config.catalogMaxAgeMillis * 1_000_000L) return current.catalog;
+    /** Catalog and prepared gateway routes are one publication, read once by each gateway request. */
+    View snapshot() {
+        View current = view;
+
+        if (fresh(current)) return current;
 
         expire(current);
 
-        return Catalog.EMPTY;
+        return View.EMPTY;
+    }
+
+    private boolean fresh(View current) {
+        return current.live && System.nanoTime() - current.fetchedNanos < config.catalogMaxAgeMillis * 1_000_000L;
     }
 
     private synchronized void expire(View current) {
@@ -203,11 +244,13 @@ final class ServiceBroker {
                             new Catalog.Instance[0]),
                     current.fetchedNanos,
                     current.scope,
-                    false);
+                    false,
+                    Gateway.EMPTY_ROUTES);
     }
 
     void followPublicCatalog() {
         filter = Catalog.Filter.consumer(service.dependencies, true);
+        publicCatalog = true;
     }
 
     boolean needsDiscovery() {
@@ -312,7 +355,7 @@ final class ServiceBroker {
         accept(requested.apply(Json.decode(body, Catalog.CODEC, limits)), requested.key);
     }
 
-    private synchronized void accept(Catalog next, String scope) {
+    private void accept(Catalog next, String scope) {
         if (next == null) throw new JsonException("Null catalog");
 
         View current = view;
@@ -325,16 +368,21 @@ final class ServiceBroker {
         // A new registry cannot extend the retained full view while it rebuilds for one TTL.
         if (!sameEpoch && !next.complete && old.complete && catalog() != Catalog.EMPTY) return;
 
+        Catalog accepted =
+                sameEpoch && next.revision == old.revision && current.live && scope.equals(current.scope) ? old : next;
+        long fetchedNanos = System.nanoTime();
+        // The sole registrar builds before publication, without holding the request/expiry monitor.
+        Gateway.Route[] routes =
+                accepted == old ? current.routes : publicCatalog ? Gateway.build(accepted) : Gateway.EMPTY_ROUTES;
+
         if (!sameEpoch && old != Catalog.EMPTY) retiredEpoch = old.epoch;
 
-        view = new View(
-                sameEpoch && next.revision == old.revision && current.live && scope.equals(current.scope) ? old : next,
-                System.nanoTime(),
-                scope,
-                true);
+        synchronized (this) {
+            view = new View(accepted, fetchedNanos, scope, true, routes);
+        }
     }
 
-    private synchronized void accept(Response response, View sent, Catalog.Filter requested) throws IOException {
+    private void accept(Response response, View sent, Catalog.Filter requested) throws IOException {
         if (!"2".equals(response.headers.get(Catalog.PROTOCOL_HEADER))) throw new IOException("Registry protocol");
 
         if (!requested.key.equals(response.headers.get(Catalog.VIEW_HEADER))) throw new IOException("Registry view");
@@ -352,7 +400,11 @@ final class ServiceBroker {
                     || response.body.length != 0
                     || view != sent) throw new IOException("Unmatched catalog confirmation");
 
-            view = new View(sent.catalog, System.nanoTime(), sent.scope, true);
+            synchronized (this) {
+                if (view != sent) throw new IOException("Expired catalog confirmation");
+
+                view = new View(sent.catalog, System.nanoTime(), sent.scope, true, sent.routes);
+            }
 
             return;
         }
@@ -368,17 +420,20 @@ final class ServiceBroker {
         accept(next, requested.key);
     }
 
-    private static final class View {
+    static final class View {
+        static final View EMPTY = new View(Catalog.EMPTY, 0, "", false, Gateway.EMPTY_ROUTES);
         final Catalog catalog;
         final long fetchedNanos;
         final String scope;
         final boolean live;
+        final Gateway.Route[] routes;
 
-        View(Catalog catalog, long fetchedNanos, String scope, boolean live) {
+        View(Catalog catalog, long fetchedNanos, String scope, boolean live, Gateway.Route[] routes) {
             this.catalog = catalog;
             this.fetchedNanos = fetchedNanos;
             this.scope = scope;
             this.live = live;
+            this.routes = routes;
         }
     }
 

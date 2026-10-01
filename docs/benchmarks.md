@@ -29,6 +29,8 @@ python3 scripts/benchmark.py --output .cache/baseline-mixed.json
 python3 scripts/benchmark.py --engine interpreter --output .cache/baseline-interpreter.json
 # Größerer Katalog: zusätzliche, unaufgerufene Registrierungen, keine zusätzlichen CPUs.
 python3 scripts/benchmark.py --catalog-instances 32 --output .cache/catalog-32.json
+# Wechselnde öffentliche Routen; Aufbau und Konfliktprüfung im echten Gateway:
+python3 scripts/benchmark.py --variants D --public-routes 64 --repeats 1 --output .cache/routes-64.json
 # Getrennte Instrumentierung mit hoori stats; keine vergleichbare Zeitmessung.
 python3 scripts/benchmark.py --profile --repeats 1 --output .cache/profile.json
 # Ruhiger Kontrollverkehr vor Überlast, mit nachgewiesen gleicher Instanzmenge:
@@ -60,9 +62,8 @@ Kosten und Hintergrundarbeit sind in den Zählerdifferenzen
 enthalten. Sie sind keine isolierte Allokation eines einzelnen Handlers. Die
 Verbindungsprobe zählt ihre eigene Verbindung/Anfrage mit. Die alte SDK-Baseline
 hat keine Pool-Statistik: `http_pool_pending_acquires: null` bezeichnet fehlende
-Messbarkeit, nicht null Wartende. Der qualifizierte SDK-Pin aus #8 enthält die API;
-die bisherige Vergleichsfixture lässt den noch nicht erfassten Zähler explizit `null`.
-Die #4-Kontrolle unten erfasst beide Pools und ihre Summe.
+Messbarkeit, nicht null Wartende. Seit der #4-Kontrolle erfasst die Fixture beide
+Pools und ihre Summe; frühe Rohdaten behalten die damaligen `null`-Werte.
 
 Guest-Heap ist logische Belegung; committed Heap ist dessen physische backing
 storage. RSS enthält auch JIT, native Provider und VM-Metadaten. Cgroup
@@ -79,7 +80,9 @@ Vergleiche nur gleiche Einstellungen und Messmodi, berichte Median und Spannweit
 der Wiederholungen. Ein Kandidat muss die Streuung übersteigen und die vorab gesetzten
 Grenzen einhalten. SDK-Upgrades zuerst ohne Framework-Optimierung messen.
 Diese lokalen Läufe sind keine Produktions-/Sicherheitsfreigabe. Echte parallele
-Replikate und wiederholte Rolling-/Recovery-Zyklen werden mit #10 abgenommen.
+Replikate und wiederholte Rolling-/Recovery-Zyklen sind separat unter
+[validation.md](validation.md) und am Ende dieses Dokuments erfasst. Die folgenden
+Abschnitte sind datierte Messstände mit jeweils eigenen Pins und Einstellungen.
 
 ## Ausgangsmessung, 29. September 2026
 
@@ -334,4 +337,144 @@ beiden Engines separat: begrenzte Calls/Wartende, Abweisung vor DTO-Read bzw.
 Encoding/HTTP-Exchange, zwei Lastspitzen ohne Neustart, Budgetverbrauch beim Encoding/
 Warten und Stop mit Abweisung Wartender, Drain zugelassener Arbeit und leeren Gates/Pools.
 Health und Discovery bleiben erreichbar. Der SDK hat den begrenzten Raw-Body vor
-eingehender Admission bereits gelesen; Wire-Restbudgets über Service-Hops bleiben #6.
+eingehender Admission bereits gelesen; Wire-Restbudgets über Service-Hops fehlten
+zu diesem Messzeitpunkt noch (aktueller Stand unten).
+
+## Budgets, Gateway und Image, 2. Oktober 2026
+
+Der neue saubere Runtime-/Guest-/SDK-Satz `d8906e6` wurde zuerst mit unverändertem
+Framework-JAR (`1da7aa9f…`), identischer Fixture und identischem Generator gemessen:
+[vorher, `3254301`](benchmarks/issue-11-sdk-before-3254301.json.gz),
+[nachher, `d8906e6`](benchmarks/issue-11-sdk-after-d8906e6.json.gz). Je ein frischer
+Mixed-C/D-Lauf, 5 s Warmup, 2 s je Phase und 3 s Ruhe, sonst die obigen Limits.
+Dies kontrolliert den gesamten Runtime-/SDK-Wechsel, keine einzelne SDK-Methode.
+
+| Einzellauf, vorher → nachher | C | D |
+|---|---:|---:|
+| erfolgreiche/s | 119,31 → 92,37 | 102,00 → 74,33 |
+| geschlossene p99, ms | 704,82 → 865,90 | 1423,40 → 2059,70 |
+| System-CPU ms/Erfolg | 7,80 → 10,10 | 13,21 → 18,05 |
+| System-Allokation KiB/Erfolg | 21,69 → 22,45 | 34,04 → 35,63 |
+| System-RSS nach Ruhe, MiB | 256,26 → 259,15 | 274,29 → 274,83 |
+| cgroup-Speicher nach Ruhe, MiB | 220,07 → 216,33 | 230,95 → 232,36 |
+
+Der Wechsel kostet in diesen Kontrollen Durchsatz und CPU; Einzelläufe beweisen
+keine allgemeine Regression oder Verbesserung. Startup liegt jeweils bei rund
+11,5 s. Die unkomprimierte Shopping-Imagegröße steigt von 112066111 auf
+112115254 Bytes; Imagebytes sind kein RAM-Maß.
+
+Der Framework-Kandidat basiert auf `99590f2` plus dem
+[ausführbaren Quellpatch](benchmarks/issue-11-source.patch.gz). JAR (`6d8fcd9d…`),
+Fixture (`85b5615c…`), Generator, Receipt und Container-Identitäten stehen in den
+Rohdaten: [Mixed](benchmarks/issue-11-final-mixed.json.gz),
+[Interpreter](benchmarks/issue-11-final-interpreter.json.gz). Je drei frische Läufe
+A–D mit denselben kurzen Einstellungen wie die SDK-Kontrolle, wechselnde Reihenfolge,
+keine eigenen Builds/Tests während der Last. CPU und Allokation enthalten alle
+vier Rollen, Hintergrundarbeit, Probes und Fehler; der Nenner zählt nur Erfolge.
+
+| Engine / Variante | erfolgreiche/s: Median [min–max] | p99: Median [min–max], ms | CPU ms/Erfolg | Allokation KiB/Erfolg |
+|---|---:|---:|---:|---:|
+| Mixed A | 103,14 [102,84–114,39] | 300,71 [289,74–444,48] | 9,451 | 21,327 |
+| Mixed B | 83,40 [78,11–101,49] | 647,41 [620,38–781,05] | 11,361 | 22,596 |
+| Mixed C | 97,70 [96,62–99,33] | 801,06 [393,74–1128,20] | 9,917 | 22,814 |
+| Mixed D | 78,22 [65,52–83,59] | 2031,00 [1696,24–2061,77] | 17,475 | 35,812 |
+| Interpreter A | 108,43 [104,45–120,37] | 188,43 [158,64–203,12] | 7,584 | 21,047 |
+| Interpreter B | 96,85 [93,23–103,76] | 295,59 [202,06–486,53] | 8,676 | 22,057 |
+| Interpreter C | 99,17 [97,96–107,57] | 530,26 [255,61–817,84] | 8,908 | 22,718 |
+| Interpreter D | 90,32 [84,74–90,83] | 2021,59 [2016,38–2050,97] | 14,025 | 35,497 |
+
+D verfehlt in allen sechs Läufen die p99-Grenze; einzelne Läufe auch die 1-%-Fehlergrenze.
+Mixed-C überschreitet einmal 1000 ms. Offene große/kleine Last, langsame Calls und
+Recovery liefern dagegen je Engine insgesamt **384/384 korrekte Antworten**,
+p99 höchstens **315,59/334,19 ms** (Mixed/Interpreter). Die zwölf Burst-Phasen je
+Engine zählen 1536 Ankünfte: **409/408 Erfolge**, **23/24 Fehler**, jeweils **1104
+nicht gestartete Ankünfte**. Letztere sind begrenzte Generator-Abweisungen, keine
+Server-Erfolge. Generator-CPU bleibt pro Phase unter 69 ms, p99-Startverzug unter
+3,24 ms. Die kurze Phase und Mixed-Streuung begründen keinen Performancegewinn
+gegen die einmalige SDK-Kontrolle; B/C sind kein belastbarer Nachweis eines
+positiven Discovery-Effekts. Erfolgreiche/min sowie p50/p95 und rollenweise CPU/GC/
+Tasks/Verbindungen stehen vollständig im JSON.
+
+| Nach letzter Ruhe, alle Rollen | Guest-Heap / committed: Median MiB | RSS-Bereich MiB | cgroup-Bereich MiB |
+|---|---:|---:|---:|
+| Mixed A | 4,15 / 7,96 | 238,91–240,50 | 196,71–198,24 |
+| Mixed B | 3,57 / 7,21 | 245,82–247,40 | 203,43–204,83 |
+| Mixed C | 3,37 / 7,51 | 260,37–262,66 | 218,53–220,75 |
+| Mixed D | 2,96 / 7,49 | 280,61–400,43 | 238,39–358,59 |
+| Interpreter A | 4,35 / 6,94 | 96,13–96,44 | 72,32–77,55 |
+| Interpreter B | 4,17 / 6,77 | 100,09–100,19 | 76,04–80,83 |
+| Interpreter C | 3,45 / 5,90 | 103,95–104,46 | 79,23–81,19 |
+| Interpreter D | 3,59 / 6,39 | 108,49–108,98 | 83,95–84,12 |
+
+SDK-Wartende sind nach Ruhe überall null; vorhandene Framework-Gates ebenfalls.
+Startup liegt bei 11,49–11,71 s, mit einem Mixed-A-Ausreißer von 23,99 s.
+Der Registry-RSS erklärt einen großen Teil der Mixed-D-Streuung; ohne erzwungenen
+GC oder getrennte Messung nativen Speichers ist das keine lebende Retentionmessung.
+
+### Wechselnde öffentliche Routen und native Grenzen
+
+[D mit 64 zusätzlichen öffentlichen Routen](benchmarks/issue-11-routes64-mixed.json.gz)
+ändert deren Pfade alle 2 s: ein frischer uninstrumentierter Mixed-Lauf mit denselben
+Einstellungen. Geschlossen **81,95 Erfolge/s**, p99 **1311,43 ms**, System-CPU
+**16,157 ms/Erfolg**, Allokation **36,747 KiB/Erfolg**; Normallast und Recovery je
+8/8 korrekt, keine Fehler. Der Gateway hält nach Ruhe drei Instanzen/66 Actions,
+0,70 MiB beobachteten Guest-Heap und null Wartende. Das ist eine Größenkontrolle,
+kein Gewinn gegenüber den drei kleinen D-Läufen.
+
+[Getrenntes `--profile`](benchmarks/issue-11-routes64-profile.json.gz), gleicher D64-Aufbau:
+Live-Samples zeigen maximal 14 Gateway-Tasks und 1,96 MiB dessen logischen Heap.
+Die vollständigen `hoori stats` enden pro Rolle mit null offenen Handles,
+`tasks_created == tasks_completed`, einem Carrier und null OOM; GC wird natürlich
+ausgelöst. Die instrumentierten Latenzen sind kein Zeitvergleich. Das Profil
+isoliert keine dominierende Parameter-Kopie oder Lookup-Kosten; Raw-Body-Copy und
+zusätzliche Indizes bleiben zurückgestellt.
+
+[Native Budget-/Gateway-Prüfung beider Engines](benchmarks/issue-11-budgets-native.json.gz)
+belegt die späte SDK-Abtastung nach Pool-Warten, neue/wiederverwendete Verbindungen,
+serielle Budgets, Header-/Policy-Grenzen, Cancellation/Recovery und atomare Count-/
+Metadatenüberläufe. Semantik und nicht erneut geprüfte Transportfälle stehen in
+[validation.md](validation.md). Der kleine Vertrag-Overload und named Publication
+verwenden weiterhin dieselben Codecs; ein optionaler Generator bleibt mangels
+belegtem Nutzen zurückgestellt.
+
+### Image und gemeinsame Last-/Recovery-Abnahme
+
+[Image-Inventar](benchmarks/issue-11-image-inventory.json.gz): fester amd64-Digest,
+signierte Debian-Paketquellen vom 30.09.2026, geprüfte ELF-Abhängigkeiten, Zertifikate,
+Guest-Lizenz und Prüfsummen. Kein Host-JDK/Maven/Rust im Laufzeit-Image. Runtime-Satz
+17146444 Bytes, vorbereiteter Kontext 17441998 Bytes; Docker-Images unkomprimiert
+112109785–112120366 Bytes (**106,92–106,93 MiB**). Kein gemessener Größen-/RAM-Gewinn
+und keine Zusage bitidentischer Docker-Layer. Vollständige verifizierte Distribution
+und `curl` bleiben erhalten. Je 50 Health-Probes benötigen pro Probe **10,33/6,78 ms
+cgroup-CPU**, **20,33/13,30 ms Wandzeit** (Mixed/Interpreter); das enthält Server,
+`curl` und Hintergrundarbeit, keinen isolierten `curl`-Kostenvergleich.
+
+[Mixed-Smoke](benchmarks/issue-11-smoke-mixed.json.gz) und
+[Interpreter-Smoke](benchmarks/issue-11-smoke-interpreter.json.gz) verwenden die realen
+Service-Images mit denselben CPU-/RAM-Grenzen. Alte/neue Provider teilen während
+Rolling zusammen 0,5 CPU; Consumers und Gateway behalten Image-/Container-/
+Prozessidentität. Drei Lastspitzen über Registry-TTL, Registry-Timeout/-Ablauf,
+Provider-SIGKILL/TTL und zwei Routenwechsel konvergieren ohne Consumer-Neustart.
+SIGTERM mit aktiver/wartender Arbeit und pausierter Registry liefert 200/503,
+`drained=true`, Exit 0 und leere Gates/Pools.
+
+| Nach Rolling-Recovery / 5,5 s Ruhe | Mixed RSS MiB | Interpreter RSS MiB |
+|---|---:|---:|
+| registry | 180,20 | 23,27 |
+| recipes | 58,62 | 24,76 |
+| shopping | 194,82 | 38,12 |
+| gateway | 192,19 | 36,12 |
+
+Alle fünf Ressourcen-Snapshots je Engine bleiben innerhalb der festen Grenzen,
+nach Idle sind SDK-/Framework-Wartende null, Tasks/Handles konvergieren.
+Fortlaufende bestehende Calls zählen beim Rolling **32/97 Erfolge und 41/31 502**,
+beim Provider-Crash **38/57 Erfolge und 152/141 502** (Mixed/Interpreter). Nach
+Katalogablauf werden zusätzlich 404 gezählt. Diese Abnahme belegt begrenzte Recovery,
+keine unterbrechungsfreie Verfügbarkeit oder langfristige lebende Retention.
+
+```bash
+# Jeweils ohne weitere eigene Last/Builds; --engine interpreter getrennt wiederholen:
+python3 scripts/benchmark.py --variants ABCD --repeats 3 --seconds 2 --warmup 5 --idle 3 --output .cache/current-mixed.json
+python3 scripts/benchmark.py --variants D --public-routes 64 --repeats 1 --seconds 2 --warmup 5 --idle 3 --output .cache/routes64.json
+python3 scripts/benchmark.py --variants D --public-routes 64 --profile --repeats 1 --seconds 2 --warmup 5 --idle 3 --output .cache/routes64-profile.json
+```

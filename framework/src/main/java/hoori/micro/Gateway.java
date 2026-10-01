@@ -22,17 +22,19 @@ import java.util.function.BiPredicate;
  */
 public final class Gateway implements Middleware {
     static final List<String> METHODS = List.of("GET", "POST", "PUT", "PATCH", "DELETE");
+    static final Route[] EMPTY_ROUTES = new Route[0];
+    static final int MAX_ROUTES = 256, MAX_ROUTE_BYTES = 65536;
 
     private final ServiceBroker broker;
+    private final Microservice app;
     private final BiPredicate<Request, String> policy;
     private final JsonLimits limits;
-    private volatile Object source;
-    private volatile Route[] routes = new Route[0];
 
     private Gateway(Microservice app, BiPredicate<Request, String> policy) {
         if (policy == null) throw new NullPointerException("policy");
 
         broker = app.broker();
+        this.app = app;
         this.policy = policy;
         limits = app.jsonLimits();
         broker.followPublicCatalog();
@@ -78,13 +80,15 @@ public final class Gateway implements Middleware {
         if (!request.routeTemplate().equals("<unmatched>")) return next.handle(request);
 
         // One outgoing permit covers route parameters, input encoding and the direct RPC.
-        try (Admission.Permit permit = broker.admit(request.raw())) {
+        Context context = app.context(request);
+        try (Admission.Permit permit = broker.admit(request.raw(), context.budget())) {
+            ServiceBroker.View snapshot = broker.snapshot();
 
             String target = request.raw().target;
             int query = target.indexOf('?');
             String[] segments = segments(query < 0 ? target : target.substring(0, query));
             Route route = null;
-            for (Route candidate : routes())
+            for (Route candidate : snapshot.routes)
                 if (candidate.method.equals(request.method())
                         && candidate.matches(segments)
                         && (route == null || candidate.specificity > route.specificity)) route = candidate;
@@ -93,10 +97,13 @@ public final class Gateway implements Middleware {
 
             if (!policy.test(request, route.permission)) return Response.text(403, "Forbidden");
 
-            byte[] params = Json.encode(params(request, route, segments), JsonTree.CODEC, limits);
+            Map<String, Object> input = params(request, route, segments);
+            context.check();
+            byte[] params = Json.encode(input, JsonTree.CODEC, limits);
             byte[] result;
             try {
-                result = broker.invoke(permit, request.raw(), route.service, route.version, route.action, params);
+                result = broker.invoke(
+                        permit, request.raw(), route.service, route.version, route.action, params, snapshot);
             } catch (ServiceCallException rejected) {
                 int status = rejected.upstreamStatus();
 
@@ -108,17 +115,6 @@ public final class Gateway implements Middleware {
 
             return new Response(200, new Headers().add("Content-Type", "application/json; charset=utf-8"), result);
         }
-    }
-
-    private Route[] routes() {
-        Catalog current = broker.catalog();
-
-        if (current.identity != source) {
-            routes = build(current);
-            source = current.identity;
-        }
-
-        return routes;
     }
 
     /** Path parameters as JSON strings, merged into an optional JSON object body. */
@@ -136,7 +132,9 @@ public final class Gateway implements Middleware {
             if (route.segments[i] == null) {
                 String name = route.names[i];
 
-                if (params.put(name, segments[i]) != null) throw new RequestException(400, "Ambiguous parameter");
+                if (params.containsKey(name)) throw new RequestException(400, "Ambiguous parameter");
+
+                params.put(name, segments[i]);
             }
 
         return params;
@@ -144,21 +142,45 @@ public final class Gateway implements Middleware {
 
     static Route[] build(Catalog catalog) {
         ArrayList<Route> distinct = new ArrayList<>();
+        int bytes = 0, work = 0;
         for (Catalog.Instance instance : catalog.instances)
             for (Catalog.Entry entry : instance.actions)
                 if (entry.path != null) {
                     Route route = new Route(instance, entry);
                     boolean known = false;
-                    for (Route other : distinct) if (other.sameAction(route)) known = true;
+                    for (Route other : distinct) {
+                        if ((++work & 63) == 0) Thread.yield();
 
-                    if (!known) distinct.add(route);
+                        if (other.sameAction(route)) {
+                            known = true;
+                            break;
+                        }
+                    }
+
+                    if (!known) {
+                        bytes += route.service.length()
+                                + route.action.length()
+                                + route.method.length()
+                                + route.path.length()
+                                + route.permission.length();
+
+                        if (distinct.size() == MAX_ROUTES || bytes > MAX_ROUTE_BYTES)
+                            throw new JsonException("Gateway route snapshot limit");
+
+                        distinct.add(route);
+                    }
                 }
-        // ponytail: O(n²) over distinct published routes, rebuilt only when the catalog changes.
+        // ponytail: O(n²) over at most 256 distinct routes; index only after a measured update bottleneck.
         ArrayList<Route> accepted = new ArrayList<>();
         for (Route route : distinct) {
             boolean clash = false;
-            for (Route other : distinct)
-                if (other != route && overlap(route.method, route.segments, other.method, other.segments)) clash = true;
+            for (Route other : distinct) {
+                if ((++work & 63) == 0) Thread.yield();
+
+                if (other != route
+                        && (route.sameActionName(other)
+                                || overlap(route.method, route.segments, other.method, other.segments))) clash = true;
+            }
 
             if (clash)
                 System.err.println("gateway_route_withheld service=" + route.service + " action=" + route.action);
@@ -312,12 +334,14 @@ public final class Gateway implements Middleware {
         }
 
         boolean sameAction(Route other) {
-            return service.equals(other.service)
-                    && version == other.version
-                    && action.equals(other.action)
+            return sameActionName(other)
                     && method.equals(other.method)
                     && path.equals(other.path)
                     && permission.equals(other.permission);
+        }
+
+        boolean sameActionName(Route other) {
+            return service.equals(other.service) && version == other.version && action.equals(other.action);
         }
 
         boolean matches(String[] request) {

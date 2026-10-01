@@ -2,6 +2,7 @@
 # Only the gateway has a host port; registry and services live on the internal backend net.
 name: hoori-micro-demo
 x-common: &common
+  platform: linux/amd64
   init: true
   read_only: true
   tmpfs:
@@ -32,7 +33,7 @@ services:
     <<: *common
     build:
       <<: *build
-      args: {SERVICE: registry, RUNTIME_BASE: '${HOORI_RUNTIME_BASE:-debian:trixie-slim}'}
+      args: {SERVICE: registry, RUNTIME_BASE: '${HOORI_RUNTIME_BASE:-debian:trixie-slim@sha256:7792b1f7702a86946cd518db72b6a407302c3e9bc1635634368b878189e8221c}'}
     environment:
       <<: *env
       HOORI_MAIN_CLASS: hoori/micro/Registry
@@ -42,7 +43,7 @@ services:
     <<: *common
     build:
       <<: *build
-      args: {SERVICE: recipes, RUNTIME_BASE: '${HOORI_RUNTIME_BASE:-debian:trixie-slim}'}
+      args: {SERVICE: recipes, RUNTIME_BASE: '${HOORI_RUNTIME_BASE:-debian:trixie-slim@sha256:7792b1f7702a86946cd518db72b6a407302c3e9bc1635634368b878189e8221c}'}
     environment:
       <<: *env
       HOORI_MAIN_CLASS: dev/hoori/micro/demo/RecipesMain
@@ -55,7 +56,7 @@ services:
     <<: *common
     build:
       <<: *build
-      args: {SERVICE: shopping, RUNTIME_BASE: '${HOORI_RUNTIME_BASE:-debian:trixie-slim}'}
+      args: {SERVICE: shopping, RUNTIME_BASE: '${HOORI_RUNTIME_BASE:-debian:trixie-slim@sha256:7792b1f7702a86946cd518db72b6a407302c3e9bc1635634368b878189e8221c}'}
     environment:
       <<: *env
       HOORI_MAIN_CLASS: dev/hoori/micro/demo/ShoppingMain
@@ -66,7 +67,7 @@ services:
     <<: *common
     build:
       <<: *build
-      args: {SERVICE: gateway, RUNTIME_BASE: '${HOORI_RUNTIME_BASE:-debian:trixie-slim}'}
+      args: {SERVICE: gateway, RUNTIME_BASE: '${HOORI_RUNTIME_BASE:-debian:trixie-slim@sha256:7792b1f7702a86946cd518db72b6a407302c3e9bc1635634368b878189e8221c}'}
     environment:
       <<: *env
       HOORI_MAIN_CLASS: hoori/micro/Gateway

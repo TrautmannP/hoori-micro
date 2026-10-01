@@ -1,0 +1,194 @@
+package hoori.micro;
+
+import hoori.http.Headers;
+import hoori.http.HttpClient;
+import hoori.http.Limits;
+import hoori.http.RequestBudget;
+import hoori.http.Response;
+import hoori.rest.RequestException;
+import hoori.rest.Responses;
+import hoori.rest.json.Json;
+import hoori.runtime.RuntimeMetrics;
+import java.io.InterruptedIOException;
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+
+/** Test-only real guest services and a shared-SDK-pool wire probe. */
+public final class BudgetMain {
+    private static final Action<Object, Object> OBSERVE =
+            new Action<>("recipes.observe", JsonTree.CODEC, JsonTree.CODEC);
+    private static final AtomicInteger CALLS = new AtomicInteger();
+
+    public static void main(String[] args) throws Exception {
+        String role = System.getenv("BUDGET_ROLE");
+
+        if (role.equals("pool")) {
+            pool(System.getenv("BUDGET_HOLD_PATH"));
+
+            return;
+        }
+
+        Service service = Service.named(role);
+
+        if (role.equals("recipes"))
+            service.action(OBSERVE, (ctx, input) -> {
+                        CALLS.incrementAndGet();
+                        long delay = ((Map<?, ?>) input).get("delay") instanceof Long value ? value : 0;
+
+                        if (delay < 0 || delay > 1500) throw new RequestException(400, "Delay bound");
+
+                        Thread.sleep(delay);
+                        String wire = ctx.request().headers.get(Context.BUDGET_HEADER);
+
+                        return Map.of(
+                                "wire",
+                                wire == null ? 0L : Long.parseLong(wire),
+                                "remaining",
+                                ctx.budget().remainingMillis(),
+                                "requestId",
+                                ctx.request().id(),
+                                "authorization",
+                                ctx.request().headers.get("Authorization") != null);
+                    })
+                    .http("observe", "POST", "/observe/{id}")
+                    .requirePermission("observe", "recipes:read");
+
+        if (role.equals("shopping"))
+            service.dependsOn("recipes", 1)
+                    .action("serial", JsonTree.CODEC, JsonTree.CODEC, (ctx, input) -> serial(ctx))
+                    .http("serial", "POST", "/chain")
+                    .requirePermission("serial", "shopping:read")
+                    .action("expired", JsonTree.CODEC, JsonTree.CODEC, (ctx, input) -> {
+                        Context shorter = ctx.limitedToMillis(50);
+                        Thread.sleep(100);
+
+                        return shorter.call(OBSERVE, Map.of());
+                    });
+
+        try (Microservice app = Microservice.create(service)) {
+            if (role.equals("gateway"))
+                Gateway.mount(
+                        app,
+                        (request, permission) ->
+                                permission.equals("recipes:read") || permission.equals("shopping:read"));
+
+            if (role.equals("shopping")) {
+                app.routes()
+                        .post(
+                                "/root",
+                                request -> Responses.json(
+                                        200,
+                                        serial(app.context(null).limitedToMillis(1000)),
+                                        JsonTree.CODEC,
+                                        app.jsonLimits()));
+                app.routes().post("/cancel", request -> {
+                    Throwable[] failure = new Throwable[1];
+                    boolean[] interrupted = new boolean[1];
+                    Thread child = new Thread(() -> {
+                        try {
+                            app.context(null).call(OBSERVE, Map.of("delay", 1500));
+                        } catch (Throwable error) {
+                            failure[0] = error;
+                            interrupted[0] = Thread.currentThread().isInterrupted();
+                        }
+                    });
+                    child.start();
+                    long deadline = System.nanoTime() + 2000000000L;
+                    while (app.dataPoolStats().activeConnections != 1 && System.nanoTime() - deadline < 0)
+                        Thread.sleep(1);
+
+                    if (app.dataPoolStats().activeConnections != 1) throw new AssertionError("Missing active child");
+
+                    child.interrupt();
+                    child.join(3000);
+
+                    if (child.isAlive() || !(failure[0] instanceof InterruptedIOException) || !interrupted[0])
+                        throw new AssertionError("Cancellation contract");
+
+                    if (app.broker().admissionStats().active != 0 || app.dataPoolStats().pendingAcquires != 0)
+                        throw new AssertionError("Cancelled child retained resources");
+
+                    return Response.text(200, "cancelled");
+                });
+            }
+
+            app.routes().get("/probe", request -> {
+                ServiceBroker.View view = app.broker().snapshot();
+                ArrayList<String> routes = new ArrayList<>();
+                for (Gateway.Route route : view.routes) routes.add(route.path);
+                RuntimeMetrics.Snapshot runtime = RuntimeMetrics.snapshot();
+                Map<String, Object> values = new LinkedHashMap<>();
+                values.put("calls", CALLS.get());
+                values.put("revision", view.catalog.revision);
+                values.put("routes", routes);
+                values.put("incoming_active", app.incomingStats().active);
+                values.put("incoming_pending", app.incomingStats().pending);
+                values.put("outgoing_active", app.broker().admissionStats().active);
+                values.put("outgoing_pending", app.broker().admissionStats().pending);
+                values.put("pool_active", app.dataPoolStats().activeConnections);
+                values.put("pool_pending", app.dataPoolStats().pendingAcquires);
+                values.put("heap_used", runtime.heapUsedBytes);
+                values.put("rss", runtime.rssBytes);
+                values.put("tasks_active", runtime.tasksActive);
+                values.put("handles", runtime.serviceHandlesOpen);
+
+                return Responses.json(200, values, JsonTree.CODEC, app.jsonLimits());
+            });
+            app.run();
+            for (Admission.Stats stats :
+                    new Admission.Stats[] {app.incomingStats(), app.broker().admissionStats()})
+                if (stats.active != 0 || stats.pending != 0) throw new AssertionError("Admission retained work");
+            for (HttpClient.PoolStats stats : new HttpClient.PoolStats[] {app.dataPoolStats(), app.controlPoolStats()})
+                if (stats.activeConnections != 0 || stats.idleConnections != 0 || stats.pendingAcquires != 0)
+                    throw new AssertionError("Pool retained resources");
+            System.out.println("budget_closed=true pools_closed=true");
+        }
+    }
+
+    private static Object serial(Context context) throws Exception {
+        Object first = context.call(OBSERVE, Map.of("delay", 100));
+        Thread.sleep(200);
+        Object second = context.call("recipes.observe", Map.of("delay", 100));
+
+        return Map.of("first", first, "second", second);
+    }
+
+    private static void pool(String holdPath) throws Exception {
+        String peer = System.getenv("BUDGET_PEER");
+        Throwable[] failure = new Throwable[1];
+        HttpClient client = new HttpClient(new Limits(64, 16384, 65536, 1, 100, 5000).withPendingAcquires(1), 1, 5000);
+        try (client) {
+            client.exchange(URI.create(peer + "/warm"), "GET", new Headers(), new byte[0]);
+            Thread hold = new Thread(() -> {
+                try {
+                    client.exchange(URI.create(peer + holdPath), "GET", new Headers(), new byte[0]);
+                } catch (Throwable error) {
+                    failure[0] = error;
+                }
+            });
+            hold.start();
+            long deadline = System.nanoTime() + 3000000000L;
+            while (client.poolStats().activeConnections != 1 && System.nanoTime() - deadline < 0) Thread.sleep(1);
+
+            if (client.poolStats().activeConnections != 1) throw new AssertionError("Missing shared pool contention");
+
+            RequestBudget budget = RequestBudget.afterMillis(2000).withRemainingMillisHeader(Context.BUDGET_HEADER);
+            Response result = client.exchange(URI.create(peer + "/observe"), "GET", new Headers(), new byte[0], budget);
+            hold.join(3000);
+
+            if (hold.isAlive() || failure[0] != null || result.status != 200)
+                throw new AssertionError("Pool probe failed");
+
+            System.out.println(
+                    "pool_wire=" + Json.decodeUtf8(result.body) + " remaining_ms=" + budget.remainingMillis());
+        }
+
+        if (client.poolStats().activeConnections != 0 || client.poolStats().pendingAcquires != 0)
+            throw new AssertionError("Pool probe retained work");
+
+        System.out.println("pool_closed=true");
+    }
+}

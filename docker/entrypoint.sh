@@ -10,6 +10,7 @@ for jar in "$app_lib"/*.jar "$home"/lib/*.jar; do
   classpath=${classpath:+$classpath:}$jar
 done
 set -- run --engine "${HOORI_ENGINE:-mixed}" --live-output --graceful-signals \
+  --max-heap-bytes "${HOORI_MAX_HEAP_BYTES:-33554432}" \
   --allow-environment-read --allow-network-listen --class-path "$classpath"
 case "${HOORI_OUTBOUND:-none}" in
   none) ;;

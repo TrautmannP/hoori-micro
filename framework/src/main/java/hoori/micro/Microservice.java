@@ -5,11 +5,14 @@ import hoori.http.HttpClient;
 import hoori.http.HttpServer;
 import hoori.http.Limits;
 import hoori.http.Response;
+import hoori.rest.Attribute;
 import hoori.rest.Router;
 import hoori.rest.json.JsonLimits;
+import hoori.runtime.RuntimeMetrics;
 import hoori.runtime.Shutdown;
 import java.io.IOException;
 import java.io.InterruptedIOException;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 
 /**
@@ -17,6 +20,7 @@ import java.nio.charset.StandardCharsets;
  * draining and pool cleanup. Configure routes/actions before run(), never in handlers.
  */
 public final class Microservice implements AutoCloseable {
+    private final Attribute<Context> contextKey = new Attribute<>();
 
     private final Service service;
     private final ServiceConfig config;
@@ -60,7 +64,8 @@ public final class Microservice implements AutoCloseable {
                         new Headers().add("Content-Type", "text/plain; version=0.0.4; charset=utf-8"),
                         (server.metrics().prometheus()
                                         + poolMetrics(http.poolStats(), control.poolStats())
-                                        + admissionMetrics(incoming.stats(), broker.admissionStats()))
+                                        + admissionMetrics(incoming.stats(), broker.admissionStats())
+                                        + runtimeMetrics())
                                 .getBytes(StandardCharsets.UTF_8)));
         router.onError((request, failure) -> {
             // Intentionally no stacktrace, URI, request/response body or secret in logs/errors.
@@ -75,9 +80,15 @@ public final class Microservice implements AutoCloseable {
             if (failure instanceof CallRejectedException) return Response.text(503, "Local call capacity unavailable");
 
             if (failure instanceof ServiceCallException upstream)
-                return Response.text(upstream.upstreamStatus() == 503 ? 503 : 502, "Upstream service unavailable");
+                return Response.text(
+                        upstream.upstreamStatus() == 503 || upstream.upstreamStatus() == 504
+                                ? upstream.upstreamStatus()
+                                : 502,
+                        "Upstream service unavailable");
 
-            if (failure instanceof InterruptedIOException) return Response.text(503, "Request interrupted or expired");
+            if (failure instanceof SocketTimeoutException) return Response.text(504, "Request budget expired");
+
+            if (failure instanceof InterruptedIOException) return Response.text(503, "Request cancelled");
 
             return Response.text(500, "Internal Server Error");
         });
@@ -99,7 +110,16 @@ public final class Microservice implements AutoCloseable {
 
     /** Call context for a route handler; request may be null for startup/background calls. */
     public Context context(hoori.rest.Request request) {
-        return new Context(broker, request == null ? null : request.raw());
+        if (request == null) return new Context(broker, null);
+
+        Context context = request.attribute(contextKey);
+
+        if (context == null) {
+            context = new Context(broker, request.raw());
+            request.attribute(contextKey, context);
+        }
+
+        return context;
     }
 
     ServiceBroker broker() {
@@ -126,6 +146,19 @@ public final class Microservice implements AutoCloseable {
         if (outgoing != null) appendAdmissionMetrics(result, "outgoing", outgoing);
 
         return result.toString();
+    }
+
+    private static String runtimeMetrics() {
+        RuntimeMetrics.Snapshot s = RuntimeMetrics.snapshot();
+
+        return "hoori_micro_heap_used_bytes " + s.heapUsedBytes + "\n"
+                + "hoori_micro_heap_committed_bytes " + s.heapCommittedBytes + "\n"
+                + "hoori_micro_rss_bytes " + s.rssBytes + "\n"
+                + "hoori_micro_allocated_bytes_total " + s.allocatedBytes + "\n"
+                + "hoori_micro_gc_collections_total " + s.gcCollections + "\n"
+                + "hoori_micro_tasks_active " + s.tasksActive + "\n"
+                + "hoori_micro_tasks_waiting " + s.tasksWaiting + "\n"
+                + "hoori_micro_handles_open " + s.serviceHandlesOpen + "\n";
     }
 
     private static void appendAdmissionMetrics(StringBuilder result, String direction, Admission.Stats stats) {
@@ -348,7 +381,10 @@ public final class Microservice implements AutoCloseable {
     /** Only this instance's own name and major version; anything else is a stale-catalog miss. */
     private Response invoke(hoori.rest.Request request) throws Exception {
         // The SDK already read the bounded raw body; DTO decoding starts only after admission.
-        try (Admission.Permit permit = incoming.acquire(request.raw().budget(), false)) {
+        try (Admission.Permit permit = incoming.acquire(
+                Context.incomingBudget(request.raw().headers, request.raw().budget())
+                        .limitedToMillis(config.clientTimeoutMillis),
+                false)) {
             Headers headers = request.raw().headers;
             String action = headers.get(ServiceBroker.ACTION_HEADER);
             Service.Definition<?, ?> definition = null;
@@ -360,7 +396,10 @@ public final class Microservice implements AutoCloseable {
 
             if (definition == null) return Response.text(421, "Action not offered by this instance");
 
-            Response response = definition.invoke(new Context(broker, request.raw()), request, jsonLimits);
+            Context context = new Context(broker, request.raw(), permit.budget);
+            request.attribute(contextKey, context);
+            permit.check(incoming);
+            Response response = definition.invoke(context, request, jsonLimits);
             permit.check(incoming);
 
             return response;

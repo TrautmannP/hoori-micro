@@ -8,7 +8,8 @@ noch bereits mit diesen zwei Demos umgesetzt.
 
 Vorhanden: eigenständige Maven-Bibliothek, expliziter Service-Lifecycle,
 Action-Definitionen mit Registry, Broker und Gateway, Konfigurationsvalidierung,
-HTTP-Metriken, Request-ID-Kontext, Pool-Ownership, Shutdown-Ordering mit
+HTTP-/Runtime-Metriken, Request-ID/Restbudget-Kontext, Pool-Ownership, vorbereitete
+Gateway-Snapshots, Shutdown-Ordering mit
 Deregistrierung, Demo-Services, Runtime-Provenienzprüfung und Prüf-Scripte.
 Build, Guest-Checks und Smoke-Test sind gelaufen (siehe `validation.md`).
 
@@ -21,9 +22,9 @@ Bootstrap behandeln, nicht als produktionsreifes Framework.
   ausführen. JUnit-Berichte und Runtime-/Toolchain-Identität aufbewahren.
 - `test-hoori-core.sh` und `smoke.py` in Interpreter und Mixed ausführen. Fehler
   an der passenden Schicht beheben, nicht auf HotSpot-Netzwerk umschalten.
-- Zusätzlich mehrere Replikate und Rolling Updates unter Last, verweigerte
-  DNS-/Connect-Capabilities, verifiziertes HTTPS/ungültige Zertifikate, Überlast und
-  abgelaufene Grace testen.
+- Mehrere Replikate, Rolling/Katalogwechsel unter Last, Überlast, Registry-Timeout/
+  -Ablauf und wiederholte Recovery sind gelaufen. Offen bleiben verweigerte DNS-/
+  Connect-Capabilities, verifiziertes HTTPS/ungültige Zertifikate und abgelaufene Grace.
 - Service-Identität für Registry und `/_hoori/invoke` festlegen, bevor irgendetwas
   außerhalb eines vertrauenswürdigen privaten Netzes läuft.
 - Release-Baseline mit nacktem REST-Service vergleichen: Warmup, Latenzen, Durchsatz,
@@ -94,11 +95,13 @@ verteilte ACID-Transaktion als implizites Framework-Versprechen.
 ## F5 — Skalierung erst mit Betriebsdaten
 
 Hochverfügbare Registry, gesundheitsbewusste statt reiner Round-Robin-Verteilung,
-Multi-Host-Betrieb, End-to-End-Deadline-Budgets, Circuit Breaker und verteiltes
+Multi-Host-Betrieb, Circuit Breaker und verteiltes
 Tracing sind mögliche Folgeschritte. Sie benötigen eigene Nachweise. Zwei
 unkoordiniert gestartete Registry-Container sind keine Hochverfügbarkeit.
 
 Die aktuelle Request-ID hilft bei Korrelation, ersetzt aber keine Trace-Spans.
+Relative Restbudgets laufen bereits über alle Service-Hops; sie ersetzen keine
+globale Echtzeitfrist oder Remote-Cancellation.
 Bestehende HTTP-Metriken bleiben begrenzt; neue Labelwerte dürfen nicht aus
 Benutzer-IDs, URLs oder beliebigen Request-Parametern entstehen.
 

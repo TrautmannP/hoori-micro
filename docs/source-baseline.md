@@ -1,15 +1,15 @@
 # Quellstand und Quellen
 
-Inspektion: 28. September 2026 über die autorisierte GitHub-Verbindung.
+Inspektion: 2. Oktober 2026 per `gh` und gegen den sauberen lokalen Checkout.
 Repository: `TrautmannP/hoori` (privat).
-Gepinnter Commit: `550d608f7885d73233c4941f185afcabf6f9b5e8`.
+Gepinnter Commit: `d8906e62f5aa335d6ddfeecb60156947a691f29e`.
 
 Wesentliche direkt gelesene Quellen unter diesem Commit:
 
 - `sdk/hoori-http-api/README.md`, `HttpClient.java`, `HttpServer.java`, `Limits.java`,
-  `Headers.java`, `Request.java`, `Response.java`: URI-Pooling/DNS/HTTPS,
+  `Headers.java`, `Request.java`, `RequestBudget.java`, `Response.java`: URI-Pooling/DNS/HTTPS,
   Kontext, Ressourcenlimits und exakte Drain-Semantik.
-- `sdk/hoori-rest-api/README.md`, `pom.xml`, `Router.java`,
+- `sdk/hoori-rest-api/README.md`, `pom.xml`, `Router.java`, `Attribute.java`,
   `json/Json.java`, `JsonReader.java`, `JsonWriter.java`, `JsonLimits.java`:
   explizite Routen, Fehler und Codec-Schnittstellen.
 - `examples/hello-rest/README.md`: unabhängige Consumer, CLI-Argumente,
@@ -21,7 +21,7 @@ Wesentliche direkt gelesene Quellen unter diesem Commit:
 - `crates/hoori-cli/src/main.rs`: `build-info`, insbesondere Feature-Liste als JSON-Array.
 
 Pfadpräfix für die Repository-Quellen:
-`https://github.com/TrautmannP/hoori/blob/550d608f7885d73233c4941f185afcabf6f9b5e8/`
+`https://github.com/TrautmannP/hoori/blob/d8906e62f5aa335d6ddfeecb60156947a691f29e/`
 
 Öffentliche Primärquellen:
 

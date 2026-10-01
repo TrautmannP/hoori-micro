@@ -185,7 +185,18 @@ public final class BenchmarkMain {
                             || !"1".equals(headers.get(ServiceBroker.VERSION_HEADER)))
                         return Response.text(421, "Action not offered by this instance");
 
-                    return service.actions.get("echo").invoke(new Context(broker, request.raw()), request, JSON);
+                    return service.actions
+                            .get("echo")
+                            .invoke(
+                                    new Context(
+                                            broker,
+                                            request.raw(),
+                                            Context.incomingBudget(
+                                                            headers,
+                                                            request.raw().budget())
+                                                    .limitedToMillis(config.clientTimeoutMillis)),
+                                    request,
+                                    JSON);
                 });
             } else {
                 router.post("/bench", request -> {

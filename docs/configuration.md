@@ -31,7 +31,7 @@ damit lassen sich Konfigurationen ohne Prozess-Environment testen.
 | `HOORI_OUTGOING_CALLS` | Client-Per-Origin-Limit | 1 bis Datenverbindungen; ein globales Permit für Encoding, RPC und Ergebnis-Decoding |
 | `HOORI_OUTGOING_PENDING_CALLS` | Outgoing-Calls | 0–512 Wartende vor Encoding; null bedeutet Fail-fast |
 | `HOORI_REQUEST_TIMEOUT_MS` | 10000 | 1–600000; Deadline eines eingehenden HTTP-Exchanges |
-| `HOORI_CLIENT_TIMEOUT_MS` | 2000 | 1–600000; ausgehender Framework-Aufruf inklusive Admission, Encoding und SDK-Exchange, begrenzt durch das lokale eingehende Restbudget |
+| `HOORI_CLIENT_TIMEOUT_MS` | 2000 | 1–600000; gesamtes Framework-Budget einschließlich Admission, Codecs und serieller Calls; zusätzlich durch SDK-Request-Deadline und geerbtes Wire-Budget begrenzt |
 | `HOORI_CONTROL_TIMEOUT_MS` | min(1000, TTL/2) | 1 bis min(10000, TTL/2); Registry-Exchange, unabhängig vom Daten-Timeout |
 | `HOORI_CLIENT_IDLE_MS` | 5000 | 1–600000; Aufbewahrung ungenutzter Poolverbindungen |
 | `HOORI_SHUTDOWN_GRACE_MS` | 10000 | 0–600000; Drain, danach Abbruch verbleibender Arbeit |
@@ -48,6 +48,12 @@ Verbindung; JSON-Tiefe 64, Stringlänge 16384 UTF-16-Codeunits und Zahlentokenl�
 Ein stark vergrößertes Routing-Katalog-Metrikdokument kann mehr Bodybudget benötigen;
 `/metrics` unter der realen Routenzahl prüfen. Nicht jeden Grenzwert pauschal erhöhen.
 
+Gateway-Snapshots erlauben zusätzlich maximal 256 distinct Routen und 64 KiB
+Routenmetadaten. Ein größeres Bodybudget hebt diese Grenzen nicht auf. Überlauf
+verwirft das ganze Update; der alte Snapshot bleibt nur bis zu seiner Frischegrenze.
+Interne Restbudgets und die relative Wire-Grenze stehen in
+[architecture.md](architecture.md).
+
 ## Launcher und Docker
 
 | Variable | Bedeutung |
@@ -58,7 +64,8 @@ Ein stark vergrößertes Routing-Katalog-Metrikdokument kann mehr Bodybudget ben
 | `HOORI_OUTBOUND` | `none` oder `http`; letztere erteilt Connect- und Hostresolution-Capabilities, auch für HTTPS |
 | `HOORI_TLS_CA_FILE` | Optionales lesbares PEM-CA-Bundle für den Hoori-Client; kein Abschalten der Verifikation |
 | `HOORI_HOME` / `HOORI_APP_LIB` | Runtime-/JAR-Pfade für den lokalen Launcher; Docker nutzt `/opt/hoori` und `/opt/app/lib` |
-| `HOORI_RUNTIME_BASE` | Compose-Buildargument, Default `debian:trixie-slim`; native Kompatibilität selbst qualifizieren |
+| `HOORI_RUNTIME_BASE` | Compose-Buildargument; Default ist der amd64-Digest aus `docker/Dockerfile`, mit Debian-Paketsnapshot vom 30.09.2026. Andere Debian-Basis erneut qualifizieren |
+| `HOORI_MAX_HEAP_BYTES` | Entrypoint: 33554432 als logisches Guest-Heap-Limit; begrenzt nicht den gesamten Prozess-RSS |
 | `HOORI_DEMO_PORT` | Loopback-Hostport der Demo; 8080 normal, 18080 im Smoke-Test |
 | `HOORI_DEMO_CLIENT_TIMEOUT_MS` | Nur Compose-Demo: 30000, um Cold-Compilation getrennt zu qualifizieren |
 | `HOORI_DEMO_REQUEST_TIMEOUT_MS` | Nur Compose-Demo: 60000; ersetzt nicht den Framework-Default |
@@ -95,6 +102,12 @@ damit nicht global begrenzt. Das SDK hat den begrenzten Raw-Body vor Admission b
 gelesen. Sättigung und Stop weisen Wartende sicher mit 503 ab; es gibt keine Retries.
 Bereits zugelassene Handler dürfen beim Drain sofort weitere Calls starten, sofern
 ein Slot frei ist; neue Wartende und Hintergrundcalls werden dann abgewiesen.
+
+`/metrics` erfasst zusätzlich Guest-/committed Heap, RSS, Allokationen, GC, Tasks
+und offene Handles unter festen Namen ohne Request-Labels. RSS enthält native/JIT-
+Daten; Containerspeicher einschließlich Dateicache wird separat über cgroups
+gemessen. Ablauf liefert 504; langsame Handler brauchen ein ausreichend großes
+gemeinsames Budget.
 
 Für lokale Entwicklung `run-local.sh` nutzen: es setzt Loopback und startet trotzdem
 die echte HooriVM. `java -jar ...` ist kein unterstützter Networking-Modus.

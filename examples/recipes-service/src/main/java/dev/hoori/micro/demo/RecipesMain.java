@@ -15,10 +15,10 @@ public final class RecipesMain {
 
         Service recipes = Service.named("recipes")
                 .version(1)
-                .action("get", GetRecipe.CODEC, RecipeCodec.INSTANCE, (ctx, input) -> find(input.id))
-                .http("GET", "/recipes/{id}")
-                .requirePermission("recipes:read")
-                .action("slow", GetRecipe.CODEC, RecipeCodec.INSTANCE, (ctx, input) -> {
+                .action(Recipes.GET, (ctx, input) -> find(input.id))
+                .http("get", "GET", "/recipes/{id}")
+                .requirePermission("get", "recipes:read")
+                .action(Recipes.SLOW, (ctx, input) -> {
                     System.out.println("demo_slow_started id=" + ctx.request().id());
                     try {
                         Thread.sleep(3000);
@@ -46,8 +46,8 @@ public final class RecipesMain {
                             GetRecipe.CODEC,
                             RecipeCodec.INSTANCE,
                             (ctx, input) -> new Recipe(2, "Apfelstrudel"))
-                    .http("GET", "/recipes/{id}/recommendation")
-                    .requirePermission("recipes:read");
+                    .http("recommend", "GET", "/recipes/{id}/recommendation")
+                    .requirePermission("recommend", "recipes:read");
 
         try (Microservice app = Microservice.create(recipes)) {
             app.run();

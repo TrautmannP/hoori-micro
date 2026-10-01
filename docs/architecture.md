@@ -101,8 +101,8 @@ enthält höchstens 32 Abhängigkeiten und 2300 Header-Zeichen. Beim Snapshotwec
 können alter und neuer Katalog plus ein begrenzter Antwortbody kurz gleichzeitig
 leben. Broker halten keine Raw-Bodies; abgelaufene Zeilen werden beim nächsten
 Heartbeat/Zugriff durch kleine Versionstoken ersetzt, danach ist ein voller Abruf
-nötig. Das Gateway hält nur eine Identitätsmarke und seine begrenzten Routen bis zum
-nächsten Zugriff; deren Aktualisierung außerhalb des Request-Pfads folgt in #7.
+nötig. Das Gateway bekommt vorbereitete Routen gemeinsam mit dem Katalog; deren
+Aufbau liegt im Registrar, außerhalb des Request-Pfads.
 Ziel-URIs und typisierte Action-Namen werden einmal vorbereitet. Die Auswahl bleibt
 ein begrenzter linearer Scan; ein Action-Index braucht einen belegten CPU-Nutzen.
 
@@ -116,23 +116,40 @@ Fachliche Fehler wirft eine Action als `RequestException(status, meldung)`.
 
 Typisierte Verträge (`Action<I, O>`) enthalten nur Name und Codecs. Generische Aufrufe
 verwenden `Map` und `JsonTree` (Map, List, String, Long, Double, Boolean, null).
+Provider registrieren denselben Vertrag mit `action(contract, handler)`; fremde
+Service-Namen werden beim Start abgewiesen. `http(actionName, method, path)` und
+`requirePermission(actionName, permission)` binden Metadaten ausdrücklich an die
+Action. Die bisherigen Overloads bleiben kompatibel. Ein Buildzeit-Generator ist
+bei den kleinen vorhandenen DTOs ohne belegte Boilerplate-Ersparnis zurückgestellt.
 Ergebnisse müssen 2xx mit `application/json` (optional `charset=utf-8`) sein; sonst
 `ServiceCallException` mit Status, aber ohne Upstream-Body.
 
 **Gateway** (`hoori.micro.Gateway`): Eine Middleware, die für sonst unbekannte Pfade
-die Routen aus dem Katalog baut. Veröffentlicht wird nur, was der Anbieter mit
+den vorbereiteten Routing-Snapshot anwendet. Veröffentlicht wird nur, was der Anbieter mit
 `http(method, template)` **und** `requirePermission("<service>:<scope>")` markiert
 und was die Gateway-Policy gewährt. Die Permission ist auf den eigenen Service-Namen
 begrenzt. Konflikte (gleiche Methode, überlappende Templates gleicher Spezifität,
 verschiedene Actions) werden im Service beim Start abgewiesen und im Gateway für alle
 Beteiligten zurückgehalten. Pfadparameter werden als JSON-Strings übergeben und mit
 einem optionalen JSON-Objekt-Body zusammengeführt; Query-Parameter nicht.
-Client-Fehler des Anbieters behalten ihren Status, nie ihren Body.
+Client-Fehler des Anbieters behalten ihren Status, nie ihren Body. Abweichende
+Route/Permission derselben Action und Hauptversion während eines Rolling Updates
+werden ebenfalls zurückgehalten.
+
+Katalog, Revision und Routing-Tabelle werden als ein unveränderlicher Snapshot
+veröffentlicht. Ein Gateway-Request nutzt ihn auch zur Instanzauswahl. Maximal
+256 distinct Routendefinitionen und 64 KiB ihrer ASCII-Metadaten sind erlaubt.
+Überlauf verwirft das ganze Update, ohne den alten Snapshot aufzufrischen; nach
+dessen Frischegrenze verschwindet auch die Veröffentlichung. Der begrenzte
+quadratische Aufbau gibt alle 64 Vergleiche kooperativ ab. Es gibt keine Historie;
+laufende Requests können ältere Snapshots innerhalb der Admission-Grenze halten.
+Parameter bleiben explizit validiertes JSON; Copy-Optimierung und Indizes brauchen
+einen belegten Profilnutzen.
 
 Die Demo-Policy (`HOORI_GATEWAY_PERMISSIONS`) gewährt feste Permissions an jeden
 Aufrufer. Sie ist keine Authentifizierung. Eine deklarierte Abhängigkeit ist keine
-Berechtigung. Eingehende Header werden nie weitergereicht; nur Hooris validierte
-Request-ID läuft über alle Hops.
+Berechtigung. Eingehende Header werden nie weitergereicht; Hooris validierte
+Request-ID läuft über alle Hops, der interne Budgetwert wird vom SDK neu erzeugt.
 
 ## 4. Ressourcen und Ausfallverhalten
 
@@ -156,14 +173,32 @@ einen sicheren 503, auch über einen weiteren Service-Hop. Standardmäßig warte
 die Framework-Queue, der SDK-Datenpool hat null Pending-Slots. Größere Limits stehen
 in [configuration.md](configuration.md); eigene Anwendungstasks sind davon nicht erfasst.
 
-Das lokale Budget beginnt vor Admission/Encoding und wird dem SDK unverändert
-weitergegeben. Der bestehende Hoori-Client umfasst Pool-Warten,
-DNS, Connect, TLS, Schreiben und Response-Lesen mit einer monotonen Deadline. Das
-ist noch kein transitive Request-Budget über mehrere Service-Hops. Serielles Fan-out
-kann mehrere einzelne Budgets verbrauchen; Aufrufer dürfen dies nicht als globale
-Deadline interpretieren. Ein entsprechendes Budget gehört in eine separat
-qualifizierte Erweiterung der vorhandenen APIs, nicht in einen unzuverlässigen
-Header mit neu gestarteter Uhr pro Hop.
+Ein `Context` hält ein unveränderliches SDK-`RequestBudget` für die gesamte Arbeit,
+einschließlich serieller `ctx.call()`-Aufrufe. Es beginnt vor Admission/DTO-Decoding
+bzw. Encoding und wird durch die bereits laufende SDK-Request-Deadline sowie
+`HOORI_CLIENT_TIMEOUT_MS` begrenzt. Hintergrundkontexte haben denselben Default;
+`ctx.limitedToMillis(n)` erlaubt eine kürzere Grenze. Wiederholtes
+`app.context(request)` liefert denselben Kontext über ein SDK-Attribut, ohne
+ThreadLocal. Child-Admission und Exchange behalten die früheste Deadline; nach
+Ablauf startet kein weiterer Codec/Handler/Downstream-Call.
+
+Nur `/_hoori/invoke` akzeptiert `X-Hoori-Budget-Ms`: genau ein kanonischer
+Dezimalwert von 0 bis 600000. Doppelte, malformed, negative, führend genullte oder
+größere Werte ergeben 400; Budget 0 ergibt 504 vor DTO-Decoding. Fehlt das Feld,
+gilt die lokale Policy. Das Gateway ignoriert externe Budget- und interne
+Action-/Versionsheader und startet seine eigene Policy. Jeder Empfänger begrenzt
+erneut durch seine SDK-Frist und lokale Policy.
+
+`withRemainingMillisHeader()` schreibt ganze abgerundete Restmillisekunden erst
+nach Pool-Warten, DNS, Connect und TLS, unmittelbar vor dem ersten Request-Oktett.
+Sub-ms-Rest/Ablauf startet keinen Request. Die Wire-Werte sind relative Dauern,
+keine vergleichbaren monotonen Zeitstempel verschiedener Prozesse. Sende-,
+Transit- und Empfänger-Parsing-Zeit nach dem Messpunkt lassen sich daraus nicht
+exakt abziehen; die ursprüngliche Caller-Frist bleibt lokal wirksam. Das ist kein
+globales Echtzeitversprechen und kein Remote-Cancellation-RPC. CPU-Code muss
+weiterhin kooperieren. Ablauf liefert 504, Cancellation/Überlast/Stop 503;
+entfernte 503/504 bleiben erhalten, andere Upstream-Ausfälle liefern 502.
+Abbruch schließt nur den betroffenen Exchange, nie den gemeinsamen Client.
 
 **Keine automatischen Retries, auch nicht für POST.** Nach einem Verbindungsfehler
 kann die Gegenseite bereits geschrieben haben. Ein erneuter Schreibaufruf wäre ohne
