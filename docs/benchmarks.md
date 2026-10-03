@@ -57,7 +57,8 @@ dieser Werte auf Sättigung prüfen.
 
 Pro Rolle und insgesamt werden CPU-Zeit, Guest-Allokationen, GC, Tasks, offene
 HTTP-Verbindungen und Service-Handles erfasst. Runtime-Snapshots liegen außerhalb
-der Zeitmessung; `--profile` nimmt zusätzlich Snapshots während der Last. Ihre
+der Zeitmessung; `--profile` nimmt zusätzlich Snapshots während der Last und
+exportiert beim Exit die VM-Methodenaufrufzähler auf stdout. Ihre
 Kosten und Hintergrundarbeit sind in den Zählerdifferenzen
 enthalten. Sie sind keine isolierte Allokation eines einzelnen Handlers. Die
 Verbindungsprobe zählt ihre eigene Verbindung/Anfrage mit. Die alte SDK-Baseline
@@ -477,4 +478,166 @@ keine unterbrechungsfreie Verfügbarkeit oder langfristige lebende Retention.
 python3 scripts/benchmark.py --variants ABCD --repeats 3 --seconds 2 --warmup 5 --idle 3 --output .cache/current-mixed.json
 python3 scripts/benchmark.py --variants D --public-routes 64 --repeats 1 --seconds 2 --warmup 5 --idle 3 --output .cache/routes64.json
 python3 scripts/benchmark.py --variants D --public-routes 64 --profile --repeats 1 --seconds 2 --warmup 5 --idle 3 --output .cache/routes64-profile.json
+```
+
+## Tasks v2, 3. Oktober 2026
+
+### Vergleich desselben Runtime-Satzes
+
+Vorher `c10ccbe` (bereits neuer SDK-Pin, noch unverwalteter Micro-Pfad), nachher
+`e500bda` mit der hier ergänzten Test-Fixture. Beide verwenden exakt denselben
+sauberen Hoori-Release `7d7245a`, Guest Base 0.4.0 und originale SDKs 0.1.0.
+Framework-JAR-SHA256: vorher `04f881d1d8282c66…`, nachher `6d0a4b06b558497c…`.
+Vollständige Hashes, Git-Status, Fixture/Lastgenerator, Container und Einstellungen:
+[vorher Mixed](benchmarks/tasks-v2-before-mixed.json.gz),
+[nachher Mixed](benchmarks/tasks-v2-after-mixed.json.gz),
+[vorher Interpreter](benchmarks/tasks-v2-before-interpreter.json.gz),
+[nachher Interpreter](benchmarks/tasks-v2-after-interpreter.json.gz).
+Während der Ausgangsmessung begonnene Quelledits änderten die gebauten/gemessenen
+JARs nicht; deren gespeicherte Hashes bestimmen die Vergleichsidentität.
+
+Je zwei frische Prozesse pro C/D/Engine, Warmup 3 s, sechs Phasen je 4 s und Idle
+3 s. Acht Generator-Worker, Pool vier, offene Last 4/s, Burst 32/s, 64/8192 Zeichen,
+langsamer Call 250 ms. Vier Rollen mit den oben genannten Grenzen; der neue Pantry-
+Demo-Container wird in diesen Kontrollen ausdrücklich nicht mitgestartet.
+Host: i5-11600KF, Linux 7.0.0-34-generic. Keine weiteren eigenen Lasttests/Builds
+während der Messung. Zwei kurze Wiederholungen liefern beobachtete Streuung,
+keine statistisch abgesicherte Kapazitätsprognose.
+
+Geschlossene Last; CPU und Allokation sind die Summe aller vier Rollen pro Erfolg,
+einschließlich Hintergrund-/Probe-/Fehlerkosten. Zahlenpaare bedeuten vorher → nachher.
+
+| Engine/Pfad | Erfolge/s, min–max | p99 aller Versuche, ms, min–max | CPU-ms/Erfolg, Median | Allokation KiB/Erfolg, Median |
+|---|---:|---:|---:|---:|
+| Mixed C | 112,08–112,20 → 68,95–70,65 | 512–716 → 687–1068 | 7,92 → 13,25 | 21,44 → 23,75 |
+| Mixed D | 89,93–95,96 → 57,70–58,07 | 1969–2006 → 1862–2008 | 14,20 → 22,81 | 34,06 → 37,23 |
+| Interpreter C | 114,70–116,81 → 88,68–89,21 | 398–572 → 706–828 | 7,34 → 9,84 | 21,46 → 23,44 |
+| Interpreter D | 99,21–100,91 → 73,51–76,73 | 1039–1913 → 1942–1992 | 12,47 → 17,13 | 34,06 → 36,76 |
+
+Damit sinkt der mediane Durchsatz um **23–38 %**, CPU/Erfolg steigt um **34–67 %**,
+Allokation/Erfolg um **8–11 %**. Geschlossene Fehler vorher/nachher:
+Mixed C 1/2, D 7/5; Interpreter C 2/2, D 8/6. Fehler sind keine Erfolge.
+Alle vier neuen D-Läufe verfehlen weiter die p99-Grenze, einer der Mixed-C-Läufe ebenfalls.
+
+Offene Normallast erreicht in jedem Lauf 16/16 Erfolge (4/s); hier sind alle
+Perzentile erfolgreiche Antworten. Median der beiden Läufe, Millisekunden:
+
+| Engine/Pfad | p50 vorher → nachher | p95/p99 vorher → nachher |
+|---|---:|---:|
+| Mixed C | 8,09 → 13,48 | 34,04 → 33,73 |
+| Mixed D | 12,70 → 20,57 | 58,57 → 67,97 |
+| Interpreter C | 7,98 → 10,31 | 10,35 → 12,11 |
+| Interpreter D | 12,19 → 16,05 | 15,06 → 19,06 |
+
+Bei nur 16 Ankünften fallen p95 und p99 auf denselben Maximalwert.
+Große Payload/Normallast/langsame Calls/Recovery zusammen: nachher Mixed 255/256,
+Interpreter 256/256 erfolgreich. Der einzelne Mixed-D-Recovery-Timeout trat auch
+vorher auf; maximale Recovery-p99 2306 ms, also kein bestandenes Latenzziel.
+Nachher je Engine 512 Burst-Ankünfte: **254 Erfolge, 16 Fehler, 242 nicht gestartet**.
+Das ist begrenzte Überlast, kein zusätzlicher nutzbarer Durchsatz.
+
+| Alle vier Rollen nach letzter Ruhe | RSS MiB, vorher → nachher (min–max) | cgroup MiB nachher | Guest-Heap / committed MiB nachher |
+|---|---:|---:|---:|
+| Mixed C | 632,78–633,56 → 660,18–661,82 | 618,14–619,36 | 3,93–4,09 / 9,08–9,23 |
+| Mixed D | 775,90–776,12 → 808,69–810,36 | 766,80–768,30 | 2,11–2,26 / 7,92–8,10 |
+| Interpreter C | 108,51–108,79 → 118,24–118,42 | 93,89–97,68 | 5,29–5,43 / 8,34–8,55 |
+| Interpreter D | 113,40–113,41 → 125,74–125,89 | 101,02–102,61 | 3,98–4,28 / 7,38–7,73 |
+
+RSS steigt; kleinerer beobachteter Heap nach GC ist keine Speicherersparnis.
+Insbesondere Mixed enthält JIT-/native Kosten, die diese Snapshots nicht isolieren.
+Zeitpunkte, rollenweise CPU/Allokation/GC, p50/p95/p99, erfolgreiche/min,
+erfolgreiche p99, Generator-Verzug und cgroup-Spitzen bleiben im JSON nachprüfbar.
+
+```bash
+# Jeweils getrennt auch mit --engine interpreter, ohne parallele eigene Last:
+python3 scripts/benchmark.py --variants CD --repeats 2 --seconds 4 --warmup 3 --idle 3 --workers 8 --pool 4 --rate 4 --burst-rate 32 --output .cache/tasks-current-mixed.json
+```
+
+### Gleiche zwei Reads: seriell, parallel und Fail-fast
+
+Der Test-Consumer C ruft zweimal dieselbe entdeckte Echo-Action auf und prüft
+identische Ergebnisse. Beide Reads warten unabhängig 250 ms. Keine zusätzlichen
+CPUs oder Provider: die echte Zwei-Provider-Anwendung ist separat funktional
+qualifiziert, diese Kostenkontrolle isoliert die Komposition. Zwei Wiederholungen
+je Engine/Policy, Warmup 5 s, Messung 5 s bei 2/s, Idle 3 s; sonst dieselben Limits.
+Jede Erfolgsphase liefert 10/10 korrekte Ergebnisse, insgesamt 120/120.
+
+| Engine/Policy | p50 ms, Median | p95/p99 ms, min–max | CPU-ms/Erfolg, Median | Allokation KiB/Erfolg, Median |
+|---|---:|---:|---:|---:|
+| Mixed seriell | 534,00 | 561,66–566,30 | 77,85 | 100,05 |
+| Mixed parallel | 280,44 | 306,28–308,30 | 76,65 | 100,17 |
+| Mixed Fail-fast | 279,65 | 308,36–310,55 | 78,93 | 100,77 |
+| Interpreter seriell | 519,60 | 521,71–524,91 | 39,03 | 100,77 |
+| Interpreter parallel | 264,20 | 264,92–265,40 | 38,65 | 100,36 |
+| Interpreter Fail-fast | 264,48 | 265,68–266,58 | 38,56 | 98,96 |
+
+Die Erfolgsrate bleibt durch das Angebot bei rund 2/s (120/min); die Wartezeit
+sinkt durch I/O-Überlappung, ohne CPU-Multicore- oder Kapazitätsgewinn daraus
+abzuleiten. Bei zehn Ankünften sind p95 und p99 jeweils das Maximum.
+Die CPU-Spanne der Mixed-Serienläufe beträgt 77,44–78,25 ms/Erfolg, parallel
+76,48–76,82; Interpreter 39,02–39,04 gegenüber 38,34–38,97. Das rechtfertigt
+keine allgemeine CPU-Ersparnis. Alle Einzelwerte und Speicher-Samples:
+[Mixed seriell](benchmarks/tasks-v2-serial-mixed.json.gz),
+[parallel](benchmarks/tasks-v2-parallel-mixed.json.gz),
+[Fail-fast](benchmarks/tasks-v2-fail-fast-mixed.json.gz),
+[Interpreter seriell](benchmarks/tasks-v2-serial-interpreter.json.gz),
+[parallel](benchmarks/tasks-v2-parallel-interpreter.json.gz),
+[Fail-fast](benchmarks/tasks-v2-fail-fast-interpreter.json.gz).
+
+Im Fehlerpfad scheitert der erste Read nach 50 ms mit 409; der andere wartet
+weiter 250 ms. Nach separatem Fehler-Warmup liefern alle 80 gemessenen Aufrufe
+erwartungsgemäß 502, keine Generator-Abweisung. **Nutzbarer Durchsatz: null.**
+Hier wird CPU/Allokation je fehlgeschlagenem Versuch ausgewiesen:
+
+| Engine/Policy | p50 ms, Median | p95/p99 ms, min–max | CPU-ms/Versuch, Median | Allokation KiB/Versuch, Median |
+|---|---:|---:|---:|---:|
+| Mixed All-complete | 269,68 | 281,00–289,73 | 47,71 | 100,34 |
+| Mixed Fail-fast | 65,24 | 79,71–81,82 | 47,57 | 106,10 |
+| Interpreter All-complete | 265,39 | 265,92–268,03 | 38,74 | 99,61 |
+| Interpreter Fail-fast | 61,89 | 62,76–64,20 | 38,01 | 105,04 |
+
+Fail-fast beendet den lokalen Exchange und dessen Drain früher. Die Remote-Arbeit
+kann unabhängig weiterlaufen; entsprechend sinkt die gesamte CPU-Arbeit kaum.
+Nach Idle sind in allen zwölf Kompositionsläufen aktive/wartende Framework-Calls
+und SDK-Pending null; beobachtet werden je Rolle 3–7 Tasks und 2–5 Handles inklusive
+laufender Server/Control-Verbindungen. Dies ersetzt nicht die gezielten GC-/
+WeakReference-/Recovery-Nachweise in [validation.md](validation.md).
+
+```bash
+# Für jede Engine nacheinander serial, parallel und fail-fast; neue Ausgabepfade:
+python3 scripts/benchmark.py --composition parallel --variants C --repeats 2 --seconds 5 --warmup 5 --idle 3 --workers 8 --pool 4 --rate 2 --delay-ms 250 --output .cache/tasks-parallel-mixed.json
+```
+
+### Ursache des Mehraufwands und Entscheidung
+
+Das [separate Interpreter-Profil](benchmarks/tasks-v2-profile-methods.json.gz)
+verwendet C mit einem Worker, Warmup 3 s und Phasen von 2 s, offene Last 2/s,
+Burst 8/s. Seine instrumentierten Latenzen sind keine Vergleichswerte.
+Für jeweils **199 Fachrequests** in Recipes und Shopping zeigt es je **199**
+`Executions.request`, `Operation.call`, `TaskContext.enter`, Timerregistrierungen,
+Timer-Worker-Konstruktionen und abgeschlossene Timerregistrierungen.
+Shopping führt zusätzlich 199 cancellation-gebundene `HttpTasks.invoke` aus.
+Recipes/Shopping prüfen die aktuelle Micro-Ownership 1990/995-mal.
+
+Der konkrete neue Kostenpfad ist damit sichtbar: Jeder Root besitzt Scope,
+Bindings und Deadline; die SDK-Implementierung startet den Timer-Worker bei der
+ersten Registrierung und drainiert ihn beim letzten Close. In dieser seriellen
+Kontrolle geschieht das pro Request. Hinzu kommen Ownership-Prüfungen und
+Cancellation-Registrierungen um Admission/HTTP. Im ursprünglichen Micro-Pfad gab
+es diese Arbeit nicht. Unter geschlossener Mixed-C-Last steigt entsprechend die
+rollenweise CPU/Erfolg in Recipes von 2,98–3,03 auf 5,32–5,45 ms, in Shopping
+von 4,51–4,56 auf 7,20–7,38 ms. Das Profil weist Aufrufe nach, keinen isolierten
+Zeitanteil einzelner Methoden; die zusätzliche Mixed/JIT-Differenz bleibt unaufgeteilt.
+
+Beim Exit des Profils: alle **66/254/262/51** erstellten Tasks abgeschlossen
+(Registry/Recipes/Shopping/Gateway), überall null offene Service-Handles.
+Die Entscheidung für diesen Stand: Die geforderte Ownership, Cancellation und
+der echte Drain bleiben das reguläre Modell. Der Normalpfad-Aufwand wird als
+Regression akzeptiert und dokumentiert; dieser Stand erhält keine Performance-
+freigabe. Eine spätere Timer-/Kontextoptimierung braucht denselben Kostenvergleich
+und muss die geprüften Abschlussgarantien erhalten. Keine zusätzliche unverwaltete
+Produktbetriebsart und keine VM-/SDK-Kopie im Consumer.
+
+```bash
+python3 scripts/benchmark.py --variants C --profile --engine interpreter --repeats 1 --seconds 2 --warmup 3 --idle 3 --workers 1 --pool 4 --rate 2 --burst-rate 8 --output .cache/tasks-profile.json
 ```

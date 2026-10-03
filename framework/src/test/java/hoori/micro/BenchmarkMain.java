@@ -1,5 +1,6 @@
 package hoori.micro;
 
+import hoori.concurrent.Tasks;
 import hoori.http.Headers;
 import hoori.http.HttpClient;
 import hoori.http.HttpServer;
@@ -19,9 +20,11 @@ import java.util.Map;
 /** Test-only controls. Static addresses/snapshots never become an application API. */
 public final class BenchmarkMain {
     private static final Action<Object, Object> ECHO = new Action<>("recipes.echo", JsonTree.CODEC, JsonTree.CODEC);
+    private static final Action<Object, Object> FAIL = new Action<>("recipes.fail", JsonTree.CODEC, JsonTree.CODEC);
     private static final JsonLimits JSON = new JsonLimits(64, 16384, 128, 65536);
     private static final String ROLE = System.getenv("BENCH_ROLE");
     private static final String VARIANT = System.getenv("BENCH_VARIANT");
+    private static final String COMPOSITION = System.getenv("BENCH_COMPOSITION");
 
     public static void main(String[] args) throws Exception {
         if (args.length == 1 && args[0].equals("lookup")) {
@@ -39,15 +42,26 @@ public final class BenchmarkMain {
         }
 
         Service service = Service.named(ROLE);
+        boolean composition = COMPOSITION != null && !COMPOSITION.equals("single");
 
         if (ROLE.equals("recipes"))
             service.action("echo", JsonTree.CODEC, JsonTree.CODEC, (ctx, input) -> echo(input))
                     .http("POST", "/bench")
                     .requirePermission("recipes:read");
 
+        if (ROLE.equals("recipes") && composition)
+            service.action(FAIL, (ctx, input) -> {
+                Thread.sleep(50);
+                throw new RequestException(409, "Controlled benchmark failure");
+            });
+
         if (ROLE.equals("shopping"))
             service.dependsOn("recipes", 1)
-                    .action("echo", JsonTree.CODEC, JsonTree.CODEC, (ctx, input) -> ctx.call(ECHO, input))
+                    .action(
+                            "echo",
+                            JsonTree.CODEC,
+                            JsonTree.CODEC,
+                            composition ? BenchmarkMain::compose : (ctx, input) -> ctx.call(ECHO, input))
                     .http("POST", "/bench/meal")
                     .requirePermission("shopping:read");
 
@@ -57,13 +71,23 @@ public final class BenchmarkMain {
             if (ROLE.equals("gateway") && VARIANT.equals("D"))
                 Gateway.mount(app, (request, permission) -> permission.equals("shopping:read"));
 
-            if (ROLE.equals("shopping"))
+            if (ROLE.equals("shopping") && !composition)
                 app.routes()
                         .post(
                                 "/bench",
                                 request -> Responses.json(
                                         200,
                                         app.context().call(ECHO, request.body(JsonTree.CODEC, JSON)),
+                                        JsonTree.CODEC,
+                                        JSON));
+
+            if (ROLE.equals("shopping") && composition)
+                app.routes()
+                        .post(
+                                "/bench",
+                                request -> Responses.json(
+                                        200,
+                                        compose(app.context(), request.body(JsonTree.CODEC, JSON)),
                                         JsonTree.CODEC,
                                         JSON));
 
@@ -86,6 +110,25 @@ public final class BenchmarkMain {
             }
             System.out.println("admission_closed=true");
         }
+    }
+
+    private static Object compose(Context ctx, Object input) throws Exception {
+        Action<Object, Object> first =
+                input instanceof Map<?, ?> map && Boolean.TRUE.equals(map.get("failure")) ? FAIL : ECHO;
+
+        if (COMPOSITION.equals("serial")) return same(ctx.call(first, input), ctx.call(ECHO, input));
+
+        var plan = Tasks.parallel(ctx.task(first, input), ctx.task(ECHO, input)).named("benchmark.composition");
+
+        if (COMPOSITION.equals("fail-fast")) plan.failFast();
+
+        return plan.map(BenchmarkMain::same);
+    }
+
+    private static Object same(Object first, Object second) {
+        if (!first.equals(second)) throw new AssertionError("Different composed business results");
+
+        return first;
     }
 
     /** Native CPU control, separate from transport timing. No speculative index implementation. */

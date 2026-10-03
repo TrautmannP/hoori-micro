@@ -162,8 +162,25 @@ Guest-Core und erneuter DB-freier Docker-Smoke bestehen in beiden Engines:
 [Mixed](benchmarks/data-smoke-mixed.json.gz), [Interpreter](benchmarks/data-smoke-interpreter.json.gz).
 Die vollständige upstream Driver-/TLS-/GC-Matrix wurde hier nicht erneut ausgeführt.
 
-Die integrierte Kostenkontrolle (#28) folgt separat.
-#8/#10/#11 bleiben unabhängige Arbeit.
+## Gemeinsamer Abschluss (#28)
+
+Die zusätzlichen `CapacityChecks` bestehen in **Interpreter/Mixed** auf demselben
+Release: zwei vollständig belegte Micro-Roots, alle 1024 SDK-Timerregistrierungen
+und die VM-Grenze mit 1023 Kindtasks. Ein zusätzlicher Micro-Root scheitert jeweils
+vor seinem Fachbody. Bereits zugelassene Ressourcen drainieren, Slots werden frei,
+Diagnosen sind leer und derselbe Service nimmt anschließend wieder Arbeit an.
+Der Timer-Test hält reale verschachtelte Fristen; keine privaten SDK-Hooks.
+[Native Ausgabe, Runtime- und Fixture-Identitäten](benchmarks/tasks-capacity-native.json.gz).
+
+Der abschließende Build mit Spotless/23 JUnit, 117 Core-Assertions, fünf Formatter-
+Fixtures, 23 Python-Tests und Guest-Core besteht. Die oben dokumentierten nativen
+HTTP-/Kompositions-/Fassaden-/DB-Prüfungen und der letzte Docker-Smoke verwenden
+dasselbe unveränderte Framework-JAR (`6d0a4b06b558497cf20541381766b3ddbf74ee0c972ae89b9df0533b5b63f090`).
+Für #28 kamen ausschließlich Test-Fixtures, Benchmark-Werkzeuge und Dokumentation
+hinzu; die bereits bestandenen vollständigen Matrizen wurden nicht nochmals dupliziert.
+Die echte Docker-Kostenkontrolle ist unter [benchmarks.md](benchmarks.md#tasks-v2-3-oktober-2026) dokumentiert.
+#8/#10/#11 bleiben eigenständige offene Arbeit; Tasks v2 ist keine Produktions-
+oder Performancefreigabe.
 
 ## Bisherige Fachabnahme
 

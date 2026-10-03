@@ -2,15 +2,17 @@
 
 Die Hoori-MS0–MS5-Runtime-Roadmap bleibt abgeschlossen und unabhängig. Dieses
 Repository führt eine eigene kleine Roadmap. Die Dahemm-Migration ist weder MS6
-noch bereits mit diesen zwei Demos umgesetzt.
+noch bereits mit diesen Demos umgesetzt.
 
 ## F0 — Dieser Bootstrap: implementiert, Basisabnahme gelaufen
 
 Vorhanden: eigenständige Maven-Bibliothek, expliziter Service-Lifecycle,
 Action-Definitionen mit Registry, Broker und Gateway, Konfigurationsvalidierung,
 HTTP-/Runtime-Metriken, Request-ID/Restbudget-Kontext, Pool-Ownership, vorbereitete
-Gateway-Snapshots, Shutdown-Ordering mit
-Deregistrierung, Demo-Services, Runtime-Provenienzprüfung und Prüf-Scripte.
+Gateway-Snapshots, verwaltete Request-Roots mit Kontext, Cancellation und echtem
+Scope-Drain, typisierter Fan-out und Batch/Bulk, Deregistrierung, Demo-Services,
+Runtime-Provenienzprüfung und Prüf-Scripte. Optionale separate Beispiele zeigen
+Buildzeit-Fassaden und lokale Transaktionen mit atomarem Daten-/Outbox-Commit.
 Build, Guest-Checks und Smoke-Test sind gelaufen (siehe `validation.md`).
 
 **Exit-Kriterium:** alle folgenden F1-Checks grün. Bis dahin als experimentellen
@@ -24,7 +26,8 @@ Bootstrap behandeln, nicht als produktionsreifes Framework.
   an der passenden Schicht beheben, nicht auf HotSpot-Netzwerk umschalten.
 - Mehrere Replikate, Rolling/Katalogwechsel unter Last, Überlast, Registry-Timeout/
   -Ablauf und wiederholte Recovery sind gelaufen. Offen bleiben verweigerte DNS-/
-  Connect-Capabilities, verifiziertes HTTPS/ungültige Zertifikate und abgelaufene Grace.
+  Connect-Capabilities und verifiziertes HTTPS/ungültige Zertifikate. Grace-Ablauf,
+  Kind-/Ressourcen-Drain und der nicht kooperierende Negativfall sind für Tasks v2 geprüft.
 - Service-Identität für Registry und `/_hoori/invoke` festlegen, bevor irgendetwas
   außerhalb eines vertrauenswürdigen privaten Netzes läuft.
 - Release-Baseline mit nacktem REST-Service vergleichen: Warmup, Latenzen, Durchsatz,
@@ -55,6 +58,8 @@ Festzulegen und zu testen:
   `X-Household`-Header als Vertrauensbasis.
 - PostgreSQL-/JDBC-Laufzeitabnahme auf dem benötigten Hoori-Stand: Treiber,
   Migrationen, Timeouts, Transaktionen, Pooling und Ressourcen unter Fehlern.
+  Das optionale Datenbeispiel belegt bereits kurze lokale Transaktionen, Query-Cancel
+  und UNKNOWN ohne Replay; Dahemm-Migrationen und Pooling sind davon nicht abgedeckt.
 
 Die VM-/JDBC-Unterstützung darf nicht allein aus „Java-kompatibel“ oder einem grünen
 HTTP-Test abgeleitet werden. Datenbank-Pools und Client-Pools sind unterschiedliche
@@ -87,7 +92,8 @@ Konsistenzanforderung festlegen. Ein transparenter synchroner Aufruf kann reiche
 Soll ein Vorgang einen Service-Ausfall überstehen, sind persistente Nachrichten oder
 Jobs nötig, nicht ein In-Memory-EventEmitter.
 
-Dann separat entwerfen und testen: transaktionale Outbox, dauerhafter Broker/Transport,
+Das Datenbeispiel speichert bereits eine Outbox atomar mit seinen Daten.
+Bei tatsächlichem Zustellbedarf separat entwerfen und testen: dauerhafter Broker/Transport,
 versionierte Events, idempotente Consumer, Wiederholungsgrenzen und Umgang mit
 nicht verarbeitbaren Nachrichten. Keine „exactly once“-Behauptung und keine
 verteilte ACID-Transaktion als implizites Framework-Versprechen.

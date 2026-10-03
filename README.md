@@ -200,7 +200,7 @@ Actions auf. Jede Fachroute besitzt automatisch eine verwaltete Request-Operatio
 `ctx.call(...)` führt direkt aus. `ctx.task(...)` erzeugt einen normalen, noch nicht
 gestarteten `TaskSpec`; erst `Tasks.parallel(...).map(...)` startet die ausdrücklich
 komponierten Calls. Die Specs halten Eingaben per Referenz und lesen den aktuellen
- Kontext erst bei ihrer Ausführung. Eingaben währenddessen nicht verändern.
+Kontext erst bei ihrer Ausführung. Eingaben währenddessen nicht verändern.
 
 ```java
 // Innerhalb einer Action oder normalen Route, ohne manuelles fork/join:
@@ -273,6 +273,8 @@ examples/demo-contracts/    Typisierte Demo-Actions (Recipes.GET) und Codecs
 examples/recipes-service/  Rein lesender Recipe-Anbieter
 examples/pantry-service/   Unabhängiger lesender Pantry-Anbieter
 examples/shopping-service/ Direkter Call, typisiertes Overview, Dashboard, Batch/Bulk
+examples/task-facade/      Separater Build mit generierten Task-/Methodenfassaden
+examples/local-data/       Separater JDBC-/Jdbi-Consumer mit Datensatz und Outbox
 docker/                    Hoori-Entrypoint und Runtime-Image
 scripts/                   Build, Integrität, lokale und native Prüfungen
 docs/                      Architektur, Konfiguration, Roadmap und Nachweise
@@ -283,8 +285,8 @@ spätere Migration. Die bestehende Hoori-VM-Roadmap wird nicht wieder geöffnet.
 Als erster Schnitt ist ein **lesender, rückschaltbarer Dahemm-Use-Case** vorgesehen,
 nicht die sofortige Zerlegung des gesamten Backends.
 
-Reproduzierbare A–D-Lastkontrollen und ihre Messgrenzen stehen unter
-[Vergleichsbenchmarks](docs/benchmarks.md).
+Reproduzierbare A–D-Lastkontrollen, Tasks-v2-Kosten und ihre Messgrenzen stehen unter
+[Vergleichsbenchmarks](docs/benchmarks.md#tasks-v2-3-oktober-2026).
 
 Die Beispieldienste haben keine Authentifizierung. Die HTTP-Demos sind zustandslos;
 der optionale Daten-Consumer schreibt ausschließlich in seine eigene Demo-Datenbank.

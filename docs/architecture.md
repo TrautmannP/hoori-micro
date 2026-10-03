@@ -134,8 +134,8 @@ verwenden `Map` und `JsonTree` (Map, List, String, Long, Double, Boolean, null).
 Provider registrieren denselben Vertrag mit `action(contract, handler)`; fremde
 Service-Namen werden beim Start abgewiesen. `http(actionName, method, path)` und
 `requirePermission(actionName, permission)` binden Metadaten ausdrücklich an die
-Action. Ein optionales Buildzeit-Fassadenbeispiel folgt separat; der Core benötigt
-keine Annotationen oder generierten Klassen.
+Action. Das optionale Buildzeit-Fassadenbeispiel verwendet den upstream Processor;
+der Core benötigt keine Annotationen oder generierten Klassen.
 Ergebnisse müssen 2xx mit `application/json` (optional `charset=utf-8`) sein; sonst
 `ServiceCallException` mit Status, aber ohne Upstream-Body.
 
