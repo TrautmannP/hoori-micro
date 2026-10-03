@@ -18,7 +18,7 @@ import tempfile
 import threading
 import time
 
-from runtime_check import ROOT, verify
+from runtime_check import ROOT, runtime_jars, verify
 
 ROLES = ("registry", "recipes", "shopping", "gateway")
 
@@ -198,7 +198,7 @@ def experiment(args, variant: str, repeat: int, work: Path, receipt: dict, docum
     project = f"hoori-micro-bench-{os.getpid()}-{repeat}-{variant.lower()}"
     override = work / "compose.json"
     classpath = "/opt/bench:/opt/app/lib/hoori-micro-0.1.0-SNAPSHOT.jar:"
-    classpath += ":".join("/opt/hoori/" + path for path in receipt["artifacts"] if path.endswith(".jar"))
+    classpath += ":".join("/opt/hoori/" + path for path in runtime_jars(receipt))
     services = {}
     for i, role in enumerate(ROLES):
         services[role] = {"image": "hoori-micro-benchmark-build-" + role,
@@ -244,7 +244,10 @@ def experiment(args, variant: str, repeat: int, work: Path, receipt: dict, docum
                 # One changing unrelated provider, using the actual registration protocol.
                 http(args.port, "/v1/instances/changing", "PUT", {
                     "id": "changing", "service": "changing", "version": 1, "url": "http://recipes:8080",
-                    "actions": [{"name": "echo" if change % 2 else "added"}]})
+                    "actions": [{"name": f"route-{n}", "method": "POST",
+                                 "path": f"/unrelated/{n}/" + ("a" if change % 2 else "b"),
+                                 "permission": "changing:read"} for n in range(args.public_routes)]
+                               if args.public_routes else [{"name": "echo" if change % 2 else "added"}]})
                 change += not args.stable_catalog
                 control_stop.wait(2)
         except Exception as error:
@@ -390,6 +393,7 @@ def main() -> int:
     parser.add_argument("--burst-rate", type=float, default=64)
     parser.add_argument("--delay-ms", type=int, default=250)
     parser.add_argument("--catalog-instances", type=int, default=0)
+    parser.add_argument("--public-routes", type=int, default=0, help="Uncalled public routes changed every control tick")
     parser.add_argument("--stable-catalog", action="store_true", help="Hold metadata fixed to measure pure renewals")
     parser.add_argument("--cpus", type=float, default=.5)
     parser.add_argument("--memory-mib", type=int, default=256)
@@ -404,6 +408,7 @@ def main() -> int:
             or len(set(args.variants)) != len(args.variants) or args.repeats < 1 or args.seconds <= 0
             or args.warmup <= 0 or args.idle < 0 or not 1 <= args.workers <= 128 or not 1 <= args.pool <= 32
             or not 0 <= args.catalog_instances <= 128 or not 0 <= args.delay_ms <= 1000
+            or not 0 <= args.public_routes <= 128
             or args.rate <= 0 or args.burst_rate <= 0 or args.cpus <= 0 or args.memory_mib <= 0
             or args.heap_mib <= 2 or not 1024 <= args.port <= 65531 or args.p99_ms <= 0
             or not 0 <= args.error_fraction <= 1):

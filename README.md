@@ -15,8 +15,8 @@ Dispatcher und der veröffentlichte Katalog:
 
 ```java
 Service recipes = Service.named("recipes").version(1)
-        .action("get", GetRecipe.CODEC, RecipeCodec.INSTANCE, (ctx, input) -> repository.get(input.id))
-        .http("GET", "/recipes/{id}").requirePermission("recipes:read");   // optional öffentlich
+        .action(Recipes.GET, (ctx, input) -> repository.get(input.id))
+        .http("get", "GET", "/recipes/{id}").requirePermission("get", "recipes:read");
 ```
 
 Ein Aufrufer kennt nur den fachlichen Namen und die Hauptversion, keine Route,
@@ -54,14 +54,14 @@ Details und Grenzen: [Architektur](docs/architecture.md),
 | Actions | `Service`-Definition, typisierte `Action`-Verträge, generische Aufrufe (`JsonTree`), ein fester Invoke-Endpunkt |
 | Registry | Zentrale In-Memory-Registry mit TTL, Heartbeats, Wiederanmeldung nach Neustart, `complete`-Markierung |
 | Broker | Abhängigkeitsspezifischer Katalog ohne Gateway-Metadaten, Auswahl pro Action/Hauptversion, direkte Aufrufe, begrenztes Katalogalter |
-| Gateway | Vom Anbieter deklarierte, per Policy freigegebene Routen; Konflikte werden zurückgehalten |
-| Fehler und Kontext | Sichere Fehler, Request-ID über alle Hops, keine Retries/Redirects/Credential-Weitergabe |
+| Gateway | Vorbereitete, begrenzte Routing-Snapshots mit per Request geprüfter Policy; Konflikte werden zurückgehalten |
+| Fehler und Kontext | Gemeinsames Restbudget und Request-ID über alle Hops, sichere Fehler, keine Retries/Redirects/Credential-Weitergabe |
 | Betrieb | Admission vor Framework-JSON-Verarbeitung, feste Call-/Pool-Metriken, eigener Control-Pool, begrenzte Bodies/Verbindungen/Wartende/Timeouts, Docker Compose |
 | Prüfungen | Portable Checks, JUnit-Vertragstests, Distributionsprüfung, echte Hoori-/Docker-Abnahme |
 
 Nicht enthalten: Authentifizierung (Registry, Invoke-Endpunkt und Demo-Gateway sind
 unauthentifiziert), Mandantenmodell, Datenbankzugriff, Events, Circuit Breaker,
-serviceübergreifendes Deadline-Budget, hochverfügbare Registry, DI-Container oder
+hochverfügbare Registry, DI-Container oder
 migrierte Dahemm-Fachlogik.
 
 ## Schnellstart
@@ -69,7 +69,7 @@ migrierte Dahemm-Fachlogik.
 ### 1. Passende Hoori-Distribution bauen
 
 Der Bootstrap ist an Hoori-Commit
-`3254301e0b412669ffcc86a2c439327c18b72fe9` gebunden. Das verhindert, dass unterschiedliche
+`7d7245aa782ba6f79c47397f008789f13552a4c5` gebunden. Das verhindert, dass unterschiedliche
 Quellstände trotz unveränderter SDK-Version `0.1.0` vermischt werden.
 `hoori.lock.json` enthält diese Baseline.
 
@@ -82,7 +82,7 @@ Worktree vermeidet Änderungen am eigenen Arbeitsstand:
 
 ```bash
 # Einen noch nicht vorhandenen Zielpfad wählen.
-git worktree add --detach ../hoori-micro-runtime 3254301e0b412669ffcc86a2c439327c18b72fe9
+git worktree add --detach ../hoori-micro-runtime 7d7245aa782ba6f79c47397f008789f13552a4c5
 cd ../hoori-micro-runtime
 
 export JAVA_HOME=/pfad/zum/jdk-21
@@ -118,17 +118,24 @@ curl -fsS http://127.0.0.1:8080/metrics
 docker compose down
 ```
 
-`build.sh` überprüft die Runtime-Prüfsummen und Revision, installiert ihre drei
-benötigten JARs in `.cache/m2`, führt `mvn clean verify` aus und erzeugt
+`build.sh` überprüft Runtime-Prüfsummen, Revision, SDK-Koordinaten und Original-POMs,
+installiert Guest Base sowie HTTP, REST, Concurrent und Concurrent HTTP in
+`.cache/m2/<SHA256-der-Distribution>`, führt `mvn clean verify` aus und erzeugt
 `.docker-context/`. Dieser Build-Kontext enthält nur Runtime, Anwendungs-JARs und
 Docker-Dateien, keinen privaten Checkout und keine GitHub-Zugangsdaten.
+Die SDKs werden mit ihren ausgelieferten POMs installiert; Guest Base hat upstream
+keinen POM und verwendet dessen dokumentierte `install-file`-Konvention.
+`runtimeSdks` in `hoori.lock.json` bestimmt Prüfung, Installation und Klassenpfad.
+Das originale Distributionspaket bleibt vollständig und prüfbar; seine übrigen
+SDKs einschließlich DB-Adaptern und Processor liegen außerhalb des Klassenpfads.
+Ein HTTP-Service benötigt weder Datenbankbibliotheken noch einen Laufzeit-Processor.
 
-Das Dockerfile verwendet standardmäßig `debian:trixie-slim`. Das ist ein
-**Entwicklungsdefault**, keine Zusage für jede lokal gebaute ELF-Datei. Bei anderer
-Architektur/glibc oder weiteren Anforderungen eine kompatible Debian-/Ubuntu-Basis
-über `HOORI_RUNTIME_BASE` wählen. Der Image-Build führt das tatsächliche Binary
-mit `build-info` aus und scheitert bei fehlenden nativen Bibliotheken. Vor Produktion
-Basisimage per Digest festlegen und das resultierende Image separat prüfen.
+Dockerfile und Compose pinnen `debian:trixie-slim` auf den amd64-Digest
+`sha256:7792b1f7702a86946cd518db72b6a407302c3e9bc1635634368b878189e8221c`
+und signierte Debian-Paketquellen auf den Snapshot vom 30.09.2026. Qualifiziert ist
+Linux x86_64; eine andere Debian-Basis über `HOORI_RUNTIME_BASE` erneut prüfen.
+Der Build führt das tatsächliche Binary mit `build-info` aus und scheitert bei
+fehlenden nativen Bibliotheken. Aktualisierungen von Basis/Paketen bewusst neu pinnen.
 
 ### 3. Integration wirklich abnehmen
 
@@ -136,13 +143,17 @@ Basisimage per Digest festlegen und das resultierende Image separat prüfen.
 ./scripts/test-core.sh
 python3 -m unittest discover -s scripts/tests -v
 ./scripts/test-hoori-core.sh
+./scripts/test-task-runtime.sh
+python3 scripts/test_budgets.py
 python3 scripts/smoke.py
 ```
 
 Der Smoke-Test verwendet ein eigenes Compose-Projekt und standardmäßig Port 18080.
 Er prüft Gateway-Veröffentlichung, Action-Aufrufe über zwei Hops, Kontext, das
 Nachrüsten einer Action ohne Neustart von Shopping/Gateway, Registry-Ausfall und
--Neustart, Anbieter-Ausfall und den SIGTERM-Drain eines laufenden Aufrufs. Die wiederholten GETs im Test
+-Neustart, wiederholte Lastspitzen, Routenentfernung, Anbieter-Crash/TTL und SIGTERM
+bei blockierter Registry unter laufenden Calls. Ressourcen und Identitäten landen
+in `.cache/hoori-micro-check-<pid>.json`. Die wiederholten GETs im Test
 sind neue Probeaufrufe, keine versteckte Retry-Funktion im Framework.
 
 ### Ohne Docker entwickeln
@@ -177,6 +188,11 @@ Action-Fehler mit fachlicher Bedeutung als `RequestException(status, öffentlich
 werfen; Aufrufer sehen den Status über `ServiceCallException.upstreamStatus()`, nie den
 Body. Aus einer normalen Route heraus ruft `app.context(request).call(...)` andere
 Actions auf. Kein eingehender Authorization-/Cookie-Header wird weitergegeben.
+
+Nach Implementierung einer gebündelten Provider-Action wie `recipes.getMany`
+für mehrere Rezepte ruft ein Consumer einmal
+`ctx.call("recipes.getMany", Map.of("ids", ids))` auf; der fachliche Vertrag und Codec
+bleiben ausdrücklich beim Anbieter.
 
 Das Framework-JAR soll später in einem eigenen internen Maven-Repository publiziert
 werden. Es ist derzeit **nicht** öffentlich auf Maven Central verfügbar. Die hier
@@ -222,4 +238,4 @@ Reproduzierbare A–D-Lastkontrollen und ihre Messgrenzen stehen unter
 Die Beispieldienste haben keine Authentifizierung und speichern keine Daten.
 Sie sind ausschließlich für lokale/private Entwicklungsnetze gedacht. Ein internes
 Docker-Netz ersetzt weder Service-Authentifizierung noch Mandantenautorisierung.
-Siehe außerdem [NOTICE](NOTICE.md) zur noch offenen Lizenzentscheidung.
+Die Lizenzentscheidung für das Framework ist noch offen.

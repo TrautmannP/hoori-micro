@@ -2,15 +2,21 @@
 """Real Docker/Hoori acceptance gate. Fails rather than falling back to a host JVM."""
 from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
+from collections import Counter
+import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
+
+from benchmark import kernel_sample, percentile
+from runtime_check import verify
 
 ROOT = Path(__file__).resolve().parents[1]
 ENV = os.environ.copy()
@@ -18,6 +24,7 @@ ENV.setdefault("HOORI_DEMO_PORT", "18080")
 PROJECT = "hoori-micro-check-" + str(os.getpid())
 BASE = "http://127.0.0.1:" + ENV["HOORI_DEMO_PORT"]
 COMPOSE = ["docker", "compose", "--project-name", PROJECT, "--file", str(ROOT / "compose.yaml")]
+RESULT = {"schema": 1, "project": PROJECT, "engine": ENV.get("HOORI_ENGINE", "mixed"), "snapshots": []}
 
 
 def compose(*args: str, capture: bool = False) -> str:
@@ -157,6 +164,47 @@ def runtime_stats(service: str) -> dict:
             if line.startswith(("hoori_micro_pool_", "hoori_micro_calls_"))}
 
 
+def identity(service: str) -> dict:
+    item = json.loads(subprocess.check_output(["docker", "inspect", container(service)], text=True))[0]
+    return {"container": item["Id"], "image": item["Image"], "started": item["State"]["StartedAt"],
+            "pid": item["State"]["Pid"], "memory_limit": item["HostConfig"]["Memory"],
+            "cpu_limit": item["HostConfig"]["NanoCpus"], "user": item["Config"]["User"],
+            "read_only": item["HostConfig"]["ReadonlyRootfs"], "cap_drop": item["HostConfig"]["CapDrop"]}
+
+
+def snapshot(phase: str) -> None:
+    values = {}
+    for role in ("registry", "recipes", "shopping", "gateway"):
+        current = identity(role)
+        text = compose("exec", "-T", role, "curl", "-fsS", "--max-time", "2",
+                       "http://127.0.0.1:8080/metrics", capture=True)
+        metrics = {line.split()[0]: int(line.split()[1]) for line in text.splitlines()
+                   if line.startswith("hoori_micro_")}
+        kernel = kernel_sample(current["pid"])
+        require(metrics["hoori_micro_heap_used_bytes"] <= 33554432, "guest heap exceeded test budget")
+        require(kernel["memory_current"] <= current["memory_limit"], "container exceeded test memory budget")
+        for direction in ("incoming", "outgoing"):
+            require(metrics[f'hoori_micro_calls_active{{direction="{direction}"}}'] == 0
+                    and metrics[f'hoori_micro_calls_pending{{direction="{direction}"}}'] == 0,
+                    "idle snapshot retained admission work")
+        require(metrics['hoori_micro_pool_pending_acquires{pool="data"}'] == 0
+                and metrics['hoori_micro_pool_pending_acquires{pool="control"}'] == 0,
+                "idle snapshot retained SDK waiters")
+        values[role] = {"identity": current, "metrics": metrics, "kernel": kernel}
+    RESULT["snapshots"].append({"phase": phase, "roles": values})
+
+
+def health_cost() -> None:
+    current = identity("gateway")
+    before = kernel_sample(current["pid"])
+    started = time.monotonic()
+    compose("exec", "-T", "gateway", "sh", "-c",
+            'i=0; while [ "$i" -lt 50 ]; do curl -fsS --max-time 2 http://127.0.0.1:8080/health/ready >/dev/null || exit; i=$((i+1)); done')
+    after = kernel_sample(current["pid"])
+    RESULT["healthcheck"] = {"probes": 50, "elapsed_seconds": time.monotonic() - started,
+                            "cgroup_cpu_usec": after["cpu"]["usage_usec"] - before["cpu"]["usage_usec"]}
+
+
 def saturated_pool() -> None:
     # Three calls hold one outgoing permit and two waiters before encoding for > registry TTL.
     started = time.monotonic()
@@ -189,12 +237,22 @@ def main() -> int:
     if not (ROOT / ".docker-context/runtime/DISTRIBUTION.json").exists():
         print("Run scripts/build.sh with a verified Hoori distribution first", file=sys.stderr)
         return 2
+    RESULT["runtime"] = verify(ROOT / ".docker-context/runtime")
+    RESULT["script_sha256"] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    RESULT["acceptance"] = {"cycles": 3, "per_role_cpus": .5, "per_role_memory_bytes": 268435456,
+                            "guest_heap_bytes": 33554432, "idle_seconds": 5.5}
     old_replica = None
+    registry_paused = False
+    traffic_stop, traffic_phase, traffic_results = threading.Event(), ["rolling"], []
+    traffic_thread = None
     work = tempfile.TemporaryDirectory(prefix="hoori-micro-smoke-")
     override = Path(work.name) / "pool.json"
-    override.write_text(json.dumps({"services": {"shopping": {"environment": {
+    settings = {role: {"cpus": .5, "mem_limit": "256m", "environment": {"HOORI_CATALOG_MAX_AGE_MS": "10000"}}
+                for role in ("registry", "recipes", "shopping", "gateway")}
+    settings["shopping"]["environment"].update({
         "HOORI_CLIENT_CONNECTIONS": "1", "HOORI_CLIENT_PER_ORIGIN": "1", "HOORI_CLIENT_PENDING_ACQUIRES": "0",
-        "HOORI_OUTGOING_CALLS": "1", "HOORI_OUTGOING_PENDING_CALLS": "2"}}}}))
+        "HOORI_OUTGOING_CALLS": "1", "HOORI_OUTGOING_PENDING_CALLS": "2"})
+    override.write_text(json.dumps({"services": settings}))
     COMPOSE.extend(["--file", str(override)])
     try:
         ENV["HOORI_DEMO_RECOMMEND"] = "0"
@@ -221,9 +279,34 @@ def main() -> int:
         discovery_protocol()
         # Warm compilation before making the cooperative waiting/saturation assertion.
         require(request("/demo/slow/1", "saturation-warmup")[0] == 200, "warm saturation route")
-        saturated_pool()
+        health_cost()
+        time.sleep(5.5)
+        snapshot("warm_idle")
+        for cycle in range(3):
+            saturated_pool()
+            time.sleep(5.5)
+            snapshot("burst_idle_" + str(cycle))
 
-        stable = {name: container(name) for name in ("gateway", "shopping")}
+        stable = {name: identity(name) for name in ("gateway", "shopping")}
+        def traffic():
+            while not traffic_stop.is_set():
+                started = time.monotonic()
+                phase, status = traffic_phase[0], 0
+                try:
+                    status, _, body = request("/meals/1", "continuous", timeout=5)
+                    if status == 200 and json.loads(body) != {"id": 1, "title": "Kartoffelsuppe"}:
+                        status = -1
+                except (OSError, ValueError):
+                    pass
+                traffic_results.append((phase, status, 1000 * (time.monotonic() - started)))
+                if len(traffic_results) >= 20000:
+                    traffic_stop.set()
+                traffic_stop.wait(.05)
+        traffic_thread = threading.Thread(target=traffic)
+        traffic_thread.start()
+        # Old/new providers share the previous 0.5 CPU budget during rolling correctness checks.
+        settings["recipes"]["cpus"] = .25
+        override.write_text(json.dumps({"services": settings}))
         old_replica = compose("run", "--detach", "--no-deps", "--name", PROJECT + "-recipes-old",
                               "-e", "HOORI_DEMO_RECOMMEND=0", "recipes", capture=True).splitlines()[-1]
         ENV["HOORI_DEMO_RECOMMEND"] = "1"
@@ -262,26 +345,80 @@ def main() -> int:
             require(time.monotonic() < deadline, "consumer retained the stopped old replica")
             time.sleep(.1)
         ready_meal()
-        require({name: container(name) for name in stable} == stable, "gateway/shopping were redeployed")
+        require({name: identity(name) for name in stable} == stable, "gateway/shopping were redeployed")
         print("PASS: old/new replicas select by action and exact advertise address; gateway/shopping unchanged")
 
+        traffic_phase[0] = "registry_timeout"
+        compose("pause", "registry")
+        registry_paused = True
+        time.sleep(4)
+        compose("unpause", "registry")
+        registry_paused = False
+        ready_meal()
+        deadline = time.monotonic() + 30
+        while "type=java.net.SocketTimeoutException" not in compose("logs", "--no-color", "shopping", capture=True):
+            require(time.monotonic() < deadline, "delayed registry did not exercise a real control timeout")
+            time.sleep(.2)
+        traffic_phase[0] = "registry_outage"
         compose("stop", "registry")
         require(request("/meals/1")[0] == 200, "calls must not depend on a reachable registry")
+        deadline = time.monotonic() + 20
+        while request("/meals/1")[0] != 404:
+            require(time.monotonic() < deadline, "gateway kept an expired routing snapshot")
+            time.sleep(.2)
+        require(request("/health/ready")[0] == 200, "snapshot expiry changed local readiness")
         compose("up", "--detach", "--wait", "--wait-timeout", "180", "registry")
         registered({"recipes": ["context", "get", "recommend", "slow"],
                     "shopping": ["context", "meal", "slow"]})
         ready_meal()
-        print("PASS: registry outage and restart with re-registration")
+        print("PASS: control timeout under business load, bounded snapshot expiry and epoch recovery")
 
-        compose("stop", "recipes")
+        traffic_phase[0] = "provider_crash"
+        old_provider = identity("recipes")
+        _, _, body = registry_request("GET", "/v1/catalog")
+        old_ids = {i["id"] for i in json.loads(body)["instances"] if i["service"] == "recipes"}
+        compose("kill", "--signal", "SIGKILL", "recipes")
         status, _, body = request("/meals/1")
-        require(status in (502, 503), "bounded upstream failure")
+        require(status in (502, 503, 504), "bounded upstream failure")
         require(b"Exception" not in body and b"_hoori" not in body, "safe public error")
         require(request("/health/live")[0] == 200, "upstream failure must not break local liveness")
         require(request("/health/ready")[0] == 200, "no recursive readiness dependency by default")
-        compose("up", "--detach", "--wait", "--wait-timeout", "180", "recipes")
+        deadline = time.monotonic() + 15
+        while True:
+            _, _, body = registry_request("GET", "/v1/catalog")
+            if not old_ids.intersection(i["id"] for i in json.loads(body)["instances"]):
+                break
+            require(time.monotonic() < deadline, "crashed provider did not expire by TTL")
+            time.sleep(.2)
+        settings["recipes"]["cpus"] = .5
+        override.write_text(json.dumps({"services": settings}))
+        compose("up", "--detach", "--force-recreate", "--wait", "--wait-timeout", "180", "recipes")
         ready_meal()
-        print("PASS: dependency outage and recovery")
+        require(identity("recipes")["container"] != old_provider["container"], "provider was not replaced")
+        traffic_phase[0] = "catalog_cycles"
+        for enabled in ("0", "1"):
+            ENV["HOORI_DEMO_RECOMMEND"] = enabled
+            compose("up", "--detach", "--force-recreate", "--wait", "--wait-timeout", "180", "recipes")
+            if enabled == "1":
+                eventually("/recipes/1/recommendation", {"id": 2, "title": "Apfelstrudel"}, "route did not reappear")
+            else:
+                deadline = time.monotonic() + 30
+                while request("/recipes/1/recommendation")[0] != 404:
+                    require(time.monotonic() < deadline, "removed route stayed published")
+                    time.sleep(.2)
+            ready_meal()
+        require({name: identity(name) for name in stable} == stable, "recovery restarted consumer/gateway")
+        traffic_stop.set()
+        traffic_thread.join(timeout=10)
+        require(not traffic_thread.is_alive() and len(traffic_results) < 20000, "load generator did not stop within bounds")
+        require(all(status in (0, 200, 404, 502, 503, 504) for _, status, _ in traffic_results), "wrong business output under load")
+        RESULT["traffic"] = {phase: {"statuses": dict(Counter(str(status) for name, status, _ in traffic_results if name == phase)),
+                                     "p99_ms": percentile([ms for name, _, ms in traffic_results if name == phase], .99)}
+                             for phase in dict.fromkeys(name for name, _, _ in traffic_results)}
+        require(sum(status == 200 for _, status, _ in traffic_results) > 0, "no successful continuous work")
+        time.sleep(5.5)
+        snapshot("rolling_recovery_idle")
+        print("PASS: continuous calls during rolling, TTL/crash replacement and repeated route removal/republication")
 
         require(request("/demo/slow/1", "slow-warmup")[0] == 200, "warm slow route")
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -297,7 +434,11 @@ def main() -> int:
             else:
                 raise AssertionError("Upstream never observed the in-flight drain request")
             require(all(not result.done() for result in results), "Drain fixture already completed before shutdown")
+            compose("pause", "registry")
+            registry_paused = True
             compose("stop", "shopping")
+            compose("unpause", "registry")
+            registry_paused = False
             require(sorted(result.result(timeout=20)[0] for result in results) == [200, 503],
                     "stop must drain admitted data and reject work still waiting before encoding")
         logs = compose("logs", "--no-color", "shopping", capture=True)
@@ -305,7 +446,8 @@ def main() -> int:
         cid = compose("ps", "--all", "-q", "shopping", capture=True)
         code = subprocess.check_output(["docker", "inspect", "--format", "{{.State.ExitCode}}", cid], text=True).strip()
         require(code == "0", "non-zero runtime exit: " + code)
-        print("PASS: SIGTERM drains admitted data, rejects waiting work before encoding, then closes pools")
+        RESULT["complete"] = True
+        print("PASS: SIGTERM with unavailable control drains admitted data, rejects waiting work, then closes pools")
         return 0
     except (OSError, ValueError, AssertionError, subprocess.SubprocessError) as error:
         print(f"SMOKE FAILED: {error}", file=sys.stderr)
@@ -316,6 +458,14 @@ def main() -> int:
         return 1
     finally:
         # Only this uniquely named test project; never the user's normal demo/production stack.
+        traffic_stop.set()
+        if traffic_thread is not None:
+            traffic_thread.join(timeout=10)
+        if registry_paused:
+            try:
+                compose("unpause", "registry")
+            except subprocess.SubprocessError:
+                pass
         if old_replica:
             subprocess.run(["docker", "rm", "--force", old_replica], check=False, timeout=30)
         try:
@@ -323,6 +473,10 @@ def main() -> int:
         except (OSError, subprocess.SubprocessError) as error:
             print(f"Test project cleanup failed ({PROJECT}): {error}", file=sys.stderr)
         work.cleanup()
+        output = ROOT / ".cache" / (PROJECT + ".json")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(RESULT, indent=2) + "\n")
+        print("Smoke evidence:", output)
 
 
 if __name__ == "__main__":

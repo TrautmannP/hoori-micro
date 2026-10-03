@@ -25,19 +25,19 @@ public final class ShoppingMain {
                         throw failed;
                     }
                 })
-                .http("GET", "/meals/{id}")
-                .requirePermission("shopping:read")
+                .http("meal", "GET", "/meals/{id}")
+                .requirePermission("meal", "shopping:read")
                 // Generic variant without a typed contract; the result is a JsonTree value.
                 .action(
                         "context",
                         JsonTree.CODEC,
                         JsonTree.CODEC,
                         (ctx, input) -> ctx.call("recipes.context", Map.of()))
-                .http("GET", "/demo/context")
-                .requirePermission("shopping:demo")
+                .http("context", "GET", "/demo/context")
+                .requirePermission("context", "shopping:demo")
                 .action("slow", GetRecipe.CODEC, RecipeCodec.INSTANCE, (ctx, input) -> ctx.call(Recipes.SLOW, input))
-                .http("GET", "/demo/slow/{id}")
-                .requirePermission("shopping:demo");
+                .http("slow", "GET", "/demo/slow/{id}")
+                .requirePermission("slow", "shopping:demo");
 
         try (Microservice app = Microservice.create(shopping)) {
             app.run();

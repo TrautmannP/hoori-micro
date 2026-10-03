@@ -693,6 +693,117 @@ final class ServiceBrokerTest {
                     RuntimeException.class, () -> Json.decode(bad.getBytes(StandardCharsets.UTF_8), Catalog.INSTANCE));
     }
 
+    @Test
+    void wireBudgetsAreBoundedAndRootCallsShareTheirDeadline() throws Exception {
+        RequestBudget local = RequestBudget.afterMillis(500);
+        assertSame(local, Context.incomingBudget(new Headers(), local));
+        assertTrue(Context.incomingBudget(new Headers().add(Context.BUDGET_HEADER, "0"), local)
+                .isExpired());
+        assertTrue(Context.incomingBudget(new Headers().add(Context.BUDGET_HEADER, "600000"), local)
+                        .remainingNanos()
+                <= local.remainingNanos() + 1000000);
+        for (String invalid : new String[] {"", "-1", "+1", "01", "1.0", "1,2", "600001", "999999999", "bad"})
+            assertEquals(
+                    400,
+                    assertThrows(
+                                    RequestException.class,
+                                    () -> Context.incomingBudget(
+                                            new Headers().add(Context.BUDGET_HEADER, invalid), local))
+                            .status);
+        assertThrows(
+                RequestException.class,
+                () -> Context.incomingBudget(
+                        new Headers().add(Context.BUDGET_HEADER, "200").add("x-hoori-budget-ms", "100"), local));
+        int[] calls = {0};
+        ServiceBroker broker = broker((c, t, m, h, b, budget) -> {
+            calls[0]++;
+            assertTrue(budget.remainingMillis() <= 100);
+
+            return json(200, "\"ok\"");
+        });
+        broker.accept(catalog(true, instance("recipes", 1, "http://recipes:8080", "get")));
+        Context root = new Context(broker, null).limitedToMillis(100);
+        assertEquals("ok", root.call(GET, "x"));
+        Thread.sleep(120);
+        assertThrows(SocketTimeoutException.class, () -> root.call(GET, "x"));
+        assertEquals(1, calls[0]);
+        assertEquals(0, broker.admissionStats().active);
+        assertEquals(0, broker.admissionStats().pending);
+        assertThrows(IllegalArgumentException.class, () -> root.limitedToMillis(600001));
+    }
+
+    @Test
+    void preparedGatewaySnapshotsAreAtomicBoundedAndExpire() throws Exception {
+        ServiceConfig config = ServiceConfig.from("shopping", key -> switch (key) {
+            case "HOORI_HEARTBEAT_MS" -> "100";
+            case "HOORI_CATALOG_MAX_AGE_MS" -> "101";
+            default -> null;
+        });
+        ServiceBroker broker =
+                new ServiceBroker(shopping(), config, (c, t, m, h, b, budget) -> json(200, "{}"), JsonLimits.DEFAULT);
+        broker.followPublicCatalog();
+        Catalog.Entry first = new Catalog.Entry("get", "GET", "/first", "recipes:read");
+        Catalog initial = new Catalog("snapshots", 1, true, new Catalog.Instance[] {
+            new Catalog.Instance("a", "recipes", 1, "http://a", new Catalog.Entry[] {first})
+        });
+        broker.accept(Json.encode(initial, Catalog.CODEC));
+        ServiceBroker.View snapshot = broker.snapshot();
+        assertEquals(1, snapshot.catalog.revision);
+        assertEquals("/first", snapshot.routes[0].path);
+        broker.accept(Json.encode(initial, Catalog.CODEC));
+        assertSame(snapshot.routes, broker.snapshot().routes);
+        Catalog.Entry changed = new Catalog.Entry("get", "GET", "/second", "recipes:admin");
+        Catalog conflict = new Catalog("snapshots", 2, true, new Catalog.Instance[] {
+            initial.instances[0], new Catalog.Instance("b", "recipes", 1, "http://b", new Catalog.Entry[] {changed})
+        });
+        broker.accept(Json.encode(conflict, Catalog.CODEC));
+        assertEquals(2, broker.snapshot().catalog.revision);
+        assertEquals(0, broker.snapshot().routes.length);
+        Catalog.Instance[] many = new Catalog.Instance[3];
+        for (int i = 0; i < many.length; i++) {
+            Catalog.Entry[] entries = new Catalog.Entry[i == 2 ? 1 : 128];
+            for (int j = 0; j < entries.length; j++)
+                entries[j] = new Catalog.Entry("get-" + j, "GET", "/many/" + i + "/" + j, "extra-" + i + ":read");
+            many[i] = new Catalog.Instance("extra-" + i, "extra-" + i, 1, "http://a", entries);
+        }
+        ServiceBroker.View retained = broker.snapshot();
+        assertThrows(
+                RuntimeException.class,
+                () -> broker.accept(Json.encode(new Catalog("snapshots", 3, true, many), Catalog.CODEC)));
+        assertSame(retained, broker.snapshot());
+        Thread.sleep(120);
+        assertSame(Catalog.EMPTY, broker.snapshot().catalog);
+        assertEquals(0, broker.snapshot().routes.length);
+    }
+
+    @Test
+    void providerContractsAndNamedPublicationAreValidatedBeforeServing() {
+        Service provider = Service.named("recipes")
+                .action(GET, (ctx, input) -> input)
+                .action(RECOMMEND, (ctx, input) -> input)
+                .http("get", "GET", "/recipes/{id}")
+                .requirePermission("get", "recipes:read")
+                .freeze();
+        assertNotNull(provider.actions.get("get").path);
+        assertNull(provider.actions.get("recommend").path);
+        assertThrows(
+                IllegalArgumentException.class, () -> Service.named("shopping").action(GET, (ctx, input) -> input));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> Service.named("recipes")
+                        .action(GET, (ctx, input) -> input)
+                        .action(GET, (ctx, input) -> input));
+        assertThrows(
+                IllegalArgumentException.class, () -> Service.named("recipes").http("missing", "GET", "/x"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> Service.named("recipes")
+                        .action(GET, (ctx, input) -> input)
+                        .http("get", "GET", "/x")
+                        .freeze());
+        assertThrows(IllegalStateException.class, () -> provider.requirePermission("get", "recipes:read"));
+    }
+
     private static Service shopping() {
         return Service.named("shopping").dependsOn("recipes", 1).freeze();
     }

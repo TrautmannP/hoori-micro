@@ -1,5 +1,11 @@
 {
-  "revision": "3254301e0b412669ffcc86a2c439327c18b72fe9",
+  "revision": "7d7245aa782ba6f79c47397f008789f13552a4c5",
   "sdkVersion": "0.1.0",
-  "guestVersion": "0.4.0"
+  "guestVersion": "0.4.0",
+  "runtimeSdks": [
+    "hoori-http-api",
+    "hoori-rest-api",
+    "hoori-concurrent-api",
+    "hoori-concurrent-http-api"
+  ]
 }

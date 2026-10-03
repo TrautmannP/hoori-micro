@@ -62,30 +62,46 @@ public final class Service {
         return this;
     }
 
+    /** Reuses the same explicit wire contract on provider and consumer. */
+    public <I, O> Service action(Action<I, O> contract, Handler<I, O> handler) {
+        if (contract == null) throw new NullPointerException("contract");
+
+        if (!name.equals(contract.service)) throw new IllegalArgumentException("Contract belongs to another service");
+
+        return action(contract.operation, contract.input, contract.output, handler);
+    }
+
     /** Offers the previous action to gateways. Not public until requirePermission() is also set. */
     public Service http(String method, String pathTemplate) {
-        mutable();
-
         if (last == null) throw new IllegalStateException("Declare an action first");
 
+        return http(last.name, method, pathTemplate);
+    }
+
+    /** Binds publication to this named local action, independent of registration order. */
+    public Service http(String action, String method, String pathTemplate) {
+        Definition<?, ?> definition = definition(action);
         Gateway.template(pathTemplate);
 
         if (!Gateway.METHODS.contains(method)) throw new IllegalArgumentException("Unsupported HTTP method");
 
-        last.method = method;
-        last.path = pathTemplate;
+        definition.method = method;
+        definition.path = pathTemplate;
 
         return this;
     }
 
     /** Permission a gateway policy must grant; namespaced as "<service>:<scope>". */
     public Service requirePermission(String permission) {
-        mutable();
-
         if (last == null) throw new IllegalStateException("Declare an action first");
 
+        return requirePermission(last.name, permission);
+    }
+
+    public Service requirePermission(String action, String permission) {
+        Definition<?, ?> definition = definition(action);
         Gateway.permission(name, permission);
-        last.permission = permission;
+        definition.permission = permission;
 
         return this;
     }
@@ -129,6 +145,15 @@ public final class Service {
         if (frozen) throw new IllegalStateException("Service definition is frozen");
     }
 
+    private Definition<?, ?> definition(String action) {
+        mutable();
+        Definition<?, ?> definition = actions.get(ServiceName.require(action));
+
+        if (definition == null) throw new IllegalArgumentException("Unknown local action");
+
+        return definition;
+    }
+
     static final class Definition<I, O> {
         final String name;
         final JsonCodec<I> input;
@@ -148,9 +173,14 @@ public final class Service {
         }
 
         Response invoke(Context ctx, Request request, JsonLimits limits) throws Exception {
-            O result = handler.handle(ctx, request.body(input, limits));
+            ctx.check();
+            I params = request.body(input, limits);
+            ctx.check();
+            O result = handler.handle(ctx, params);
 
             if (result == null) throw new IllegalStateException("Action returned null");
+
+            ctx.check();
 
             return Responses.json(200, result, output, limits);
         }

@@ -25,7 +25,6 @@ final class Catalog {
     final long revision;
     final boolean complete;
     final Instance[] instances;
-    final Object identity = new Object();
 
     Catalog(String epoch, long revision, boolean complete, Instance[] instances) {
         this.epoch = epoch;

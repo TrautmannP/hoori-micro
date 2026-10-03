@@ -7,5 +7,7 @@
   <dependencies>
     <dependency><groupId>dev.hoori</groupId><artifactId>hoori-rest-api</artifactId></dependency>
     <dependency><groupId>dev.hoori</groupId><artifactId>hoori-http-api</artifactId></dependency>
+    <dependency><groupId>dev.hoori</groupId><artifactId>hoori-concurrent-api</artifactId></dependency>
+    <dependency><groupId>dev.hoori</groupId><artifactId>hoori-concurrent-http-api</artifactId></dependency>
   </dependencies>
 </project>

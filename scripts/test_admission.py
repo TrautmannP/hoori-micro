@@ -12,7 +12,7 @@ import subprocess
 import threading
 import time
 
-from runtime_check import ROOT, verify
+from runtime_check import ROOT, runtime_jars, verify
 
 
 def main():
@@ -105,7 +105,7 @@ def main():
                     "HOORI_CLIENT_CONNECTIONS": "1", "HOORI_CLIENT_PER_ORIGIN": "1",
                     "HOORI_CLIENT_PENDING_ACQUIRES": "0", "HOORI_CLIENT_TIMEOUT_MS": "2000"})
         cp = ":".join([str(ROOT / "framework/target/test-classes"), str(ROOT / "framework/target/classes")]
-                      + [str(jar) for jar in sorted((runtime / "lib").glob("*.jar"))])
+                      + [str(runtime / jar) for jar in runtime_jars(receipt)])
         engine = env.get("HOORI_ENGINE", "mixed")
         command = [str(runtime / "bin/hoori"), "run", "--engine", engine, "--live-output", "--graceful-signals",
                    "--max-heap-bytes", "33554432", "--allow-environment-read", "--allow-network-listen",
@@ -146,7 +146,7 @@ def main():
                 until(lambda s: s["outgoing_active"] == 1 and s["writes"] == writes + 1)
                 expired = executor.submit(request, "/generic", b"{}")
                 until(lambda s: s["outgoing_pending"] == 1)
-                assert expired.result()[0] == encoding.result()[0] == 503
+                assert expired.result()[0] == encoding.result()[0] == 504
                 assert len(calls) == count and stats()["writes"] == writes + 1, "Expired work reached encoding/network"
                 until(lambda s: s["outgoing_active"] == s["outgoing_pending"] == 0)
                 assert request("/billing", b"{}")[0] == 200
