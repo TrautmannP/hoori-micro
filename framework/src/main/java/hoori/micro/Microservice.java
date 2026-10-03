@@ -1,27 +1,29 @@
 package hoori.micro;
 
+import hoori.concurrent.TaskDiagnostics;
+import hoori.concurrent.TaskSpec;
 import hoori.http.Headers;
 import hoori.http.HttpClient;
 import hoori.http.HttpServer;
 import hoori.http.Limits;
+import hoori.http.RequestBudget;
 import hoori.http.Response;
-import hoori.rest.Attribute;
+import hoori.rest.Handler;
 import hoori.rest.Router;
 import hoori.rest.json.JsonLimits;
 import hoori.runtime.RuntimeMetrics;
 import hoori.runtime.Shutdown;
 import java.io.IOException;
-import java.io.InterruptedIOException;
-import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.locks.LockSupport;
 
 /**
  * Explicit startup composition on Hoori's cooperative single carrier. run() owns registration,
  * draining and pool cleanup. Configure routes/actions before run(), never in handlers.
  */
 public final class Microservice implements AutoCloseable {
-    private final Attribute<Context> contextKey = new Attribute<>();
-
     private final Service service;
     private final ServiceConfig config;
     private final Router router = new Router();
@@ -29,6 +31,9 @@ public final class Microservice implements AutoCloseable {
     private final ServiceBroker broker;
     private final Admission incoming;
     private final JsonLimits jsonLimits;
+    private final Context context;
+    private final List<String> controlRoutes = new ArrayList<>();
+    private final List<AutoCloseable> resources = new ArrayList<>();
 
     private volatile HttpServer server;
     private volatile boolean closed, stopRequested, applicationReady = true;
@@ -36,6 +41,9 @@ public final class Microservice implements AutoCloseable {
     private boolean started;
     private Thread signalWatcher;
     private volatile Thread registrar;
+    private Thread owner;
+    private boolean closing;
+    private long graceDeadline;
 
     private Microservice(Service service, ServiceConfig config) {
         this.service = service;
@@ -50,14 +58,38 @@ public final class Microservice implements AutoCloseable {
         control = new HttpClient(
                 limits(1, config.controlTimeoutMillis).withPendingAcquires(0), 1, config.clientIdleMillis);
         broker = new ServiceBroker(
-                service, config, ServiceBroker.transport(http), ServiceBroker.transport(control), jsonLimits);
+                service,
+                config,
+                ServiceBroker.dataTransport(http),
+                ServiceBroker.controlTransport(control),
+                jsonLimits);
+        context = new Context(broker);
+        // The Router selects trusted declarations first and maps errors after this managed boundary.
+        router.use((request, next) -> {
+            if (controlRoutes.contains(request.method() + " " + request.routeTemplate())) return next.handle(request);
+
+            RequestBudget budget = request.raw().budget().limitedToMillis(config.workTimeoutMillis);
+
+            if (request.method().equals("POST")
+                    && request.routeTemplate().equals(ServiceBroker.INVOKE_PATH)
+                    && !service.actions.isEmpty()) budget = Context.incomingBudget(request.raw().headers, budget);
+
+            return broker.executions.request(request.raw(), budget, incoming, scope -> {
+                Response response = next.handle(request);
+
+                if (response == null) throw new IllegalStateException("Null controller response");
+
+                return response;
+            });
+        });
 
         // One fixed internal entry point; new actions never need new routes. Absent without actions.
         if (!service.actions.isEmpty()) router.post(ServiceBroker.INVOKE_PATH, this::invoke);
 
-        router.get("/health/live", request -> health(isLive()));
-        router.get("/health/ready", request -> health(isReady()));
-        router.get(
+        controlRoute("GET", "/health/live", request -> health(isLive()));
+        controlRoute("GET", "/health/ready", request -> health(isReady()));
+        controlRoute(
+                "GET",
                 "/metrics",
                 request -> new Response(
                         200,
@@ -65,32 +97,20 @@ public final class Microservice implements AutoCloseable {
                         (server.metrics().prometheus()
                                         + poolMetrics(http.poolStats(), control.poolStats())
                                         + admissionMetrics(incoming.stats(), broker.admissionStats())
+                                        + broker.executions.metrics()
                                         + runtimeMetrics())
                                 .getBytes(StandardCharsets.UTF_8)));
         router.onError((request, failure) -> {
             // Intentionally no stacktrace, URI, request/response body or secret in logs/errors.
             String id = request == null ? "unavailable" : request.id();
+            Failures.Result result = Failures.classify(failure);
             System.err.println("request_failed service="
                     + config.name
                     + " request_id="
                     + id
-                    + " type="
-                    + failure.getClass().getName());
+                    + " reason=" + result.kind().label + " transaction=" + result.transaction());
 
-            if (failure instanceof CallRejectedException) return Response.text(503, "Local call capacity unavailable");
-
-            if (failure instanceof ServiceCallException upstream)
-                return Response.text(
-                        upstream.upstreamStatus() == 503 || upstream.upstreamStatus() == 504
-                                ? upstream.upstreamStatus()
-                                : 502,
-                        "Upstream service unavailable");
-
-            if (failure instanceof SocketTimeoutException) return Response.text(504, "Request budget expired");
-
-            if (failure instanceof InterruptedIOException) return Response.text(503, "Request cancelled");
-
-            return Response.text(500, "Internal Server Error");
+            return result.response();
         });
     }
 
@@ -108,18 +128,41 @@ public final class Microservice implements AutoCloseable {
         return router;
     }
 
-    /** Call context for a route handler; request may be null for startup/background calls. */
-    public Context context(hoori.rest.Request request) {
-        if (request == null) return new Context(broker, null);
-
-        Context context = request.attribute(contextKey);
-
-        if (context == null) {
-            context = new Context(broker, request.raw());
-            request.attribute(contextKey, context);
-        }
-
+    /** Reusable facade; calls require a current request or explicit service-owned runTask. */
+    public Context context() {
         return context;
+    }
+
+    /** Synchronous startup/maintenance operation, owned and drained by this service. */
+    public <T> T runTask(TaskSpec<T> work) throws Exception {
+        if (work == null) throw new NullPointerException("work");
+
+        if (broker.executions.currentOwner()) throw new IllegalStateException("runTask requires a service owner");
+
+        return broker.executions.service(scope -> work.run());
+    }
+
+    /** Optional service resources (for example a DB pool); register at startup, close after root drain. */
+    public synchronized <T extends AutoCloseable> T own(T resource) {
+        if (resource == null) throw new NullPointerException("resource");
+
+        if (started || stopRequested || resources.size() == 16)
+            throw new IllegalStateException("Service resources frozen or full");
+
+        resources.add(resource);
+
+        return resource;
+    }
+
+    /** On-demand local diagnostics: at most 8 roots, 32 entries per root, depth 4; no public endpoint. */
+    public List<TaskDiagnostics.Snapshot> taskDiagnostics() {
+        return broker.executions.diagnostics();
+    }
+
+    // Only fixed framework/control declarations can bypass business admission, never request headers/paths.
+    void controlRoute(String method, String path, Handler handler) {
+        router.route(method, path, handler);
+        controlRoutes.add(method + " " + path);
     }
 
     ServiceBroker broker() {
@@ -245,6 +288,9 @@ public final class Microservice implements AutoCloseable {
         if (stopRequested) return;
 
         stopRequested = true;
+        applicationReady = false;
+        graceDeadline = System.nanoTime() + config.shutdownGraceMillis * 1_000_000L;
+        broker.executions.stop();
         HttpServer current = server;
 
         if (current != null) current.stopAccepting();
@@ -258,15 +304,23 @@ public final class Microservice implements AutoCloseable {
     }
 
     public void run() throws IOException {
-        if (started || closed || stopRequested) throw new IllegalStateException("Service already run or closed");
+        synchronized (this) {
+            if (started || closed || stopRequested || broker.executions.currentOwner())
+                throw new IllegalStateException("Service already run, closed or called from its own work");
 
-        started = true;
+            started = true;
+            owner = Thread.currentThread();
+        }
         try {
             server = new HttpServer(
                     config.bindAddress,
                     config.port,
                     limits(config.serverConnections, config.requestTimeoutMillis),
                     router.freeze());
+
+            // A stop before listener publication must not be lost by idempotent stop().
+            if (stopRequested) return;
+
             server.setReady(applicationReady);
             signalWatcher = new Thread(() -> {
                 try {
@@ -317,21 +371,14 @@ public final class Microservice implements AutoCloseable {
                     + config.instanceId
                     + " port="
                     + config.port);
-            server.run();
-        } finally {
             try {
-                stop();
-                finishRegistrar();
-
-                // HttpServer.run returns when admission stops, NOT when handlers have drained.
-                // Only the owner thread drains; watcher/heartbeat threads must NOT close the client.
-                if (server != null) {
-                    boolean drained = server.shutdown(config.shutdownGraceMillis);
-                    System.out.println("service_stopped name=" + config.name + " drained=" + drained);
-                }
-            } finally {
-                close();
+                server.run();
+            } catch (IllegalStateException failed) {
+                // stopAccepting may win between publication and the SDK's one-time start.
+                if (!stopRequested || server.isLive()) throw failed;
             }
+        } finally {
+            close();
         }
     }
 
@@ -355,55 +402,92 @@ public final class Microservice implements AutoCloseable {
         }
     }
 
-    /** Immediate abort/cleanup. Prefer stop() while run() is active for graceful shutdown. */
+    /** Separate service owner waits for actual completion. Handlers request stop() instead. */
     @Override
-    public void close() {
-        if (closed) return;
+    public void close() throws IOException {
+        if (broker.executions.currentOwner()) throw new IllegalStateException("An active operation must use stop()");
 
-        closed = true;
-        stopRequested = true;
+        stop();
+        boolean wait;
+        synchronized (this) {
+            if (closed) return;
 
-        if (server != null) server.close();
+            wait = closing || owner != null && owner != Thread.currentThread();
 
-        incoming.close();
-        broker.close();
+            if (!wait) closing = true;
+        }
 
-        http.close();
-        control.close();
+        if (wait) {
+            boolean interrupted = Thread.interrupted();
+            while (!closed) {
+                LockSupport.parkNanos(1_000_000);
+                interrupted |= Thread.interrupted();
+            }
 
-        if (signalWatcher != null && signalWatcher != Thread.currentThread()) signalWatcher.interrupt();
+            if (interrupted) Thread.currentThread().interrupt();
 
-        Thread heartbeat = registrar;
+            return;
+        }
 
-        if (heartbeat != null && heartbeat != Thread.currentThread()) heartbeat.interrupt();
+        try {
+            broker.executions.awaitUntil(graceDeadline);
+            broker.executions.close(); // Cancellation is followed by actual children/resources/context/timer drain.
+
+            if (server != null) {
+                int remaining = (int) Math.max(0, (graceDeadline - System.nanoTime()) / 1_000_000L);
+                boolean drained = server.shutdown(remaining); // Response I/O owns only the remainder of the same grace.
+                System.out.println("service_stopped name=" + config.name + " roots_drained=true drained=" + drained);
+            }
+
+            finishRegistrar();
+        } finally {
+            incoming.close();
+            broker.close();
+            http.close();
+            control.close();
+            IOException failure = null;
+            for (int i = resources.size() - 1; i >= 0; i--) {
+                try {
+                    resources.get(i).close();
+                } catch (Exception error) {
+                    if (failure == null) failure = new IOException("Service resource close failed", error);
+                    else failure.addSuppressed(error);
+                }
+            }
+            resources.clear();
+            closed = true;
+
+            if (server != null) server.close();
+
+            if (signalWatcher != null && signalWatcher != Thread.currentThread()) signalWatcher.interrupt();
+
+            Thread heartbeat = registrar;
+
+            if (heartbeat != null && heartbeat != Thread.currentThread()) heartbeat.interrupt();
+
+            if (failure != null) throw failure;
+        }
     }
 
     /** Only this instance's own name and major version; anything else is a stale-catalog miss. */
     private Response invoke(hoori.rest.Request request) throws Exception {
-        // The SDK already read the bounded raw body; DTO decoding starts only after admission.
-        try (Admission.Permit permit = incoming.acquire(
-                Context.incomingBudget(request.raw().headers, request.raw().budget())
-                        .limitedToMillis(config.clientTimeoutMillis),
-                false)) {
-            Headers headers = request.raw().headers;
-            String action = headers.get(ServiceBroker.ACTION_HEADER);
-            Service.Definition<?, ?> definition = null;
+        // Root middleware owns the one incoming permit through DTO work and complete managed drain.
+        Headers headers = request.raw().headers;
+        String action = headers.get(ServiceBroker.ACTION_HEADER);
+        Service.Definition<?, ?> definition = null;
 
-            if (action != null
-                    && action.startsWith(service.name + ".")
-                    && Integer.toString(service.version).equals(headers.get(ServiceBroker.VERSION_HEADER)))
-                definition = service.actions.get(action.substring(service.name.length() + 1));
+        if (action != null
+                && action.startsWith(service.name + ".")
+                && Integer.toString(service.version).equals(headers.get(ServiceBroker.VERSION_HEADER)))
+            definition = service.actions.get(action.substring(service.name.length() + 1));
 
-            if (definition == null) return Response.text(421, "Action not offered by this instance");
+        if (definition == null) return Response.text(421, "Action not offered by this instance");
 
-            Context context = new Context(broker, request.raw(), permit.budget);
-            request.attribute(contextKey, context);
-            permit.check(incoming);
-            Response response = definition.invoke(context, request, jsonLimits);
-            permit.check(incoming);
+        context.check();
+        Response response = definition.invoke(context, request, jsonLimits);
+        context.check();
 
-            return response;
-        }
+        return response;
     }
 
     private Limits limits(int connections, int timeout) {

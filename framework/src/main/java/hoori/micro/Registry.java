@@ -39,7 +39,7 @@ public final class Registry {
     }
 
     void mount(Microservice app) {
-        app.routes().put("/v1/instances/{id}", request -> {
+        app.controlRoute("PUT", "/v1/instances/{id}", request -> {
             Catalog.Filter filter = protocol(request.raw().headers, false);
             Catalog.Instance instance = request.body(Catalog.INSTANCE, limits);
 
@@ -50,7 +50,7 @@ public final class Registry {
 
             return reply(request.raw().headers, now, filter);
         });
-        app.routes().post("/v1/instances/{id}/lease", request -> {
+        app.controlRoute("POST", "/v1/instances/{id}/lease", request -> {
             Catalog.Filter filter = protocol(request.raw().headers, true);
 
             if (request.raw().body.length != 0) throw new RequestException(400, "Lease body must be empty");
@@ -61,13 +61,13 @@ public final class Registry {
 
             return reply(request.raw().headers, now, filter);
         });
-        app.routes().delete("/v1/instances/{id}", request -> {
+        app.controlRoute("DELETE", "/v1/instances/{id}", request -> {
             protocol(request.raw().headers, false);
             remove(request.pathParam("id"));
 
             return Responses.empty(204);
         });
-        app.routes().get("/v1/catalog", request -> {
+        app.controlRoute("GET", "/v1/catalog", request -> {
             Catalog.Filter filter = protocol(request.raw().headers, false);
 
             return reply(request.raw().headers, System.nanoTime(), filter);

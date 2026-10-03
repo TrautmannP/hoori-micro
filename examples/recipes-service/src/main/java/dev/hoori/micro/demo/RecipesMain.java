@@ -19,7 +19,8 @@ public final class RecipesMain {
                 .http("get", "GET", "/recipes/{id}")
                 .requirePermission("get", "recipes:read")
                 .action(Recipes.SLOW, (ctx, input) -> {
-                    System.out.println("demo_slow_started id=" + ctx.request().id());
+                    System.out.println(
+                            "demo_slow_started id=" + ctx.invocation().requestId());
                     try {
                         Thread.sleep(3000);
                     } catch (InterruptedException interrupted) {
@@ -35,9 +36,9 @@ public final class RecipesMain {
                         JsonTree.CODEC,
                         (ctx, input) -> Map.of(
                                 "requestId",
-                                ctx.request().id(),
+                                ctx.invocation().requestId(),
                                 "authorization",
-                                ctx.request().headers.get("Authorization") != null));
+                                ctx.ownerRequest().headers.get("Authorization") != null));
 
         // Simulates a later release with one more action; shopping and gateway stay untouched.
         if ("1".equals(System.getenv("HOORI_DEMO_RECOMMEND")))

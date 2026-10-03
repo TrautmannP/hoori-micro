@@ -145,6 +145,7 @@ python3 -m unittest discover -s scripts/tests -v
 ./scripts/test-hoori-core.sh
 ./scripts/test-task-runtime.sh
 python3 scripts/test_budgets.py
+python3 scripts/test_tasks.py
 python3 scripts/smoke.py
 ```
 
@@ -186,8 +187,27 @@ public static void main(String[] args) throws Exception {
 
 Action-Fehler mit fachlicher Bedeutung als `RequestException(status, öffentlicheMeldung)`
 werfen; Aufrufer sehen den Status über `ServiceCallException.upstreamStatus()`, nie den
-Body. Aus einer normalen Route heraus ruft `app.context(request).call(...)` andere
-Actions auf. Kein eingehender Authorization-/Cookie-Header wird weitergegeben.
+Body. Aus einer normalen Route heraus ruft `app.context().call(...)` andere
+Actions auf. Jede Fachroute besitzt automatisch eine verwaltete Request-Operation. Kein eingehender Authorization-/Cookie-Header wird weitergegeben.
+
+`ctx.call(...)` führt direkt aus. `ctx.task(...)` erzeugt einen normalen, noch nicht
+gestarteten `TaskSpec`; erst `Tasks.parallel(...).map(...)` startet die ausdrücklich
+komponierten Calls. Die Specs halten Eingaben per Referenz und lesen den aktuellen
+ Kontext erst bei ihrer Ausführung. Eingaben währenddessen nicht verändern.
+
+```java
+// Innerhalb einer Action oder normalen Route, ohne manuelles fork/join:
+return Tasks.parallel(ctx.task(Recipes.GET, first), ctx.task(Recipes.GET, second))
+        .named("recipes.pair").failFast().map((a, b) -> List.of(a, b));
+```
+
+Das Framework gibt Antworten erst nach Kind-/Ressourcenabschluss frei. `Invocation`
+enthält nur Korrelation und Ursprung; `ctx.ownerRequest()` ist ausschließlich beim
+HTTP-Owner verfügbar, nicht in Kindern. Request-ID ist keine Identität/Berechtigung.
+Ein kürzeres lokales Budget setzt `TaskScope.named("operation").within(duration)`;
+es verlängert nie die laufende Request-Frist. Startup-/Wartungsarbeit verwendet
+`app.runTask(task)` und wartet synchron auf ihren Abschluss. Calls ohne gültige
+Micro-Ausführungsgrenze werden vor JSON und Netzwerk abgewiesen.
 
 Nach Implementierung einer gebündelten Provider-Action wie `recipes.getMany`
 für mehrere Rezepte ruft ein Consumer einmal

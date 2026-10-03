@@ -9,3 +9,4 @@ runtime="$PWD/.docker-context/runtime"
 cp="$PWD/framework/target/classes:$PWD/framework/target/test-classes:$(python3 scripts/runtime_check.py "$runtime" --classpath)"
 "$runtime/bin/hoori" run --engine "${HOORI_ENGINE:-mixed}" --class-path "$cp" hoori/micro/CoreChecks
 "$runtime/bin/hoori" run --engine "${HOORI_ENGINE:-mixed}" --class-path "$cp" hoori/micro/AdmissionChecks
+"$runtime/bin/hoori" run --engine "${HOORI_ENGINE:-mixed}" --class-path "$cp" hoori/micro/TaskChecks

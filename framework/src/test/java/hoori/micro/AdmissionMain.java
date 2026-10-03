@@ -55,29 +55,26 @@ public final class AdmissionMain {
                     .post(
                             "/typed",
                             request -> Responses.json(
-                                    200, app.context(request).call(OUT, "ok"), JsonTree.CODEC, app.jsonLimits()));
+                                    200, app.context().call(OUT, "ok"), JsonTree.CODEC, app.jsonLimits()));
             app.routes()
                     .post(
                             "/generic",
                             request -> Responses.json(
                                     200,
-                                    app.context(request).call("recipes.echo", Map.of("value", "ok")),
+                                    app.context().call("recipes.echo", Map.of("value", "ok")),
                                     JsonTree.CODEC,
                                     app.jsonLimits()));
             app.routes()
                     .post(
                             "/billing",
                             request -> Responses.json(
-                                    200, app.context(request).call(BILL, "ok"), JsonTree.CODEC, app.jsonLimits()));
+                                    200, app.context().call(BILL, "ok"), JsonTree.CODEC, app.jsonLimits()));
             app.routes()
                     .post(
                             "/encode",
                             request -> Responses.json(
-                                    200,
-                                    app.context(request).call(OUT, "slow-encode"),
-                                    JsonTree.CODEC,
-                                    app.jsonLimits()));
-            app.routes().get("/probe", request -> {
+                                    200, app.context().call(OUT, "slow-encode"), JsonTree.CODEC, app.jsonLimits()));
+            app.controlRoute("GET", "/probe", request -> {
                 Map<String, Object> values = new LinkedHashMap<>();
                 values.put("reads", READS.get());
                 values.put("writes", WRITES.get());

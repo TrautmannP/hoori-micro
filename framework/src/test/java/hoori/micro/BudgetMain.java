@@ -1,5 +1,6 @@
 package hoori.micro;
 
+import hoori.concurrent.TaskScope;
 import hoori.http.Headers;
 import hoori.http.HttpClient;
 import hoori.http.Limits;
@@ -9,8 +10,8 @@ import hoori.rest.RequestException;
 import hoori.rest.Responses;
 import hoori.rest.json.Json;
 import hoori.runtime.RuntimeMetrics;
-import java.io.InterruptedIOException;
 import java.net.URI;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -41,17 +42,17 @@ public final class BudgetMain {
                         if (delay < 0 || delay > 1500) throw new RequestException(400, "Delay bound");
 
                         Thread.sleep(delay);
-                        String wire = ctx.request().headers.get(Context.BUDGET_HEADER);
+                        String wire = ctx.ownerRequest().headers.get(Context.BUDGET_HEADER);
 
                         return Map.of(
                                 "wire",
                                 wire == null ? 0L : Long.parseLong(wire),
                                 "remaining",
-                                ctx.budget().remainingMillis(),
+                                ctx.budget().remainingNanos() / 1_000_000L,
                                 "requestId",
-                                ctx.request().id(),
+                                ctx.invocation().requestId(),
                                 "authorization",
-                                ctx.request().headers.get("Authorization") != null);
+                                ctx.ownerRequest().headers.get("Authorization") != null);
                     })
                     .http("observe", "POST", "/observe/{id}")
                     .requirePermission("observe", "recipes:read");
@@ -62,10 +63,13 @@ public final class BudgetMain {
                     .http("serial", "POST", "/chain")
                     .requirePermission("serial", "shopping:read")
                     .action("expired", JsonTree.CODEC, JsonTree.CODEC, (ctx, input) -> {
-                        Context shorter = ctx.limitedToMillis(50);
-                        Thread.sleep(100);
+                        return TaskScope.named("shorter")
+                                .within(Duration.ofMillis(50))
+                                .call(scope -> {
+                                    Thread.sleep(100);
 
-                        return shorter.call(OBSERVE, Map.of());
+                                    return ctx.call(OBSERVE, Map.of());
+                                });
                     });
 
         try (Microservice app = Microservice.create(service)) {
@@ -81,7 +85,9 @@ public final class BudgetMain {
                                 "/root",
                                 request -> Responses.json(
                                         200,
-                                        serial(app.context(null).limitedToMillis(1000)),
+                                        TaskScope.named("shorter")
+                                                .within(Duration.ofMillis(1000))
+                                                .call(scope -> serial(app.context())),
                                         JsonTree.CODEC,
                                         app.jsonLimits()));
                 app.routes().post("/cancel", request -> {
@@ -89,7 +95,7 @@ public final class BudgetMain {
                     boolean[] interrupted = new boolean[1];
                     Thread child = new Thread(() -> {
                         try {
-                            app.context(null).call(OBSERVE, Map.of("delay", 1500));
+                            app.runTask(() -> app.context().call(OBSERVE, Map.of("delay", 1500)));
                         } catch (Throwable error) {
                             failure[0] = error;
                             interrupted[0] = Thread.currentThread().isInterrupted();
@@ -105,8 +111,9 @@ public final class BudgetMain {
                     child.interrupt();
                     child.join(3000);
 
-                    if (child.isAlive() || !(failure[0] instanceof InterruptedIOException) || !interrupted[0])
-                        throw new AssertionError("Cancellation contract");
+                    if (child.isAlive()
+                            || Failures.classify(failure[0]).kind() != Failures.Kind.INTERRUPTED
+                            || !interrupted[0]) throw new AssertionError("Cancellation contract");
 
                     if (app.broker().admissionStats().active != 0 || app.dataPoolStats().pendingAcquires != 0)
                         throw new AssertionError("Cancelled child retained resources");
@@ -115,7 +122,7 @@ public final class BudgetMain {
                 });
             }
 
-            app.routes().get("/probe", request -> {
+            app.controlRoute("GET", "/probe", request -> {
                 ServiceBroker.View view = app.broker().snapshot();
                 ArrayList<String> routes = new ArrayList<>();
                 for (Gateway.Route route : view.routes) routes.add(route.path);

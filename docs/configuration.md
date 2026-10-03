@@ -26,15 +26,16 @@ damit lassen sich Konfigurationen ohne Prozess-Environment testen.
 | `HOORI_CLIENT_CONNECTIONS` | 16 | 1–512 Verbindungen im Datenpool; zusätzlich höchstens eine Control-Verbindung |
 | `HOORI_CLIENT_PER_ORIGIN` | min(8, Gesamtlimit) | 1 bis Gesamtlimit |
 | `HOORI_CLIENT_PENDING_ACQUIRES` | 0 | 0–4096 SDK-Wartende im Datenpool; normalerweise bei null lassen, um keine zweite Queue zu bilden. Control hat immer null Wartende |
-| `HOORI_INCOMING_CALLS` | min(16, Serververbindungen) | 1 bis Serverlimit; eingehende Action-Ausführungen vor DTO-Decoding |
-| `HOORI_INCOMING_PENDING_CALLS` | 0 | 0 bis Serverlimit minus Incoming-Calls; vor DTO-Decoding wartende Actions |
+| `HOORI_INCOMING_CALLS` | min(16, Serververbindungen) | 1 bis Serverlimit; alle Fachrequests vor DTO-Decoding/Handler |
+| `HOORI_INCOMING_PENDING_CALLS` | 0 | 0 bis Serverlimit minus Incoming-Calls; wartende Fachrequests; zählen als aktive Roots |
 | `HOORI_OUTGOING_CALLS` | Client-Per-Origin-Limit | 1 bis Datenverbindungen; ein globales Permit für Encoding, RPC und Ergebnis-Decoding |
 | `HOORI_OUTGOING_PENDING_CALLS` | Outgoing-Calls | 0–512 Wartende vor Encoding; null bedeutet Fail-fast |
 | `HOORI_REQUEST_TIMEOUT_MS` | 10000 | 1–600000; Deadline eines eingehenden HTTP-Exchanges |
-| `HOORI_CLIENT_TIMEOUT_MS` | 2000 | 1–600000; gesamtes Framework-Budget einschließlich Admission, Codecs und serieller Calls; zusätzlich durch SDK-Request-Deadline und geerbtes Wire-Budget begrenzt |
+| `HOORI_CLIENT_TIMEOUT_MS` | 2000 | 1–600000; Call-Grenze vor Admission/Encoding, zusätzlich vom laufenden Parent-Budget begrenzt |
+| `HOORI_WORK_TIMEOUT_MS` | Client-Timeout | 1–600000; gemeinsames Budget der Request-/Service-Operation, zusätzlich durch laufende HTTP-/Wire-Frist begrenzt |
 | `HOORI_CONTROL_TIMEOUT_MS` | min(1000, TTL/2) | 1 bis min(10000, TTL/2); Registry-Exchange, unabhängig vom Daten-Timeout |
 | `HOORI_CLIENT_IDLE_MS` | 5000 | 1–600000; Aufbewahrung ungenutzter Poolverbindungen |
-| `HOORI_SHUTDOWN_GRACE_MS` | 10000 | 0–600000; Drain, danach Abbruch verbleibender Arbeit |
+| `HOORI_SHUTDOWN_GRACE_MS` | 10000 | 0–600000; Grace ab Stop, danach Cancellation und tatsächlichen Scope-Drain abwarten |
 | `HOORI_REGISTRY_URL` | `http://registry:8080` | Origin der Registry |
 | `HOORI_ADVERTISE_URL` | `http://$HOSTNAME:<port>` | Unter dieser Adresse erreichen andere Instanzen diese; ohne `HOSTNAME` der Service-Name |
 | `HOORI_INSTANCE_ID` | `<name>-<zufällig>` | Registry-Schlüssel dieser Instanz |
@@ -80,9 +81,11 @@ Default-Advertise-URL nutzt die Container-ID als Hostnamen, die Docker im
 gemeinsamen Netz auflöst; damit funktionieren auch mehrere Replikate.
 
 `stop_grace_period` ist in der Demo 15 Sekunden, die Framework-Grace 10 Sekunden.
-Vor dem Daten-Drain wartet der Owner höchstens zweimal den Control-Timeout auf
-Deregistrierung; bei Bedarf schließt er Control und wartet einmal zusätzlich.
-Bei längerer Grace/Control-Deadline den äußeren Container-Timeout mit Abstand erhöhen.
+Deregistrierung läuft unabhängig von der fachlichen Grace. Ihr abschließender
+Join nach dem Scope-/HTTP-Drain benötigt höchstens drei Control-Timeouts.
+Nach Grace kann verpflichtendes Cleanup länger dauern; nicht kooperierende Arbeit
+hat keine garantierte Abschlusszeit. Den äußeren Prozess-Timeout bewusst wählen;
+ein erzwungener Kill ist kein erfolgreicher Drain.
 Die Healthchecks sind lokale HTTP-Probes, keine garantierte Request-Verteilung und
 kein automatischer Neustartmechanismus bei jedem ungesunden Zustand.
 
@@ -96,9 +99,9 @@ Registry-Katalog, nie aus Request-Werten. HTTPS-Origins erfordern passende CA-Ko
 Ein DNS-Name allein ist kein Service-Zertifikat oder Berechtigungsnachweis.
 
 Die Admission-Metriken `hoori_micro_calls_{active,pending,rejected_total,expired_total}`
-haben nur `direction="incoming"`/`"outgoing"`. Health, lokale Routen und Discovery
-liegen außerhalb der eingehenden Action-Grenze; eigene Anwendungstasks/DTOs sind
-damit nicht global begrenzt. Das SDK hat den begrenzten Raw-Body vor Admission bereits
+haben nur `direction="incoming"`/`"outgoing"`. Normale lokale Routen, Invoke und
+Gateway teilen die eingehende Fachgrenze. Health und feste Control-Routen liegen
+außerhalb, teilen aber weiter HTTP-/Carrier-Kapazität. Das SDK hat den begrenzten Raw-Body vor Admission bereits
 gelesen. Sättigung und Stop weisen Wartende sicher mit 503 ab; es gibt keine Retries.
 Bereits zugelassene Handler dürfen beim Drain sofort weitere Calls starten, sofern
 ein Slot frei ist; neue Wartende und Hintergrundcalls werden dann abgewiesen.
@@ -106,8 +109,13 @@ ein Slot frei ist; neue Wartende und Hintergrundcalls werden dann abgewiesen.
 `/metrics` erfasst zusätzlich Guest-/committed Heap, RSS, Allokationen, GC, Tasks
 und offene Handles unter festen Namen ohne Request-Labels. RSS enthält native/JIT-
 Daten; Containerspeicher einschließlich Dateicache wird separat über cgroups
-gemessen. Ablauf liefert 504; langsame Handler brauchen ein ausreichend großes
-gemeinsames Budget.
+gemessen. `hoori_micro_operations_{active,overdue,completed_total}`,
+`hoori_micro_operation_drain_nanos_total` und
+`hoori_micro_operation_failures_total{reason="…"}` verwenden neun feste Gründe:
+`business`, `capacity`, `stopping`, `cancelled`, `deadline`, `io_timeout`, `upstream`,
+`interrupted`, `internal`. Die Drain-Zeit umfasst Abschluss nach Rückkehr des
+Framework-Bodys, nicht Response-I/O. Ein intern als Deadline klassifizierter Fehler
+kann bei abgelaufenem Transportbudget keine HTTP-Antwort mehr senden.
 
 Für lokale Entwicklung `run-local.sh` nutzen: es setzt Loopback und startet trotzdem
 die echte HooriVM. `java -jar ...` ist kein unterstützter Networking-Modus.

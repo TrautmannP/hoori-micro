@@ -1,5 +1,8 @@
 package hoori.micro;
 
+import hoori.concurrent.Budget;
+import hoori.concurrent.Cancellation;
+import hoori.concurrent.TaskSpec;
 import hoori.http.Headers;
 import hoori.http.Request;
 import hoori.http.RequestBudget;
@@ -10,56 +13,79 @@ import java.net.SocketTimeoutException;
 import java.util.Map;
 
 /**
- * Explicit per-request call context: correlation, one inherited monotonic budget and the broker.
- * Passed as a parameter, never stored in a ThreadLocal.
+ * Service-owned broker facade. Calls read the current managed execution; the facade retains no request.
  */
 public final class Context {
     static final String BUDGET_HEADER = "X-Hoori-Budget-Ms";
     static final int MAX_BUDGET_MILLIS = 600000;
     private final ServiceBroker broker;
-    private final Request request;
-    private final RequestBudget budget;
 
-    Context(ServiceBroker broker, Request request) {
-        this(broker, request, broker.defaultBudget(request));
-    }
-
-    Context(ServiceBroker broker, Request request, RequestBudget budget) {
+    Context(ServiceBroker broker) {
         this.broker = broker;
-        this.request = request;
-        this.budget = budget;
     }
 
-    /** Inbound HTTP request, or null for startup/background work. Its ID is not an identity. */
-    public Request request() {
-        return request;
+    public Invocation invocation() {
+        return broker.executions.current();
     }
 
-    public RequestBudget budget() {
-        return budget;
+    /** Owner-local HTTP data. Structured children and service work cannot access it. Never capture it in tasks. */
+    public Request ownerRequest() {
+        return broker.executions.ownerRequest();
     }
 
-    /** A shorter child/root context; the parent deadline is never extended. */
-    public Context limitedToMillis(int millis) {
-        if (millis < 0 || millis > MAX_BUDGET_MILLIS) throw new IllegalArgumentException("Budget 0-600000 ms");
+    public Budget budget() {
+        invocation();
 
-        return new Context(broker, request, budget.limitedToMillis(millis));
+        return Budget.current();
     }
 
     /** Typed call; the major version comes from the caller's dependsOn(). */
     public <I, O> O call(Action<I, O> action, I input) throws IOException {
-        return broker.call(request, budget, action, input);
+        Invocation invocation = invocation();
+
+        return broker.call(invocation, effectiveBudget(), action, input);
     }
 
     /** Generic call, e.g. call("recipes.get", Map.of("id", 1)). Result is a JsonTree value. */
     public Object call(String action, Map<String, ?> params) throws IOException {
-        return broker.call(request, budget, action, params);
+        Invocation invocation = invocation();
+
+        return broker.call(invocation, effectiveBudget(), action, params);
+    }
+
+    /** Deferred, reusable work. Inputs are retained by reference, not copied; no context is captured. */
+    public <I, O> TaskSpec<O> task(Action<I, O> action, I input) {
+        if (action == null || input == null) throw new NullPointerException();
+
+        return () -> call(action, input);
+    }
+
+    public TaskSpec<Object> task(String action, Map<String, ?> params) {
+        ServiceName.qualified(action);
+
+        if (params == null) throw new NullPointerException("params");
+
+        return () -> call(action, params);
+    }
+
+    RequestBudget effectiveBudget() throws IOException {
+        check();
+        RequestBudget request = RequestBudget.until(invocation().deadlineNanos);
+        Budget work = budget();
+
+        if (work.isFinite()) request = request.limitedTo(RequestBudget.until(work.deadlineNanos()));
+
+        return request.limitedToMillis(broker.callTimeoutMillis());
     }
 
     void check() throws IOException {
+        invocation();
+        Cancellation.checkpoint();
+
         if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("Request cancelled");
 
-        if (budget.isExpired()) throw new SocketTimeoutException("Request budget expired");
+        if (RequestBudget.until(invocation().deadlineNanos).isExpired())
+            throw new SocketTimeoutException("Request budget expired");
     }
 
     /** Only the private invoke boundary accepts a relative wire budget. Gateways ignore it. */

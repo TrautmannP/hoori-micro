@@ -6,7 +6,7 @@ Start verwenden die vier HTTP-/REST-/Concurrent-SDKs aus `runtimeSdks` im Lock.
 Original-POMs, Receipt, Prüfsummen und die Concurrent-Runtime-Bindung werden
 geprüft; der Maven-Cache ist nach der vollständigen Distributionsidentität getrennt.
 Die Distribution bleibt unverändert, optionale SDKs/Processor sind keine
-HTTP-Laufzeitabhängigkeiten. Die neue Request-/Broker-Semantik folgt in #20–#25.
+HTTP-Laufzeitabhängigkeiten. Die neue Request-/Broker-Semantik ist unten separat belegt.
 
 ## Tasks-v2-Grundlage (#19)
 
@@ -28,7 +28,55 @@ HTTP-Laufzeitabhängigkeiten. Die neue Request-/Broker-Semantik folgt in #20–#
   Guest Base; geladen werden Guest Base, HTTP, REST, Concurrent, Concurrent HTTP.
   Kein JDK/Maven im Image, kein zusätzliches Runtime-/VM-Paketformat.
 
-Neue Request-/Cancellation-/DB-Verträge aus #20–#28 sind damit noch nicht abgenommen.
+## Verwalteter HTTP-Kern (#20–#22, #24–#25)
+
+- Maven/Spotless: **23 JUnit-Tests**, einschließlich unveränderter Fehlerursachen
+  und COMMITTED/ROLLED_BACK/UNKNOWN-Klassifikation. Portable Checks:
+  **117 Assertions, 5 Formatter-Fixtures, 20 Python-Tests**.
+- `test-hoori-core.sh`: Core, Admission und TaskChecks auf echter HooriVM;
+  Cancellation-vor-Registrierung, Cancel/Permit-Rennen, 256 Registrierungszyklen,
+  Fail-fast-Fehlerpriorität und wiederverwendbare Specs/Service-Kontexte.
+- `test_admission.py`, `test_budgets.py`, `test_control.py`: **Interpreter/Mixed
+  bestanden**. Weiterhin echte Hoori-Pools, sinkende serielle Budgets, validierte
+  Wire-Werte, getrennte Control-Recovery und Admission vor Codecs.
+- `test_tasks.py`: **Interpreter/Mixed bestanden**. Keep-alive und überlappende
+  Requests behalten ihre Korrelation; keine Credentials/Raw-Requests in Kindern.
+  Vorab erstellte Specs lesen den aktuellen Kontext und starten vorher keinen Codec.
+  Kontrollierte Pool-/Body-Waits brechen einzeln ab; gleichzeitige und spätere
+  Calls auf demselben Client funktionieren. Beide Parallel-Calls starten vor
+  Freigabe der Antworten. Fail-fast erhält den Fachfehler; settled verschluckt
+  keine globale Deadline. Batch-Reihenfolge/Parallelitätsgrenze, Child-Kapazität,
+  Body-/Child-/Encoder-/Cleanup-Fehler und sichere Antworttexte sind geprüft.
+- Ein kontrolliertes Finally-Gate hält Root und Incoming-Permit belegt, obwohl
+  der lokale Operationsbody bereits zurückgegeben hat. Health bleibt erreichbar;
+  `TaskDiagnostics` zeigt READ/DRAIN. Antwort und Ressourcenfreigabe folgen erst
+  nach Öffnen des Gates. Danach sind Roots/Diagnosereferenzen/Waiter/Permits leer.
+- SIGTERM: Erfolg innerhalb Grace; langsamer Fan-out wird nach 400 ms Grace
+  lokal abgebrochen, Kind-Finally und Ressourcen drainieren vor Client-Close.
+  Verzögerte Registry verlängert diese Frist nicht. Separat: Root bereits beendet,
+  4-MiB-Antwort am langsamen Empfänger noch offen; Transport behält seine Rest-Grace
+  und meldet anschließend ehrlich `roots_drained=true drained=false`.
+  Handler-Stop, mehrfaches Close, 32 Start-/Stop-Interleavings und Fehler am bereits
+  belegten Listener bestehen.
+- Fünf Last-/Fehler-/Deadline-Zyklen mit explizitem GC und Idle im selben Prozess:
+  keine retained Request-/Body-WeakReferences, keine aktiven Roots/Permits/Waiter,
+  leere Diagnoseliste; beobachtete Tasks/Handles kehren auf begrenzte Werte zurück.
+  Das ist gezielte Micro-Ownership-Evidenz, keine konstante RSS-Zusage oder
+  erneute vollständige Upstream-Timer-/VM-/DNS-/TLS-Abnahme.
+- Negativfall: nicht kooperierender Code bleibt über Grace aktiv. Der Harness
+  beendet ihn extern; dieser Lauf beweist **keinen Drain**, und das Log behauptet
+  auch keinen. Ein Socket-Abbruch beweist keinen Rollback eines Remote-Writes.
+
+Rohdaten einschließlich Fixture-/Framework-Hashes und GC-Samples:
+[Mixed](benchmarks/tasks-core-mixed.json.gz),
+[Interpreter](benchmarks/tasks-core-interpreter.json.gz).
+Zusätzlich ist der vollständige Docker-Smoke in beiden Engines bestanden:
+[Mixed](benchmarks/tasks-core-smoke-mixed.json.gz),
+[Interpreter](benchmarks/tasks-core-smoke-interpreter.json.gz), einschließlich
+Rolling-/Katalogwechsel, Sättigung, Registry-Ausfall und SIGTERM-Drain.
+
+Die Zwei-Provider-Demo (#23), optionale Fassaden/DB (#26/#27) und integrierte
+Kostenkontrolle (#28) folgen separat. #8/#10/#11 bleiben unabhängige Arbeit.
 
 ## Bisherige Fachabnahme
 
