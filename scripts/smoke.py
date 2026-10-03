@@ -33,8 +33,9 @@ def compose(*args: str, capture: bool = False) -> str:
     return result.stdout.strip() if capture else ""
 
 
-def request(path: str, request_id: str = "smoke", timeout: float = 65):
-    req = urllib.request.Request(BASE + path, headers={"X-Request-ID": request_id,
+def request(path: str, request_id: str = "smoke", timeout: float = 65, payload=None):
+    req = urllib.request.Request(BASE + path, data=None if payload is None else json.dumps(payload).encode(),
+                                 headers={"X-Request-ID": request_id, "Content-Type": "application/json",
                                                       "Authorization": "Bearer MUST-NOT-BE-FORWARDED"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as response:
@@ -174,7 +175,7 @@ def identity(service: str) -> dict:
 
 def snapshot(phase: str) -> None:
     values = {}
-    for role in ("registry", "recipes", "shopping", "gateway"):
+    for role in ("registry", "recipes", "pantry", "shopping", "gateway"):
         current = identity(role)
         text = compose("exec", "-T", role, "curl", "-fsS", "--max-time", "2",
                        "http://127.0.0.1:8080/metrics", capture=True)
@@ -248,7 +249,7 @@ def main() -> int:
     work = tempfile.TemporaryDirectory(prefix="hoori-micro-smoke-")
     override = Path(work.name) / "pool.json"
     settings = {role: {"cpus": .5, "mem_limit": "256m", "environment": {"HOORI_CATALOG_MAX_AGE_MS": "10000"}}
-                for role in ("registry", "recipes", "shopping", "gateway")}
+                for role in ("registry", "recipes", "pantry", "shopping", "gateway")}
     settings["shopping"]["environment"].update({
         "HOORI_CLIENT_CONNECTIONS": "1", "HOORI_CLIENT_PER_ORIGIN": "1", "HOORI_CLIENT_PENDING_ACQUIRES": "0",
         "HOORI_OUTGOING_CALLS": "1", "HOORI_OUTGOING_PENDING_CALLS": "2"})
@@ -258,6 +259,14 @@ def main() -> int:
         ENV["HOORI_DEMO_RECOMMEND"] = "0"
         compose("up", "--build", "--detach", "--wait", "--wait-timeout", "180")
         ready_meal()
+        eventually("/overview/1", {"recipe": {"id": 1, "title": "Kartoffelsuppe"},
+                   "available": ["Kartoffeln", "Möhren"]}, "typed two-provider overview")
+        eventually("/dashboard/2", {"recipe": {"status": "ok", "data": {"id": 2, "title": "Apfelstrudel"}},
+                   "pantry": {"status": "ok", "data": []}}, "successful empty dashboard section")
+        for path in ("/meals/batch", "/meals/bulk"):
+            status, _, body = request(path, payload={"ids": [2, 1, 2, 1, 2]})
+            require(status == 200 and [item["id"] for item in json.loads(body)] == [2, 1, 2, 1, 2],
+                    "bounded batch/bulk ordering")
         eventually("/recipes/1", {"id": 1, "title": "Kartoffelsuppe"}, "published recipes action")
         require(request("/health/live")[0] == 200, "liveness")
         require(request("/health/ready")[0] == 200, "readiness")
@@ -272,7 +281,8 @@ def main() -> int:
         require(normalized.get("x-request-id") == "hop-check-1", "response correlation")
         status, _, body = request("/metrics")
         require(status == 200 and b"hoori_http" in body, "HTTP metrics")
-        require(registered() == {"recipes": ["context", "get", "slow"], "shopping": ["context", "meal", "slow"]},
+        require(registered() == {"recipes": ["context", "get", "get-many", "slow"], "pantry": ["items"],
+                                "shopping": ["batch", "bulk", "context", "dashboard", "meal", "overview", "slow"]},
                 "catalog lists exactly the defined actions")
         print("PASS: gateway publication, action calls, domain errors, health, metrics and context")
 
@@ -320,14 +330,14 @@ def main() -> int:
                 break
             require(time.monotonic() < deadline, "old/new replicas did not register simultaneously")
             time.sleep(.5)
-        require(sorted(len(i["actions"]) for i in providers) == [3, 4], "rolling action fixture")
+        require(sorted(len(i["actions"]) for i in providers) == [4, 5], "rolling action fixture")
         for provider in providers:
             # HOSTNAME advertises the individual container, never the shared recipes DNS alias.
             status = compose("exec", "-T", "shopping", "curl", "-sS", "--max-time", "10", "-o", "/dev/null",
                              "-w", "%{http_code}", "-X", "POST", "-H", "X-Hoori-Action: recipes.recommend",
                              "-H", "X-Hoori-Version: 1", "-H", "Content-Type: application/json", "--data", '{"id":1}',
                              provider["url"] + "/_hoori/invoke", capture=True)
-            require(status == ("200" if len(provider["actions"]) == 4 else "421"),
+            require(status == ("200" if any(a["name"] == "recommend" for a in provider["actions"]) else "421"),
                     "advertise URL did not reach the selected instance")
         for _ in range(8):
             status, _, body = request("/recipes/1/recommendation")
@@ -368,8 +378,8 @@ def main() -> int:
             time.sleep(.2)
         require(request("/health/ready")[0] == 200, "snapshot expiry changed local readiness")
         compose("up", "--detach", "--wait", "--wait-timeout", "180", "registry")
-        registered({"recipes": ["context", "get", "recommend", "slow"],
-                    "shopping": ["context", "meal", "slow"]})
+        registered({"recipes": ["context", "get", "get-many", "recommend", "slow"], "pantry": ["items"],
+                    "shopping": ["batch", "bulk", "context", "dashboard", "meal", "overview", "slow"]})
         ready_meal()
         print("PASS: control timeout under business load, bounded snapshot expiry and epoch recovery")
 

@@ -75,8 +75,29 @@ Zusätzlich ist der vollständige Docker-Smoke in beiden Engines bestanden:
 [Interpreter](benchmarks/tasks-core-smoke-interpreter.json.gz), einschließlich
 Rolling-/Katalogwechsel, Sättigung, Registry-Ausfall und SIGTERM-Drain.
 
-Die Zwei-Provider-Demo (#23), optionale Fassaden/DB (#26/#27) und integrierte
-Kostenkontrolle (#28) folgen separat. #8/#10/#11 bleiben unabhängige Arbeit.
+## Service-Komposition (#23)
+
+`test_composition.py` startet die tatsächlichen Demo-Definitionen mit testlokalen
+Gates: Registry, Recipes, Pantry, Shopping und Gateway. **Interpreter/Mixed bestehen**.
+Beide Provider beginnen vor Freigabe ihrer Antworten. Geprüft sind typisierte
+Ergebnisse, Korrelation ohne Credentials, lokaler Fail-fast-Abbruch, erfolgreiche
+leere gegenüber nicht verfügbaren Dashboard-Daten und unverdeckte globale Admission.
+Fünf Batch-Elemente halten maximal zwei Calls und die Eingabereihenfolge ein;
+All-complete bearbeitet auch nach einem Item-Fehler alle Elemente. Die gleichwertige
+Bulk-Action benötigt nur einen RPC. SIGTERM drainiert den lokalen Fan-out.
+Der Remote-Provider darf nach Caller-Abbruch unabhängig weiterarbeiten.
+
+Maven/Spotless (23 JUnit), Core (117 Assertions/5 Formatter-Fixtures), Python (20)
+und Guest-Core bestehen. Der erweiterte Docker-Smoke mit allen fünf Rollen besteht
+ebenfalls in beiden Engines. Sein globales Shopping-Limit von einem Call prüft
+Warteschlangen; Überlappung belegt separat der native Test mit zwei Calls.
+Rohdaten: [Komposition Mixed](benchmarks/composition-mixed.json.gz),
+[Interpreter](benchmarks/composition-interpreter.json.gz),
+[Docker Mixed](benchmarks/composition-smoke-mixed.json.gz),
+[Interpreter](benchmarks/composition-smoke-interpreter.json.gz).
+
+Optionale Fassaden/DB (#26/#27) und integrierte Kostenkontrolle (#28) folgen separat.
+#8/#10/#11 bleiben unabhängige Arbeit.
 
 ## Bisherige Fachabnahme
 

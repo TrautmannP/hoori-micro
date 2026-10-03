@@ -31,10 +31,11 @@ Service shopping = Service.named("shopping").dependsOn("recipes", 1)
 
 ```text
                  registry  (Katalog: Instanzen × Actions, TTL)
-                  ↑   ↓ Registrierung, kleine Lease / bedingter Katalog
- Host ─► gateway ─────► shopping ─────► recipes
-         (publizierte   POST /_hoori/invoke, direkt über hoori-http
-          Actions)
+                  ↑   ↓ Registrierung, Lease / bedingter Katalog
+ Host ─► gateway ─────► shopping ────► recipes
+         publizierte      │
+         Actions         └─────────► pantry
+                   POST /_hoori/invoke, direkt über hoori-http
 ```
 
 | Änderung an Recipes | Shopping/Gateway neu deployen? |
@@ -112,6 +113,8 @@ docker compose up --build --wait
 curl -fsS http://127.0.0.1:8080/meals/1     # gateway → shopping.meal → recipes.get
 # Erwartet: {"id":1,"title":"Kartoffelsuppe"}
 curl -fsS http://127.0.0.1:8080/recipes/1   # gateway → recipes.get
+curl -fsS http://127.0.0.1:8080/overview/1  # shopping → recipes + pantry
+curl -fsS http://127.0.0.1:8080/dashboard/2 # pantry: erfolgreich, leere Liste
 
 curl -fsS http://127.0.0.1:8080/health/ready
 curl -fsS http://127.0.0.1:8080/metrics
@@ -146,6 +149,7 @@ python3 -m unittest discover -s scripts/tests -v
 ./scripts/test-task-runtime.sh
 python3 scripts/test_budgets.py
 python3 scripts/test_tasks.py
+python3 scripts/test_composition.py
 python3 scripts/smoke.py
 ```
 
@@ -164,6 +168,7 @@ Nach erfolgreichem `build.sh` je ein Terminal, in dieser Reihenfolge:
 ```bash
 ./scripts/run-local.sh registry   # 127.0.0.1:8090
 ./scripts/run-local.sh recipes    # 127.0.0.1:8081
+./scripts/run-local.sh pantry     # 127.0.0.1:8083
 ./scripts/run-local.sh shopping   # 127.0.0.1:8082
 ./scripts/run-local.sh gateway    # 127.0.0.1:8080
 ```
@@ -197,8 +202,8 @@ komponierten Calls. Die Specs halten Eingaben per Referenz und lesen den aktuell
 
 ```java
 // Innerhalb einer Action oder normalen Route, ohne manuelles fork/join:
-return Tasks.parallel(ctx.task(Recipes.GET, first), ctx.task(Recipes.GET, second))
-        .named("recipes.pair").failFast().map((a, b) -> List.of(a, b));
+return Tasks.parallel(ctx.task(Recipes.GET, query), ctx.task(Pantry.FOR_RECIPE, query))
+        .named("shopping.overview").failFast().map(Overview::new);
 ```
 
 Das Framework gibt Antworten erst nach Kind-/Ressourcenabschluss frei. `Invocation`
@@ -209,10 +214,22 @@ es verlängert nie die laufende Request-Frist. Startup-/Wartungsarbeit verwendet
 `app.runTask(task)` und wartet synchron auf ihren Abschluss. Calls ohne gültige
 Micro-Ausführungsgrenze werden vor JSON und Netzwerk abgewiesen.
 
-Nach Implementierung einer gebündelten Provider-Action wie `recipes.getMany`
-für mehrere Rezepte ruft ein Consumer einmal
-`ctx.call("recipes.getMany", Map.of("ids", ids))` auf; der fachliche Vertrag und Codec
-bleiben ausdrücklich beim Anbieter.
+Das kompilierte Beispiel in [ShoppingMain](examples/shopping-service/src/main/java/dev/hoori/micro/demo/ShoppingMain.java)
+zeigt drei Policies: Standardkomposition wartet auf alle Kinder; das Pflicht-
+Overview wählt ausdrücklich `failFast()`; das Dashboard verwendet `settled()` und
+markiert nur lokale Upstream-Ausfälle als `unavailable`. Erfolgreich leere Daten
+bleiben `status: ok, data: []`. Globale Deadline, Admission und Cleanup scheitern weiter.
+
+`POST /meals/batch` demonstriert `Tasks.map(...).maxConcurrency(2).toList()`;
+`toList()` benötigt O(n) Ergebnisspeicher. Das globale Broker-Limit gilt zusätzlich.
+Für diese fachlich passende Massenabfrage ist `POST /meals/bulk` der bessere normale
+Weg: `ctx.call(Recipes.GET_MANY, new RecipeIds(ids))` nutzt einen einzigen RPC.
+Beide akzeptieren höchstens 16 IDs und behalten Reihenfolge und Duplikate:
+
+```bash
+curl -fsS http://127.0.0.1:8080/meals/bulk -H 'Content-Type: application/json' \
+  -d '{"ids":[2,1,2,1,2]}'
+```
 
 Das Framework-JAR soll später in einem eigenen internen Maven-Repository publiziert
 werden. Es ist derzeit **nicht** öffentlich auf Maven Central verfügbar. Die hier
@@ -240,8 +257,9 @@ Der Check läuft auch bei `mvn verify` und damit in `scripts/build.sh`.
 ```text
 framework/                  hoori.micro: Service, Broker, Registry, Gateway
 examples/demo-contracts/    Typisierte Demo-Actions (Recipes.GET) und Codecs
-examples/recipes-service/  Rein lesender Anbieter
-examples/shopping-service/ Aufrufer über Action-Namen, selbst Anbieter von meals
+examples/recipes-service/  Rein lesender Recipe-Anbieter
+examples/pantry-service/   Unabhängiger lesender Pantry-Anbieter
+examples/shopping-service/ Direkter Call, typisiertes Overview, Dashboard, Batch/Bulk
 docker/                    Hoori-Entrypoint und Runtime-Image
 scripts/                   Build, Integrität, lokale und native Prüfungen
 docs/                      Architektur, Konfiguration, Roadmap und Nachweise

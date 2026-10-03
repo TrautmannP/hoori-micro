@@ -5,19 +5,26 @@ import hoori.micro.Microservice;
 import hoori.micro.Service;
 import hoori.rest.RequestException;
 import java.io.InterruptedIOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 /**
  * Stateless, read-only fixture, not the migrated Dahemm recipes backend.
  */
 public final class RecipesMain {
-    public static void main(String[] args) throws Exception {
-
+    static Service definition() {
         Service recipes = Service.named("recipes")
                 .version(1)
                 .action(Recipes.GET, (ctx, input) -> find(input.id))
                 .http("get", "GET", "/recipes/{id}")
                 .requirePermission("get", "recipes:read")
+                .action(Recipes.GET_MANY, (ctx, input) -> {
+                    List<Recipe> result = new ArrayList<>();
+                    for (long id : input.ids()) result.add(find(id));
+
+                    return List.copyOf(result);
+                })
                 .action(Recipes.SLOW, (ctx, input) -> {
                     System.out.println(
                             "demo_slow_started id=" + ctx.invocation().requestId());
@@ -50,12 +57,18 @@ public final class RecipesMain {
                     .http("recommend", "GET", "/recipes/{id}/recommendation")
                     .requirePermission("recommend", "recipes:read");
 
-        try (Microservice app = Microservice.create(recipes)) {
+        return recipes;
+    }
+
+    public static void main(String[] args) throws Exception {
+        try (Microservice app = Microservice.create(definition())) {
             app.run();
         }
     }
 
     private static Recipe find(long id) {
+        if (id == 2) return new Recipe(2, "Apfelstrudel");
+
         if (id != 1) {
             throw new RequestException(404, "Recipe not found");
         }

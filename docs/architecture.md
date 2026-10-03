@@ -309,7 +309,7 @@ der Container-Stop-Timeout bleibt die äußere Grenze.
 
 ## 6. Sicherheitsgrenze der Demo
 
-Nur das Gateway veröffentlicht einen Loopback-Host-Port. Registry, Recipes und
+Nur das Gateway veröffentlicht einen Loopback-Host-Port. Registry, Recipes, Pantry und
 Shopping hängen am internen Backend-Netz. Container laufen ohne Root, ohne Linux-
 Capabilities, mit Read-only-Root-Dateisystem und ohne Docker-Socket. Die Registry
 erhält keine Connect-/DNS-Capability; alle anderen brauchen sie für Heartbeats.
