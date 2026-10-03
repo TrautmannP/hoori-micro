@@ -14,6 +14,7 @@ public final class CompositionMain {
     private static volatile boolean gate, fail, credentials;
     private static int calls, active, maximum;
     private static String requestId = "none";
+    private static long budgetMillis;
 
     public static void main(String[] args) throws Exception {
         String role = System.getenv("COMPOSITION_ROLE");
@@ -33,6 +34,8 @@ public final class CompositionMain {
                         active++;
                         maximum = Math.max(maximum, active);
                         requestId = app.context().invocation().requestId();
+                        budgetMillis = Long.parseLong(
+                                app.context().ownerRequest().headers.get("X-Hoori-Budget-Ms"));
                         credentials = app.context().ownerRequest().headers.get("Authorization") != null;
                     }
                     try {
@@ -76,7 +79,9 @@ public final class CompositionMain {
                                     "requestId",
                                     requestId,
                                     "credentials",
-                                    credentials),
+                                    credentials,
+                                    "budgetMillis",
+                                    budgetMillis),
                             JsonTree.CODEC,
                             app.jsonLimits());
                 }

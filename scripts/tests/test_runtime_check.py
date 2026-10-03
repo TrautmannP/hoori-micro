@@ -62,6 +62,23 @@ class RuntimeCheckTest(unittest.TestCase):
     def test_valid(self):
         self.assertEqual(self.receipt, runtime_check.verify(self.path, self.lock))
 
+    def test_explicit_build_sdk_is_verified_but_not_loaded(self):
+        name = "hoori-task-processor"
+        pom = (f'<project xmlns="{runtime_check.NS["m"]}"><groupId>dev.hoori</groupId>'
+               f'<artifactId>{name}</artifactId><version>0.1.0</version></project>')
+        artifact = {"jar": f"lib/{name}-0.1.0.jar", "pom": f"metadata/{name}.pom"}
+        (self.path / artifact["pom"]).write_text(pom)
+        with zipfile.ZipFile(self.path / artifact["jar"], "w") as archive:
+            archive.writestr(f"META-INF/maven/dev.hoori/{name}/pom.xml", pom)
+        self.receipt["sdk_artifacts"][f"dev.hoori:{name}:0.1.0"] = artifact
+        self.lock["buildSdks"] = [name]
+        self.receipt_and_hashes()
+        self.assertEqual(self.receipt, runtime_check.verify(self.path, self.lock))
+        self.assertNotIn(artifact["jar"], runtime_check.runtime_jars(self.receipt, self.lock))
+        (self.path / artifact["pom"]).write_text("<project/>")
+        self.receipt_and_hashes()
+        self.rejects()
+
     def test_required_pom_even_with_rehashed_manifest(self):
         (self.path / "metadata/hoori-concurrent-http-api.pom").unlink()
         self.receipt_and_hashes()

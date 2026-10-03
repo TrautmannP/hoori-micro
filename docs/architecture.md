@@ -20,6 +20,11 @@ Abhängigkeiten zeigen nur nach unten. Server und Client sind die echten Hoori-
 Implementierungen. Keine Annotationssuche, Laufzeit-Proxies oder automatische DI:
 Actions sind Lambdas an einer expliziten `Service`-Definition.
 
+Das optionale [Fassadenbeispiel](../examples/task-facade/README.md) verwendet den
+upstream Buildzeit-Processor. Generierte Task-/Scoped-Delegates sind normale
+Anwendungsklassen und werden ausdrücklich konstruiert. Der HTTP-Reaktor und sein
+Runtime-Classpath bleiben ohne Annotationen/Processor.
+
 ## 2. Actions, Registry und Broker
 
 Aufrufer adressieren eine **fachliche Action** (`recipes.get`) mit der per

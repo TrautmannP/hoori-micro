@@ -231,6 +231,11 @@ curl -fsS http://127.0.0.1:8080/meals/bulk -H 'Content-Type: application/json' \
   -d '{"ids":[2,1,2,1,2]}'
 ```
 
+Für vorhandene synchrone Client-Interfaces zeigt das optionale
+[Fassadenbeispiel](examples/task-facade/README.md) `@GenerateTasks` und explizit
+verdrahtete `@TaskScoped`-Methoden. Es wird separat gebaut; der Processor läuft
+nur beim Kompilieren. Der normale HTTP-Build benötigt ihn nicht.
+
 Das Framework-JAR soll später in einem eigenen internen Maven-Repository publiziert
 werden. Es ist derzeit **nicht** öffentlich auf Maven Central verfügbar. Die hier
 verwendete Snapshot-Version ist für den Bootstrap, nicht für reproduzierbare Releases.

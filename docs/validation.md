@@ -96,7 +96,29 @@ Rohdaten: [Komposition Mixed](benchmarks/composition-mixed.json.gz),
 [Docker Mixed](benchmarks/composition-smoke-mixed.json.gz),
 [Interpreter](benchmarks/composition-smoke-interpreter.json.gz).
 
-Optionale Fassaden/DB (#26/#27) und integrierte Kostenkontrolle (#28) folgen separat.
+## Optionale Fassaden (#26)
+
+Der separate Maven-Build `optional_example.py build task-facade` installiert
+Original-Annotations-/Processor-POMs aus demselben verifizierten Distributionssatz.
+Er generiert und verpackt gewöhnliche Anwendungsklassen; der HTTP-Reaktor erhält
+keine zusätzlichen Abhängigkeiten. Der kleine Formatter-Pfad ist für den separaten
+Modulaufruf explizit; die Formatierungsregeln bleiben gleich.
+
+`test_composition.py --facade` besteht in **Interpreter/Mixed**: echte Broker-Calls
+über Discovery, TaskSpec-Erzeugung vor jeder Request-Grenze ohne Delegate-Aufruf,
+Wiederverwendung mit neuer Korrelation, Checked Exceptions mit Finally-Abschluss,
+800-ms-Methodenbudget und kürzerer 250-ms-Parent, Cancellation und anschließende
+Recovery. Die Prozesse laufen mit `PATH`/`JAVA_HOME=/nonexistent` und ohne
+Annotationen-/Processor-JAR im Klassenpfad. Rohdaten:
+[Mixed](benchmarks/composition-facade-mixed.json.gz),
+[Interpreter](benchmarks/composition-facade-interpreter.json.gz).
+Die generische upstream Processor-Matrix wird nicht dupliziert.
+Maven/Spotless (23 JUnit), Core (117 Assertions/5 Formatter-Fixtures), Python (21)
+und Guest-Core bestehen; der unveränderte HTTP-Classpath startet auch im erneuten
+Docker-Smoke in beiden Engines: [Mixed](benchmarks/facade-smoke-mixed.json.gz),
+[Interpreter](benchmarks/facade-smoke-interpreter.json.gz).
+
+Generierte lokale Transaktionen (#26/#27) und integrierte Kostenkontrolle (#28) folgen separat.
 #8/#10/#11 bleiben unabhängige Arbeit.
 
 ## Bisherige Fachabnahme
