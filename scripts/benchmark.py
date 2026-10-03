@@ -204,7 +204,7 @@ def experiment(args, variant: str, repeat: int, work: Path, receipt: dict, docum
         services[role] = {"image": "hoori-micro-benchmark-build-" + role,
             "networks": ["edge", "backend"],
             "entrypoint": ["/opt/hoori/bin/hoori", "stats" if args.profile else "run", "--engine", args.engine,
-            *(["--format", "json"] if args.profile else ["--live-output"]),
+            *(["--format", "json", "--profile-out", "/dev/stdout"] if args.profile else ["--live-output"]),
             "--graceful-signals", "--max-heap-bytes", str(args.heap_mib * 1048576),
             "--gc-threshold-bytes", "2097152", "--allow-environment-read", "--allow-network-listen",
             *([] if role == "registry" else ["--allow-network-connect", "--allow-host-resolution"]),
@@ -212,7 +212,7 @@ def experiment(args, variant: str, repeat: int, work: Path, receipt: dict, docum
             "volumes": [f"{ROOT / 'framework/target/test-classes'}:/opt/bench:ro"],
             "cpus": args.cpus, "mem_limit": f"{args.memory_mib}m",
             "ports": [f"127.0.0.1:{args.port + i}:8080"],
-            "environment": {"BENCH_ROLE": role, "BENCH_VARIANT": variant,
+            "environment": {"BENCH_ROLE": role, "BENCH_VARIANT": variant, "BENCH_COMPOSITION": args.composition,
                 "BENCH_CATALOG_INSTANCES": str(args.catalog_instances),
                 "HOORI_ADVERTISE_URL": f"http://{role}:8080", "HOORI_INSTANCE_ID": role + "-bench",
                 "HOORI_CLIENT_CONNECTIONS": str(args.pool), "HOORI_CLIENT_PER_ORIGIN": str(args.pool),
@@ -258,7 +258,7 @@ def experiment(args, variant: str, repeat: int, work: Path, receipt: dict, docum
     document["runs"].append(result)
     try:
         startup = time.monotonic()
-        dc("up", "--no-build", "--detach", "--wait", "--wait-timeout", "180")
+        dc("up", "--no-build", "--detach", "--wait", "--wait-timeout", "180", *ROLES)
         result["startup_seconds"] = time.monotonic() - startup
         identities = {}
         for i, role in enumerate(ROLES):
@@ -319,7 +319,15 @@ def experiment(args, variant: str, repeat: int, work: Path, receipt: dict, docum
         phases = [("closed-small", 64, 0, 0), ("open-large", 8192, args.rate, 0),
                   ("sustained", 64, args.rate, 0), ("slow", 64, args.rate, args.delay_ms),
                   ("burst", 64, args.burst_rate, args.delay_ms), ("recovery", 64, args.rate, 0)]
+        if args.composition != "single":
+            phases = [("compose", 64, args.rate, args.delay_ms)]
+            if args.composition != "serial":
+                phases += [("failure", 64, args.rate, args.delay_ms)]
         for name, size, rate, delay in phases:
+            payload = {"value": "x" * size, "delayMillis": delay}
+            if name == "failure":
+                payload["failure"] = True
+                load(port, path, payload, args.warmup, args.workers, rate, args.p99_ms, args.error_fraction)
             if name == "recovery":
                 time.sleep(args.idle)
                 result["post_burst_idle"] = snapshot()
@@ -341,7 +349,7 @@ def experiment(args, variant: str, repeat: int, work: Path, receipt: dict, docum
             sampler = threading.Thread(target=sample)
             sampler.start()
             try:
-                outcome = load(port, path, {"value": "x" * size, "delayMillis": delay}, args.seconds,
+                outcome = load(port, path, payload, args.seconds,
                                args.workers, rate, args.p99_ms, args.error_fraction)
             finally:
                 sampling_stop.set()
@@ -350,7 +358,10 @@ def experiment(args, variant: str, repeat: int, work: Path, receipt: dict, docum
                 raise sampling_errors[0]
             after = snapshot()
             outcome.update({"name": name, "payload_string_bytes": size, "delay_ms": delay, "rate": rate,
+                            "expected_status": 502 if name == "failure" else 200,
                             "resources": resources(before, after, samples, outcome["successful"])})
+            if name == "failure" and (outcome["not_started"] or outcome["statuses"] != {"502": outcome["started"]}):
+                raise RuntimeError("Controlled failure path produced unexpected outcomes")
             if args.profile:
                 outcome["profile_samples"] = profile_samples
             result["phases"].append(outcome)
@@ -382,6 +393,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--variants", default="ABCD")
+    parser.add_argument("--composition", choices=("single", "serial", "parallel", "fail-fast"), default="single")
     parser.add_argument("--engine", choices=("mixed", "interpreter"), default="mixed")
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--seconds", type=float, default=10)
@@ -404,6 +416,8 @@ def main() -> int:
     parser.add_argument("--error-fraction", type=float, default=.01)
     parser.add_argument("--profile", action="store_true", help="Separate instrumented stats run, not timing evidence")
     args = parser.parse_args()
+    if args.composition != "single" and any(variant not in "CD" for variant in args.variants):
+        parser.error("Composition costs use the actual Micro paths C/D")
     if (not args.variants or any(variant not in "ABCD" for variant in args.variants)
             or len(set(args.variants)) != len(args.variants) or args.repeats < 1 or args.seconds <= 0
             or args.warmup <= 0 or args.idle < 0 or not 1 <= args.workers <= 128 or not 1 <= args.pool <= 32
@@ -439,7 +453,7 @@ def main() -> int:
     document["order"] = order
     # Persist the acceptance limits before any measured request, and each finished fresh-process run.
     args.output.write_text(json.dumps(document, indent=2) + "\n")
-    command(["docker", "compose", "--project-name", "hoori-micro-benchmark-build", "build"])
+    command(["docker", "compose", "--project-name", "hoori-micro-benchmark-build", "build", *ROLES])
     with tempfile.TemporaryDirectory(prefix="hoori-micro-benchmark-") as directory:
         for variant, repeat in order:
             experiment(args, variant, repeat, Path(directory), receipt, document)

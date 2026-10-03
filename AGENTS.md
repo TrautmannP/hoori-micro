@@ -27,7 +27,8 @@
 - Run scripts/test-core.sh and Python unit checks for portable changes. For transport,
   lifecycle, API or dependency changes run scripts/build.sh, test-hoori-core.sh and
   scripts/smoke.py using the real pinned distribution. Report unrun checks explicitly.
-- Demos have no production authorization/persistence. Never present them as migrated
-  Dahemm business services. Do not log credentials, bodies or raw upstream failures.
+- Demos have no production authorization or persistence design; the optional data
+  example owns only its demo database. Never present them as migrated Dahemm business
+  services. Do not log credentials, bodies or raw upstream failures.
 - Keep docs short and remove obsolete instructions when behavior changes. No invented
   performance wins or unnecessarily broad governance/test matrices.

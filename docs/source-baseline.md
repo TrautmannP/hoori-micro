@@ -5,7 +5,7 @@ Repository: `TrautmannP/hoori` (privat).
 Gepinnter Commit: `7d7245aa782ba6f79c47397f008789f13552a4c5`.
 
 Wesentliche Quellen (HTTP-/REST-Grundlagen aus der bisherigen Baseline,
-Tasks- und Distributionsverträge für #19 erneut direkt geprüft):
+Tasks-, optionale Daten- und Distributionsverträge für #19–#28 direkt geprüft):
 
 - `sdk/hoori-http-api/README.md`, `HttpClient.java`, `HttpServer.java`, `Limits.java`,
   `Headers.java`, `Request.java`, `RequestBudget.java`, `Response.java`: URI-Pooling/DNS/HTTPS,
@@ -19,6 +19,12 @@ Tasks- und Distributionsverträge für #19 erneut direkt geprüft):
   Distribution, Prüfsummen, Guest-Lizenz und systemseitige native Abhängigkeiten.
 - `sdk/hoori-concurrent-api`: `Tasks`, `TaskSpec` und Original-POM;
   `sdk/hoori-concurrent-http-api`: README, `RequestScopes`, `HttpTasks` und POM.
+- `TaskContext`, `TaskDiagnostics`, `Cancellation`, `DeadlineTimers` und `Operation`:
+  Kontext-/Timer-Ownership, Kapazität und tatsächlicher Abschluss.
+- `sdk/hoori-task-processor` und `examples/hello-task-codegen`: Buildzeit-Fassaden;
+  `sdk/hoori-{transaction,jdbc,jdbi}-api`, `examples/hello-task-jdbc` sowie
+  `scripts/jdbi_test.py`, `jdbc_test.py`, `jdbc_peers.py`: lokale Transaktionen,
+  echte Datenbank/Fault-Peers und physische Ressourcenfreigabe.
 - `guest-classlib/PROVENANCE.md`: `System.getenv(String)` und
   `--allow-environment-read`.
 - `crates/hoori-cli/src/main.rs`: `build-info`, insbesondere Feature-Liste als JSON-Array.
