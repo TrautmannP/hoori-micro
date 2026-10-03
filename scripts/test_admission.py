@@ -19,6 +19,8 @@ def main():
     runtime = ROOT / ".docker-context/runtime"
     receipt = verify(runtime)
     calls, snapshots = [], []
+    incoming_bound = 1
+    incoming_run = None
     hold, release = threading.Event(), threading.Event()
 
     class Peer(BaseHTTPRequestHandler):
@@ -74,7 +76,7 @@ def main():
         status, body = request("/probe")
         assert status == 200
         snapshot = json.loads(body)
-        assert snapshot["incoming_active"] <= 1 and snapshot["incoming_pending"] == 0
+        assert snapshot["incoming_active"] <= incoming_bound and snapshot["incoming_pending"] == 0
         assert snapshot["outgoing_active"] <= 1 and snapshot["outgoing_pending"] <= 1
         assert snapshot["sdk_pending"] == 0
         return snapshot
@@ -124,6 +126,16 @@ def main():
                 assert request("/_hoori/invoke", b"{", invoke)[0] == 400
                 assert request("/_hoori/invoke", b'"ok"', invoke)[0] == 200
                 until(lambda s: s["incoming_active"] == 0)
+                process.send_signal(signal.SIGTERM)
+                output, errors = process.communicate(timeout=10)
+                assert process.returncode == 0 and "admission_closed=true pools_closed=true" in output
+                incoming_run = {"pid": process.pid, "stdout": output, "stderr": errors}
+                # Ordinary routes now share incoming admission. Give the outgoing-queue probes
+                # enough root slots; the first process above separately proved the one-root bound.
+                incoming_bound = 8
+                env["HOORI_INCOMING_CALLS"] = str(incoming_bound)
+                process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                until(lambda s: s["instances"] == 2)
 
                 for _ in range(2):
                     release.clear()
@@ -173,7 +185,7 @@ def main():
                 ROOT / "framework/target/test-classes/hoori/micro/AdmissionMain.class",
                 ROOT / "framework/target/hoori-micro-0.1.0-SNAPSHOT.jar", ROOT / "scripts/test_admission.py")}
             print(json.dumps({"engine": engine, "runtime": receipt, "fingerprints": fingerprints, "pid": process.pid,
-                "snapshots": snapshots, "wire_actions": calls, "exit": process.returncode,
+                "incoming_run": incoming_run, "snapshots": snapshots, "wire_actions": calls, "exit": process.returncode,
                 "stdout": output, "stderr": errors}, sort_keys=True))
             print("PASS: native incoming/outgoing bounds, pre-codec/pre-wire rejection, deadlines, repeated recovery and drain")
         finally:

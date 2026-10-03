@@ -1,10 +1,10 @@
 package hoori.micro;
 
+import hoori.concurrent.http.HttpTasks;
 import hoori.http.Headers;
 import hoori.http.HttpClient;
 import hoori.http.HttpClientClosedException;
 import hoori.http.PoolOverloadedException;
-import hoori.http.Request;
 import hoori.http.RequestBudget;
 import hoori.http.Response;
 import hoori.rest.json.Json;
@@ -28,8 +28,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 final class ServiceBroker {
     @FunctionalInterface
     interface Exchange {
-        Response send(Request context, URI target, String method, Headers headers, byte[] body, RequestBudget budget)
-                throws IOException;
+        Response send(URI target, String method, Headers headers, byte[] body, RequestBudget budget) throws IOException;
     }
 
     static final String INVOKE_PATH = "/_hoori/invoke";
@@ -43,6 +42,7 @@ final class ServiceBroker {
     private final Admission outgoing;
     private final byte[] registration;
     private final AtomicInteger turn = new AtomicInteger();
+    final Executions executions;
     private volatile Catalog.Filter filter;
     private volatile View view = View.EMPTY;
     private boolean publicCatalog;
@@ -65,6 +65,7 @@ final class ServiceBroker {
         this.exchange = exchange;
         this.control = control;
         this.limits = limits;
+        executions = new Executions(config);
         outgoing = new Admission(config.outgoingCalls, config.outgoingPendingCalls);
         Catalog.Entry[] entries = new Catalog.Entry[service.actions.size()];
         int i = 0;
@@ -76,34 +77,32 @@ final class ServiceBroker {
         filter = Catalog.Filter.consumer(service.dependencies, false);
     }
 
-    static Exchange transport(HttpClient http) {
+    static Exchange dataTransport(HttpClient http) {
         if (http == null) throw new NullPointerException("http");
 
-        return (context, target, method, headers, body, budget) -> {
+        return (target, method, headers, body, budget) ->
+                HttpTasks.exchange(http, target, method, headers, body, budget);
+    }
+
+    static Exchange controlTransport(HttpClient http) {
+        if (http == null) throw new NullPointerException("http");
+
+        return (target, method, headers, body, budget) -> {
             if (budget == null) return http.exchange(target, method, headers, body);
 
-            return context == null
-                    ? http.exchange(target, method, headers, body, budget)
-                    : http.exchange(context, target, method, headers, body, budget);
+            return http.exchange(target, method, headers, body, budget);
         };
     }
 
-    RequestBudget defaultBudget(Request context) {
-        return context == null
-                ? RequestBudget.afterMillis(config.clientTimeoutMillis)
-                : context.budget().limitedToMillis(config.clientTimeoutMillis);
+    int callTimeoutMillis() {
+        return config.clientTimeoutMillis;
     }
 
-    Admission.Permit admit(Request context) throws IOException {
-        return admit(context, defaultBudget(context));
-    }
-
-    Admission.Permit admit(Request context, RequestBudget budget) throws IOException {
+    Admission.Permit admit(Invocation invocation, RequestBudget budget) throws IOException {
 
         // A dispatched request may still make immediate calls during drain; no waiting/new background work.
         return outgoing.acquire(
-                budget.limitedToMillis(config.clientTimeoutMillis).withRemainingMillisHeader(Context.BUDGET_HEADER),
-                context != null);
+                budget.withRemainingMillisHeader(Context.BUDGET_HEADER), executions.requestOwned(invocation));
     }
 
     Admission.Stats admissionStats() {
@@ -118,19 +117,15 @@ final class ServiceBroker {
         outgoing.close();
     }
 
-    <I, O> O call(Request context, Action<I, O> action, I input) throws IOException {
-        return call(context, defaultBudget(context), action, input);
-    }
-
-    <I, O> O call(Request context, RequestBudget budget, Action<I, O> action, I input) throws IOException {
+    <I, O> O call(Invocation invocation, RequestBudget budget, Action<I, O> action, I input) throws IOException {
         if (action == null || input == null) throw new NullPointerException();
 
         int version = dependency(action.service);
-        try (Admission.Permit permit = admit(context, budget)) {
+        try (Admission.Permit permit = admit(invocation, budget)) {
             permit.check(outgoing);
             byte[] result = invoke(
                     permit,
-                    context,
+                    invocation,
                     action.service,
                     version,
                     action.operation,
@@ -142,19 +137,15 @@ final class ServiceBroker {
         }
     }
 
-    Object call(Request context, String action, Map<String, ?> params) throws IOException {
-        return call(context, defaultBudget(context), action, params);
-    }
-
-    Object call(Request context, RequestBudget budget, String action, Map<String, ?> params) throws IOException {
+    Object call(Invocation invocation, RequestBudget budget, String action, Map<String, ?> params) throws IOException {
         if (params == null) throw new NullPointerException("params");
 
         String[] name = ServiceName.qualified(action);
         int version = dependency(name[0]);
-        try (Admission.Permit permit = admit(context, budget)) {
+        try (Admission.Permit permit = admit(invocation, budget)) {
             permit.check(outgoing);
             byte[] result =
-                    invoke(permit, context, name[0], version, name[1], Json.encode(params, JsonTree.CODEC, limits));
+                    invoke(permit, invocation, name[0], version, name[1], Json.encode(params, JsonTree.CODEC, limits));
             Object decoded = decode(name[0], result, JsonTree.CODEC);
             permit.check(outgoing);
 
@@ -163,14 +154,15 @@ final class ServiceBroker {
     }
 
     /** Returns the successful JSON body. Also used by the gateway with the catalog's version. */
-    byte[] invoke(Admission.Permit permit, Request context, String service, int version, String action, byte[] params)
+    byte[] invoke(
+            Admission.Permit permit, Invocation invocation, String service, int version, String action, byte[] params)
             throws IOException {
-        return invoke(permit, context, service, version, action, params, snapshot());
+        return invoke(permit, invocation, service, version, action, params, snapshot());
     }
 
     byte[] invoke(
             Admission.Permit permit,
-            Request context,
+            Invocation invocation,
             String service,
             int version,
             String action,
@@ -188,9 +180,12 @@ final class ServiceBroker {
                 .add("Content-Type", "application/json")
                 .add(ACTION_HEADER, service + "." + action)
                 .add(VERSION_HEADER, Integer.toString(version));
+
+        if (invocation != null) headers.add("X-Request-ID", invocation.requestId());
+
         Response response;
         try {
-            response = exchange.send(context, target.invokeTarget, "POST", headers, params, permit.budget);
+            response = exchange.send(target.invokeTarget, "POST", headers, params, permit.budget);
         } catch (PoolOverloadedException overloaded) {
             throw new CallRejectedException();
         } catch (SocketTimeoutException expired) {
@@ -282,23 +277,20 @@ final class ServiceBroker {
             Response response;
 
             if (register && registered) {
-                response = control.send(
-                        null, URI.create(config.registryUrl + path + "/lease"), "POST", headers, EMPTY, null);
+                response = control.send(URI.create(config.registryUrl + path + "/lease"), "POST", headers, EMPTY, null);
 
                 if (response.status == 404) registered = false;
             } else response = null;
 
             if (register && !registered) {
                 response = control.send(
-                        null,
                         URI.create(config.registryUrl + path),
                         "PUT",
                         headers.add("Content-Type", "application/json"),
                         registration,
                         null);
             } else if (!register) {
-                response =
-                        control.send(null, URI.create(config.registryUrl + "/v1/catalog"), "GET", headers, EMPTY, null);
+                response = control.send(URI.create(config.registryUrl + "/v1/catalog"), "GET", headers, EMPTY, null);
             }
 
             accept(response, known, requested);
@@ -339,7 +331,6 @@ final class ServiceBroker {
 
         try {
             control.send(
-                    null,
                     URI.create(config.registryUrl + "/v1/instances/" + config.instanceId),
                     "DELETE",
                     new Headers().add(Catalog.PROTOCOL_HEADER, "2"),

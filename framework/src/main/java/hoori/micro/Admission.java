@@ -1,5 +1,6 @@
 package hoori.micro;
 
+import hoori.concurrent.Cancellation;
 import hoori.http.RequestBudget;
 import java.io.IOException;
 import java.io.InterruptedIOException;
@@ -28,42 +29,51 @@ final class Admission {
         if (budget == null) throw new NullPointerException("budget");
 
         Thread current = Thread.currentThread();
+        Cancellation token = Cancellation.current();
         int slot = -1;
-        try {
+        // Register outside the admission lock. A cancel before park leaves an unpark permit.
+        try (var registration = token == null ? null : token.onCancel(() -> LockSupport.unpark(current))) {
             for (; ; ) {
-                synchronized (lock) {
-                    interrupted();
+                Cancellation.checkpoint();
+                // Admission and cancellation request share this linearization point. If a reason
+                // already exists, checkpoint cannot deliver new callbacks; cleanup may be shielded.
+                synchronized (token == null ? lock : token) {
+                    if (token != null && token.isCancellationRequested()) Cancellation.checkpoint();
 
-                    if (budget.isExpired()) {
-                        if (expired < Long.MAX_VALUE) expired++;
+                    synchronized (lock) {
+                        interrupted();
 
-                        throw new SocketTimeoutException("Call admission deadline expired");
-                    }
+                        if (budget.isExpired()) {
+                            if (expired < Long.MAX_VALUE) expired++;
 
-                    if (closed || stopping && (slot >= 0 || !allowDuringDrain)) throw reject();
-
-                    if (active < maxActive) {
-                        Permit permit = new Permit(this, budget);
-
-                        if (slot >= 0) {
-                            remove(slot);
-                            slot = -1;
+                            throw new SocketTimeoutException("Call admission deadline expired");
                         }
 
-                        active++;
+                        if (closed || stopping && (slot >= 0 || !allowDuringDrain)) throw reject();
 
-                        return permit;
-                    }
+                        if (active < maxActive) {
+                            Permit permit = new Permit(this, budget);
 
-                    if (stopping) throw reject();
+                            if (slot >= 0) {
+                                remove(slot);
+                                slot = -1;
+                            }
 
-                    if (slot < 0) {
-                        if (pending == waiters.length) throw reject();
+                            active++;
 
-                        slot = 0;
-                        while (waiters[slot] != null) slot++;
-                        waiters[slot] = current;
-                        pending++;
+                            return permit;
+                        }
+
+                        if (stopping) throw reject();
+
+                        if (slot < 0) {
+                            if (pending == waiters.length) throw reject();
+
+                            slot = 0;
+                            while (waiters[slot] != null) slot++;
+                            waiters[slot] = current;
+                            pending++;
+                        }
                     }
                 }
                 // Unpark before park leaves a permit; registration/removal stays under the same monitor.
@@ -93,7 +103,7 @@ final class Admission {
     private CallRejectedException reject() {
         if (rejected < Long.MAX_VALUE) rejected++;
 
-        return new CallRejectedException();
+        return new CallRejectedException(stopping || closed);
     }
 
     void stop() {
@@ -143,6 +153,7 @@ final class Admission {
         void check(Admission expected) throws IOException {
             if (owner != expected || released) throw new IllegalStateException("Admission permit owner");
 
+            Cancellation.checkpoint();
             interrupted();
 
             if (owner.closed) {

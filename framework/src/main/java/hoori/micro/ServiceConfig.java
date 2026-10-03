@@ -7,6 +7,7 @@ public final class ServiceConfig {
     public final String name, bindAddress, instanceId, registryUrl, advertiseUrl;
     public final int port, bodyBytes, serverConnections, clientConnections, clientPerOrigin, clientPendingAcquires;
     public final int requestTimeoutMillis, clientTimeoutMillis, clientIdleMillis, shutdownGraceMillis;
+    public final int workTimeoutMillis;
     public final int heartbeatMillis, registryTtlMillis, catalogMaxAgeMillis, controlTimeoutMillis;
     public final int incomingCalls, incomingPendingCalls, outgoingCalls, outgoingPendingCalls;
 
@@ -26,6 +27,7 @@ public final class ServiceConfig {
         outgoingPendingCalls = number(env, "HOORI_OUTGOING_PENDING_CALLS", outgoingCalls, 0, 512);
         requestTimeoutMillis = number(env, "HOORI_REQUEST_TIMEOUT_MS", 10000, 1, 600000);
         clientTimeoutMillis = number(env, "HOORI_CLIENT_TIMEOUT_MS", 2000, 1, 600000);
+        workTimeoutMillis = number(env, "HOORI_WORK_TIMEOUT_MS", clientTimeoutMillis, 1, 600000);
         clientIdleMillis = number(env, "HOORI_CLIENT_IDLE_MS", 5000, 1, 600000);
         shutdownGraceMillis = number(env, "HOORI_SHUTDOWN_GRACE_MS", 10000, 0, 600000);
         heartbeatMillis = number(env, "HOORI_HEARTBEAT_MS", 2000, 100, 60000);

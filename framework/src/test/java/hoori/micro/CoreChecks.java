@@ -151,6 +151,7 @@ public final class CoreChecks {
             "HOORI_CLIENT_PER_ORIGIN",
             "HOORI_REQUEST_TIMEOUT_MS",
             "HOORI_CLIENT_TIMEOUT_MS",
+            "HOORI_WORK_TIMEOUT_MS",
             "HOORI_CONTROL_TIMEOUT_MS",
             "HOORI_INCOMING_CALLS",
             "HOORI_OUTGOING_CALLS",

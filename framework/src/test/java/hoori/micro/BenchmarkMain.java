@@ -63,15 +63,14 @@ public final class BenchmarkMain {
                                 "/bench",
                                 request -> Responses.json(
                                         200,
-                                        app.context(request).call(ECHO, request.body(JsonTree.CODEC, JSON)),
+                                        app.context().call(ECHO, request.body(JsonTree.CODEC, JSON)),
                                         JsonTree.CODEC,
                                         JSON));
 
-            app.routes()
-                    .get(
-                            "/bench/runtime",
-                            request -> runtime(
-                                    app.broker(), app.dataPoolStats(), app.controlPoolStats(), app.incomingStats()));
+            app.controlRoute(
+                    "GET",
+                    "/bench/runtime",
+                    request -> runtime(app.broker(), app.dataPoolStats(), app.controlPoolStats(), app.incomingStats()));
             app.run();
             for (HttpClient.PoolStats stats :
                     new HttpClient.PoolStats[] {app.dataPoolStats(), app.controlPoolStats()}) {
@@ -147,7 +146,7 @@ public final class BenchmarkMain {
                 .withPendingAcquires(VARIANT.equals("A") ? config.outgoingPendingCalls : config.clientPendingAcquires);
         try (HttpClient client = new HttpClient(clientLimits, config.clientPerOrigin, config.clientIdleMillis)) {
             ServiceBroker broker = VARIANT.equals("B")
-                    ? new ServiceBroker(service, config, ServiceBroker.transport(client), JSON)
+                    ? new ServiceBroker(service, config, ServiceBroker.dataTransport(client), JSON)
                     : null;
 
             if (broker != null) {
@@ -162,6 +161,23 @@ public final class BenchmarkMain {
 
             URI direct = URI.create("http://recipes:8080/direct");
             Router router = new Router();
+            Admission incoming = new Admission(config.incomingCalls, config.incomingPendingCalls);
+
+            if (broker != null)
+                router.use((request, next) -> {
+                    if (request.routeTemplate().equals("/metrics")
+                            || request.routeTemplate().equals("/health/ready")
+                            || request.routeTemplate().equals("/bench/runtime")) return next.handle(request);
+
+                    return broker.executions.request(
+                            request.raw(),
+                            Context.incomingBudget(
+                                    request.raw().headers,
+                                    request.raw().budget().limitedToMillis(config.workTimeoutMillis)),
+                            incoming,
+                            scope -> next.handle(request));
+                });
+
             HttpServer[] owner = new HttpServer[1];
             router.get(
                     "/metrics",
@@ -185,18 +201,7 @@ public final class BenchmarkMain {
                             || !"1".equals(headers.get(ServiceBroker.VERSION_HEADER)))
                         return Response.text(421, "Action not offered by this instance");
 
-                    return service.actions
-                            .get("echo")
-                            .invoke(
-                                    new Context(
-                                            broker,
-                                            request.raw(),
-                                            Context.incomingBudget(
-                                                            headers,
-                                                            request.raw().budget())
-                                                    .limitedToMillis(config.clientTimeoutMillis)),
-                                    request,
-                                    JSON);
+                    return service.actions.get("echo").invoke(new Context(broker), request, JSON);
                 });
             } else {
                 router.post("/bench", request -> {
@@ -214,7 +219,7 @@ public final class BenchmarkMain {
                         if (response.status != 200) throw new RequestException(502, "Upstream service unavailable");
 
                         result = Json.decode(response.body, JsonTree.CODEC, JSON);
-                    } else result = broker.call(request.raw(), ECHO, input);
+                    } else result = new Context(broker).call(ECHO, input);
 
                     return Responses.json(200, result, JsonTree.CODEC, JSON);
                 });
@@ -245,6 +250,11 @@ public final class BenchmarkMain {
                 try {
                     server.run();
                 } finally {
+                    if (broker != null) {
+                        broker.executions.awaitUntil(System.nanoTime() + config.shutdownGraceMillis * 1_000_000L);
+                        broker.executions.close();
+                    }
+
                     server.shutdown(config.shutdownGraceMillis);
 
                     if (broker != null) broker.close();

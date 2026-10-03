@@ -7,6 +7,8 @@ Dahemm-Actions / explizite Anwendungsdienste
                     ↓
 hoori-micro: Service-Definition, Broker, Registry, Gateway, Lifecycle
                     ↓
+hoori-concurrent-api / concurrent-http: Tasks, RequestScopes, HttpTasks
+                    ↓
 hoori-rest-api: Router, Middleware, explizite JSON-Codecs
                     ↓
 hoori-http-api: HTTP, Pooling, Bounds, Kontext, Metriken, Drain
@@ -119,8 +121,8 @@ verwenden `Map` und `JsonTree` (Map, List, String, Long, Double, Boolean, null).
 Provider registrieren denselben Vertrag mit `action(contract, handler)`; fremde
 Service-Namen werden beim Start abgewiesen. `http(actionName, method, path)` und
 `requirePermission(actionName, permission)` binden Metadaten ausdrücklich an die
-Action. Die bisherigen Overloads bleiben kompatibel. Ein Buildzeit-Generator ist
-bei den kleinen vorhandenen DTOs ohne belegte Boilerplate-Ersparnis zurückgestellt.
+Action. Ein optionales Buildzeit-Fassadenbeispiel folgt separat; der Core benötigt
+keine Annotationen oder generierten Klassen.
 Ergebnisse müssen 2xx mit `application/json` (optional `charset=utf-8`) sein; sonst
 `ServiceCallException` mit Status, aber ohne Upstream-Body.
 
@@ -163,24 +165,57 @@ Limits werden beim Start geprüft. Katalog (256 Instanzen × 128 Actions), Abhä
 und Gateway-Routen wachsen nie durch Request-Werte. Der Katalog muss in
 `HOORI_BODY_BYTES` passen; größere Installationen müssen das Limit anheben.
 
-Pro Richtung begrenzt eine globale Admission laufende und wartende Framework-Calls.
-Ausgehend beginnt sie vor Encoding und Gateway-Parametern, eingehend vor DTO-Decoding
-und Action-Handler; der begrenzte Raw-Body ist dann bereits vom SDK gelesen.
-Typisierte, generische und Gateway-Calls halten genau ein ausgehendes Permit bis zum
-Ergebnis. Wartende sind begrenzt und starten nach Stop nicht mehr; Fehler/Timeout/
-Interrupt geben ihre Slots frei. Health und Control laufen weiter. Sättigung liefert
-einen sicheren 503, auch über einen weiteren Service-Hop. Standardmäßig wartet nur
-die Framework-Queue, der SDK-Datenpool hat null Pending-Slots. Größere Limits stehen
-in [configuration.md](configuration.md); eigene Anwendungstasks sind davon nicht erfasst.
+Alle Fachrequests – normale Route, Invoke und Gateway – laufen in einer service-
+eigenen `RequestScopes`-Grenze innerhalb der Router-Fehlerbehandlung:
 
-Ein `Context` hält ein unveränderliches SDK-`RequestBudget` für die gesamte Arbeit,
-einschließlich serieller `ctx.call()`-Aufrufe. Es beginnt vor Admission/DTO-Decoding
-bzw. Encoding und wird durch die bereits laufende SDK-Request-Deadline sowie
-`HOORI_CLIENT_TIMEOUT_MS` begrenzt. Hintergrundkontexte haben denselben Default;
-`ctx.limitedToMillis(n)` erlaubt eine kürzere Grenze. Wiederholtes
-`app.context(request)` liefert denselben Kontext über ein SDK-Attribut, ohne
-ThreadLocal. Child-Admission und Exchange behalten die früheste Deadline; nach
-Ablauf startet kein weiterer Codec/Handler/Downstream-Call.
+1. Vertrauenswürdige Routenzuordnung und relative Invoke-Budgetprüfung.
+2. Request-Root, begrenzte eingehende Admission, DTO/Handler/Antwortaufbau.
+3. Tatsächlicher Kind-/Ressourcenabschluss und Wiederherstellung von Kontext/Timer.
+4. Öffentliche Fehlerabbildung, danach HTTP-Antworttransport.
+
+Der SDK-Raw-Body ist davor bereits begrenzt eingelesen; das ist keine Streaming-
+Admission. Genau ein eingehendes Permit bleibt bis zum verwalteten Abschluss
+belegt. Root-Slots zählen auch Wartende: Incoming-Calls plus Incoming-Pending,
+höchstens das Serververbindungslimit (maximal 512). Das ist keine Reservierung
+beliebig vieler VM-Kinder; Task-/Timer-Kapazitätsablehnung bleibt möglich und
+muss bereits gestartete Arbeit drainieren. Fachlich erwartete 4xx-Responses sind
+keine Exceptions und lösen keine erfundene Rollback-Policy aus.
+
+Health/live, Health/ready, Metriken und feste Registry-Routen sind anhand der
+registrierten Methode/Route von Root und Fach-Admission ausgenommen. Ein Header
+oder roher Pfad erzeugt keinen Bypass. Gemeinsame Verbindungs- und Carrier-Grenzen
+können diese Endpunkte weiterhin beeinträchtigen.
+
+Ausgehend hält jeder typisierte, generische oder Gateway-Call genau ein Permit
+vor JSON-Arbeit bis nach Ergebnis-Decoding. Cancellation weckt Admission-Waiter;
+`HttpTasks.exchange` bricht gezielt Pool-Wait bzw. Transport ab. Der gemeinsame
+Client bleibt offen. Callback-Registrierungen, Waiter und Permits werden auf allen
+Ausgängen freigegeben. Standardmäßig wartet nur die Framework-Queue, der SDK-Pool
+hat null Pending-Slots. Eigene unbegrenzte Fork-Schleifen sind keine unterstützte
+Kapazitätsstrategie; `Tasks.map/forEach(...).maxConcurrency(n)` begrenzt Batch-Arbeit.
+
+`Context` hält nur den Broker. Die unveränderliche `Invocation` enthält Request-ID,
+Ursprung REQUEST/SERVICE und eine ausschließlich lokale Deadline; keine Request-,
+Body-, Header-, Scope- oder Ressourcenreferenz. Zwei explizite SDK-TaskContext-
+Bindings: vererbte Metadaten und owner-lokaler Raw-Request. Kinder sehen Letzteren
+nicht; `ownerRequest()` scheitert dort. Es gibt keinen eigenen ThreadLocal-Kontext.
+Die SDK-Grenzen für Bindings gelten auch für Anwendungsbindungen.
+
+`ctx.call` läuft direkt im aktuellen logischen Task; `ctx.task` erzeugt nur einen
+wiederverwendbaren `TaskSpec`, ohne Admission, Encoding oder Netzwerk. Eingaben
+werden per Referenz erfasst, nicht kopiert. Erst beim Start wird der dann aktive
+Kontext verwendet; ein Parallel-Plan selbst bleibt nach SDK-Vertrag single-use.
+Calls benötigen eine aktive lokale Micro-Grenze. `app.runTask(spec)` erstellt
+explizite service-eigene Startup-/Wartungsarbeit und wartet auf deren Abschluss;
+kein Fire-and-forget, keine Requestdaten. Innerhalb einer Request-Operation sind
+normale Task-Kompositionen oder kürzere `TaskScope.named(...).within(...)`-Grenzen
+zu verwenden.
+
+Das Arbeitsbudget ist das Minimum der bereits laufenden HTTP-Frist und
+`HOORI_WORK_TIMEOUT_MS`. Jeder Call bildet vor seiner ersten Phase einmal das
+Minimum aus Invocation-Deadline, `Budget.current()` und `HOORI_CLIENT_TIMEOUT_MS`.
+Admission, Codecs, Pool und I/O verbrauchen diesen selben Wert; serielle Calls und
+Nested-Scopes können die Parent-Frist nicht verlängern.
 
 Nur `/_hoori/invoke` akzeptiert `X-Hoori-Budget-Ms`: genau ein kanonischer
 Dezimalwert von 0 bis 600000. Doppelte, malformed, negative, führend genullte oder
@@ -196,8 +231,12 @@ keine vergleichbaren monotonen Zeitstempel verschiedener Prozesse. Sende-,
 Transit- und Empfänger-Parsing-Zeit nach dem Messpunkt lassen sich daraus nicht
 exakt abziehen; die ursprüngliche Caller-Frist bleibt lokal wirksam. Das ist kein
 globales Echtzeitversprechen und kein Remote-Cancellation-RPC. CPU-Code muss
-weiterhin kooperieren. Ablauf liefert 504, Cancellation/Überlast/Stop 503;
+weiterhin kooperieren. Interne Deadline-Klassifikation entspricht 504,
+Cancellation/Überlast/Stop 503;
 entfernte 503/504 bleiben erhalten, andere Upstream-Ausfälle liefern 502.
+Ein bereits abgelaufenes Transportbudget kann das Senden der Fehlerantwort
+verhindern. Früher Peer-Disconnect ist während des Handlers kein verlässliches
+sofortiges Cancel-Signal: Der Server liest dann nicht parallel aus dem Socket.
 Abbruch schließt nur den betroffenen Exchange, nie den gemeinsamen Client.
 
 **Keine automatischen Retries, auch nicht für POST.** Nach einem Verbindungsfehler
@@ -207,8 +246,7 @@ ebenfalls nicht automatisch verfolgt. Ausgehende Fehler werden sicher nach auße
 übersetzt; fachliche 404 können Controller explizit abbilden.
 
 Der Bootstrap ist kein Circuit-Breaker-Framework. Retry-Budgets,
-Idempotency Keys und begrenztes Fan-out folgen nur bei einem
-konkreten Use-Case und mit passenden Tests. Insbesondere begrenzt ein Pool nicht
+Idempotency Keys benötigen einen konkreten fachlichen Vertrag. Insbesondere begrenzt ein Pool nicht
 jede denkbare, vom Anwendungscode selbst erzeugte Menge wartender Hintergrundtasks.
 
 Control-Timeouts (`SocketTimeoutException`) und Transportfehler führen zum bestehenden
@@ -219,25 +257,43 @@ Peer-Body/Stacktrace geloggt. Zwei Pools schaffen keine CPU-Präemption.
 
 ## 5. Lifecycle und Nebenläufigkeit
 
-1. Service-Definition und Konfiguration validieren, beide Clients erzeugen, Routen registrieren.
-2. Router einfrieren, Listener binden, Service starten.
-3. Sobald live und ready: registrieren; Heartbeats nur solange ready.
-4. Bei SIGTERM Aufnahme und weitere Heartbeats stoppen; der Registrar deregistriert
-   best effort. Der Owner wartet begrenzt auf ihn (höchstens drei Control-Timeouts,
-   einschließlich Close-Fallback), bevor er den Daten-Drain startet.
-5. Bereits zugelassene Requests innerhalb der Grace-Period abarbeiten; vor Encoding/
-   Decoding Wartende aufwecken und mit 503 abweisen. Zugelassene Handler dürfen weitere
-   sofortige Calls starten, sofern ein Slot frei ist, aber keine neue Queue bilden.
-6. Erst danach den Datenpool schließen; Control wird ebenfalls geschlossen. Die TTL
-   deckt eine gescheiterte Deregistrierung ab. Kein neuer lokaler Beat folgt dem Stop;
-   entfernte bereits gesendete Operationen bleiben eine Best-effort-Netzwerkgrenze.
+1. Service-Definition/Konfiguration prüfen, gemeinsame Clients erzeugen, Routen
+   und optionale service-eigene Ressourcen mit `app.own(resource)` registrieren.
+2. Router einfrieren, Listener starten, bei Ready registrieren/Leases erneuern.
+3. SIGTERM oder `stop()` stoppt Aufnahme, neue Roots/Waiter und Heartbeats sofort;
+   eine einzige Grace-Deadline beginnt hier. Der Registrar deregistriert unabhängig.
+4. Aktive Requests dürfen innerhalb der Grace weitere unmittelbare Calls machen,
+   falls ein Permit frei ist. Diese Ausnahme verlangt echte lokale Request-
+   Ownership; Service-Roots und einschleusbare Header erhalten sie nicht.
+5. Nach Grace aktive Roots canceln und ihren tatsächlichen Kind-/Finally-/Ressourcen-
+   sowie Kontext-/Timer-Abschluss abwarten. Nicht kooperierende Arbeit bleibt aktiv.
+6. HTTP-Shutdown bekommt die Restzeit derselben Grace: Response-I/O liegt nach der
+   Root-Completion und darf nicht mit deren Abschluss gleichgesetzt werden.
+7. Registrar begrenzt abschließen, gemeinsame Daten-/Control-Clients und dann
+   registrierte Service-Ressourcen in umgekehrter Reihenfolge schließen.
 
-Wichtig: `HttpServer.run()` kehrt zurück, sobald die Aufnahme endet. Es wartet
-nicht selbst auf alle Handler. Deshalb lösen Signal-Watcher und Heartbeat-Thread nur
-`stop()` bzw. die Deregistrierung aus; der `run()`-Owner führt `shutdown()` aus und
-schließt erst danach den Pool.
-`close()` ist ein ausdrücklicher Sofortabbruch; während des Betriebs für geordnetes
-Beenden `stop()` verwenden.
+`HttpServer.run()`-Rückkehr oder Null-HTTP-Zähler beweisen keinen Scope-Drain.
+`close()` eines externen Owners fordert Stop an und wartet auf den tatsächlichen
+Abschluss; es ist idempotent. Ein aktiver Handler darf `stop()`, nicht das eigene
+`close()` aufrufen. Startfehler führen ebenfalls in denselben Cleanup-Pfad.
+Eine langsame Registry verlängert die fachliche Grace nicht; ihr Abschluss kann
+nach dem Daten-Drain bis zu drei Control-Timeouts zusätzlich benötigen.
+
+**Fehler und Diagnose:** Bekannte Scope-/Subtask-/Bulk-/Operation-Wrapper werden
+begrenzt nach ihrer semantischen Hauptursache klassifiziert. Fachfehler behalten
+ihren bewusst öffentlichen Status/Text, Kapazität/Shutdown liefern 503, Deadline
+und lokale I/O-Timeouts 504, Upstream-Fehler 502 (503/504 bleiben erhalten),
+unerwartete Fehler 500. Ursprüngliche Ursachen/suppressed-Fehler bleiben unverändert;
+ein späterer Sibling-Abbruch überschreibt keinen primären Fachfehler. Operation-
+Transaktionsstatus bleibt intern erhalten, ohne DB-Pflichtabhängigkeit.
+
+Feste Metriken erfassen aktive/überfällige Roots, Completion, Zeit nach Body-Ende
+bis zum vollständigen Abschluss und neun feste Fehlergründe. Keine Requestwerte
+als Labels. `app.taskDiagnostics()` erstellt nur auf Anforderung Snapshots von
+höchstens acht bekannten Roots mit je 32 Einträgen und Tiefe vier. Die Snapshots
+enthalten kopierte skalare Zustände; aktive Scope-Referenzen liegen ausschließlich
+in begrenzten Slots und werden bei Completion entfernt. Die Abfrage kostet eine
+begrenzte Scope-/VM-Abtastung; kein kostenloses Dauer-Sampling, kein HTTP-Debug-Endpunkt.
 
 `ready(false)` verändert den Bereitschaftszustand, ist aber kein eigenständiges
 Autorisierungs- oder Request-Abweisungssystem. Docker `depends_on: service_healthy`

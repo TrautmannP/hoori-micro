@@ -80,8 +80,9 @@ public final class Gateway implements Middleware {
         if (!request.routeTemplate().equals("<unmatched>")) return next.handle(request);
 
         // One outgoing permit covers route parameters, input encoding and the direct RPC.
-        Context context = app.context(request);
-        try (Admission.Permit permit = broker.admit(request.raw(), context.budget())) {
+        Context context = app.context();
+        Invocation invocation = context.invocation();
+        try (Admission.Permit permit = broker.admit(invocation, context.effectiveBudget())) {
             ServiceBroker.View snapshot = broker.snapshot();
 
             String target = request.raw().target;
@@ -102,8 +103,8 @@ public final class Gateway implements Middleware {
             byte[] params = Json.encode(input, JsonTree.CODEC, limits);
             byte[] result;
             try {
-                result = broker.invoke(
-                        permit, request.raw(), route.service, route.version, route.action, params, snapshot);
+                result =
+                        broker.invoke(permit, invocation, route.service, route.version, route.action, params, snapshot);
             } catch (ServiceCallException rejected) {
                 int status = rejected.upstreamStatus();
 
