@@ -61,9 +61,11 @@ Details und Grenzen: [Architektur](docs/architecture.md),
 | Prüfungen | Portable Checks, JUnit-Vertragstests, Distributionsprüfung, echte Hoori-/Docker-Abnahme |
 
 Nicht enthalten: Authentifizierung (Registry, Invoke-Endpunkt und Demo-Gateway sind
-unauthentifiziert), Mandantenmodell, Datenbankzugriff, Events, Circuit Breaker,
+unauthentifiziert), Mandantenmodell, Events, Circuit Breaker,
 hochverfügbare Registry, DI-Container oder
 migrierte Dahemm-Fachlogik.
+Ein [optionaler Datenbank-Consumer](examples/local-data/README.md) zeigt lokale
+JDBC-/Jdbi-Transaktionen mit eigener Demo-Datenbank; der HTTP-Kern bleibt DB-frei.
 
 ## Schnellstart
 
@@ -236,6 +238,12 @@ Für vorhandene synchrone Client-Interfaces zeigt das optionale
 verdrahtete `@TaskScoped`-Methoden. Es wird separat gebaut; der Processor läuft
 nur beim Kompilieren. Der normale HTTP-Build benötigt ihn nicht.
 
+Das [Daten-/Outbox-Beispiel](examples/local-data/README.md) bereitet Remote-Lese-
+ergebnisse vor und speichert anschließend in einer kurzen lokalen Transaktion.
+Es zeigt sowohl `Transactions.required(manager)` als auch den ausdrücklich mit
+diesem Manager konstruierten `@Transactional`-Delegate. Die Antwort entsteht nach
+dem Commit; spätere Antwortfehler bedeuten keinen Rollback und keinen Write-Retry.
+
 Das Framework-JAR soll später in einem eigenen internen Maven-Repository publiziert
 werden. Es ist derzeit **nicht** öffentlich auf Maven Central verfügbar. Die hier
 verwendete Snapshot-Version ist für den Bootstrap, nicht für reproduzierbare Releases.
@@ -278,7 +286,8 @@ nicht die sofortige Zerlegung des gesamten Backends.
 Reproduzierbare A–D-Lastkontrollen und ihre Messgrenzen stehen unter
 [Vergleichsbenchmarks](docs/benchmarks.md).
 
-Die Beispieldienste haben keine Authentifizierung und speichern keine Daten.
+Die Beispieldienste haben keine Authentifizierung. Die HTTP-Demos sind zustandslos;
+der optionale Daten-Consumer schreibt ausschließlich in seine eigene Demo-Datenbank.
 Sie sind ausschließlich für lokale/private Entwicklungsnetze gedacht. Ein internes
 Docker-Netz ersetzt weder Service-Authentifizierung noch Mandantenautorisierung.
 Die Lizenzentscheidung für das Framework ist noch offen.

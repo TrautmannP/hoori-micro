@@ -91,6 +91,15 @@ kein automatischer Neustartmechanismus bei jedem ungesunden Zustand.
 
 ## Weitere Betriebsregeln
 
+Das separat gebaute [Datenbeispiel](../examples/local-data/README.md) benötigt
+`HOORI_DB_URL` (PostgreSQL-JDBC-URL ohne Queryparameter), `HOORI_DB_USER` und
+`HOORI_DB_PASSWORD`; `HOORI_DB_SSLMODE` ist standardmäßig `require`. `disable`
+ist nur für die lokale Wegwerf-Datenbank vorgesehen. Der Beispiel-Launcher setzt
+Loopback, Port 8084, passende Advertise-URL und die lokale Registry auf 8090,
+sofern diese Werte nicht ausdrücklich gesetzt sind. Connect-/I/O-/Cancel-Bounds
+stehen zentral in `Database`, nicht an jedem Fachaufruf. Die normale Compose-
+Datei startet keinen Datenbankdienst und erhält diese Variablen nicht.
+
 Pro Prozess ein `Microservice` besitzen und schließen; keine neuen Clients je
 Aufruf. Die festen Pool-Metriken `hoori_micro_pool_{active_connections,idle_connections,pending_acquires,rejected_acquires_total}`
 tragen ausschließlich `pool="data"` oder `pool="control"`. Aktive Verbindungen zählen

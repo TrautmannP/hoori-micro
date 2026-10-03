@@ -31,7 +31,9 @@ aus der allgemeinen Konfiguration gelten ebenfalls.
 Der kürzere Weg ohne Codegen bleibt `ctx.task(Recipes.GET, query)` in Shopping.
 Die Fassade lohnt sich für bestehende synchrone Client-Interfaces; sie spart dort
 handgeschriebene Task-Wrapper, fügt aber einen bewussten Buildschritt hinzu.
-Lokale generierte Transaktionsgrenzen gehören zum separaten Datenbankbeispiel (#27).
+Lokale generierte Transaktionsgrenzen zeigt das separate
+[Datenbankbeispiel](../local-data/README.md): `StoreScoped` erhält seinen stabilen
+Manager ausdrücklich. Das fügt diesem HTTP-Beispiel keine Transaction-Abhängigkeit hinzu.
 
 Nach dem Build prüft `python3 scripts/test_composition.py --facade` echte
 Discovery-Calls, verzögerte/wiederholte Ausführung, Request-Kontext, Checked Exceptions,

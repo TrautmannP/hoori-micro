@@ -79,6 +79,34 @@ class RuntimeCheckTest(unittest.TestCase):
         self.receipt_and_hashes()
         self.rejects()
 
+    def test_external_dependency_requires_explicit_selection(self):
+        name = "hoori-concurrent-http-api"
+        path = self.path / f"metadata/{name}.pom"
+        pom = path.read_text().replace("</project>", "<dependencies><dependency><groupId>org.jdbi</groupId>"
+            "<artifactId>jdbi3-core</artifactId><version>3.55.0</version></dependency></dependencies></project>")
+        path.write_text(pom)
+        with zipfile.ZipFile(self.path / f"lib/{name}-0.1.0.jar", "w") as archive:
+            archive.writestr(f"META-INF/maven/dev.hoori/{name}/pom.xml", pom)
+        self.receipt_and_hashes()
+        self.rejects()
+        self.lock["externalDependencies"] = ["org.jdbi:jdbi3-core:3.55.0"]
+        self.assertEqual(self.receipt, runtime_check.verify(self.path, self.lock))
+
+    def test_build_selection_cannot_satisfy_runtime_dependency(self):
+        name = "hoori-concurrent-http-api"
+        path = self.path / f"metadata/{name}.pom"
+        pom = path.read_text().replace("</project>", "<dependencies><dependency><groupId>dev.hoori</groupId>"
+            "<artifactId>hoori-rest-api</artifactId><version>0.1.0</version></dependency></dependencies></project>")
+        path.write_text(pom)
+        with zipfile.ZipFile(self.path / f"lib/{name}-0.1.0.jar", "w") as archive:
+            archive.writestr(f"META-INF/maven/dev.hoori/{name}/pom.xml", pom)
+        self.receipt_and_hashes()
+        self.assertEqual(self.receipt, runtime_check.verify(self.path, self.lock))
+        self.lock["runtimeSdks"].remove("hoori-rest-api")
+        self.lock["buildSdks"] = ["hoori-rest-api"]
+        self.lock["externalDependencies"] = ["dev.hoori:hoori-rest-api:0.1.0"]
+        self.rejects()
+
     def test_required_pom_even_with_rehashed_manifest(self):
         (self.path / "metadata/hoori-concurrent-http-api.pom").unlink()
         self.receipt_and_hashes()

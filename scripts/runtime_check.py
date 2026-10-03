@@ -67,8 +67,8 @@ def verify(directory: Path, lock: dict | None = None) -> dict:
     if receipt.get("guest_base") != guest:
         raise ValueError("Unexpected Guest Base artifact")
     required = ["bin/hoori", "SYSTEM.txt", "GUEST-LICENSE.txt", "verify.sh", guest]
-    selected = {f"dev.hoori:{name}:{lock['sdkVersion']}"
-                for name in lock["runtimeSdks"] + lock.get("buildSdks", [])}
+    runtime = {f"dev.hoori:{name}:{lock['sdkVersion']}" for name in lock["runtimeSdks"]}
+    selected = runtime | {f"dev.hoori:{name}:{lock['sdkVersion']}" for name in lock.get("buildSdks", [])}
     for coordinate in selected:
         artifact = receipt.get("sdk_artifacts", {}).get(coordinate)
         if not artifact:
@@ -89,8 +89,11 @@ def verify(directory: Path, lock: dict | None = None) -> dict:
                 continue
             dependency_id = ":".join(dependency.findtext("m:" + key, "", NS)
                                      for key in ("groupId", "artifactId", "version"))
-            if dependency_id not in selected:
-                raise ValueError(f"Required dependency missing from runtimeSdks: {dependency_id}")
+            available = runtime if coordinate in runtime else selected
+            external = (not dependency_id.startswith("dev.hoori:")
+                        and dependency_id in lock.get("externalDependencies", []))
+            if dependency_id not in available and not external:
+                raise ValueError(f"Required dependency missing from SDK/external selection: {dependency_id}")
     concurrent = receipt["sdk_artifacts"][f"dev.hoori:hoori-concurrent-api:{lock['sdkVersion']}"]
     contract = concurrent.get("runtime_contract", {})
     if (contract.get("runtime_revision") != lock["revision"] or contract.get("guest_base") != guest
