@@ -94,6 +94,7 @@ class RuntimeCheckTest(unittest.TestCase):
             for module, artifact in (("framework", "hoori-micro"),
                     ("examples/demo-contracts", "hoori-micro-demo-contracts"),
                     ("examples/recipes-service", "recipes-service"),
+                    ("examples/pantry-service", "pantry-service"),
                     ("examples/shopping-service", "shopping-service")):
                 target = root / module / "target"
                 target.mkdir(parents=True)

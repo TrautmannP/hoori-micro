@@ -52,6 +52,17 @@ services:
       HOORI_DEMO_RECOMMEND: ${HOORI_DEMO_RECOMMEND:-0}
     depends_on: *after-registry
     networks: [backend]
+  pantry:
+    <<: *common
+    build:
+      <<: *build
+      args: {SERVICE: pantry, RUNTIME_BASE: '${HOORI_RUNTIME_BASE:-debian:trixie-slim@sha256:7792b1f7702a86946cd518db72b6a407302c3e9bc1635634368b878189e8221c}'}
+    environment:
+      <<: *env
+      HOORI_MAIN_CLASS: dev/hoori/micro/demo/PantryMain
+      HOORI_OUTBOUND: http
+    depends_on: *after-registry
+    networks: [backend]
   shopping:
     <<: *common
     build:
@@ -73,7 +84,7 @@ services:
       HOORI_MAIN_CLASS: hoori/micro/Gateway
       HOORI_OUTBOUND: http
       # Demo policy: grants these permissions to every caller. No authentication.
-      HOORI_GATEWAY_PERMISSIONS: recipes:read,shopping:read,shopping:demo
+      HOORI_GATEWAY_PERMISSIONS: recipes:read,pantry:read,shopping:read,shopping:demo
     depends_on: *after-registry
     ports:
       - '127.0.0.1:${HOORI_DEMO_PORT:-8080}:8080'

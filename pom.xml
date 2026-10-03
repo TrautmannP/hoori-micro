@@ -12,6 +12,7 @@
     <module>framework</module>
     <module>examples/demo-contracts</module>
     <module>examples/recipes-service</module>
+    <module>examples/pantry-service</module>
     <module>examples/shopping-service</module>
   </modules>
   <properties>

@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# One terminal per role, started in this order: registry, recipes, shopping, gateway.
+# One terminal per role, started in this order: registry, recipes, pantry, shopping, gateway.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 case "${1:-}" in
   registry) export HOORI_MAIN_CLASS=hoori/micro/Registry HOORI_OUTBOUND=none port=8090 ;;
   recipes) export HOORI_MAIN_CLASS=dev/hoori/micro/demo/RecipesMain HOORI_OUTBOUND=http port=8081 ;;
+  pantry) export HOORI_MAIN_CLASS=dev/hoori/micro/demo/PantryMain HOORI_OUTBOUND=http port=8083 ;;
   shopping) export HOORI_MAIN_CLASS=dev/hoori/micro/demo/ShoppingMain HOORI_OUTBOUND=http port=8082 ;;
   gateway) export HOORI_MAIN_CLASS=hoori/micro/Gateway HOORI_OUTBOUND=http port=8080
-    export HOORI_GATEWAY_PERMISSIONS=${HOORI_GATEWAY_PERMISSIONS:-recipes:read,shopping:read,shopping:demo} ;;
-  *) echo 'usage: scripts/run-local.sh registry|recipes|shopping|gateway (after scripts/build.sh)' >&2; exit 2 ;;
+    export HOORI_GATEWAY_PERMISSIONS=${HOORI_GATEWAY_PERMISSIONS:-recipes:read,pantry:read,shopping:read,shopping:demo} ;;
+  *) echo 'usage: scripts/run-local.sh registry|recipes|pantry|shopping|gateway (after scripts/build.sh)' >&2; exit 2 ;;
 esac
 export HOORI_HOME="$PWD/.docker-context/runtime"
 export HOORI_APP_LIB="$PWD/.docker-context/apps/$1/lib"
