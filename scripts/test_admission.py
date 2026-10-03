@@ -12,7 +12,7 @@ import subprocess
 import threading
 import time
 
-from runtime_check import ROOT, verify
+from runtime_check import ROOT, runtime_jars, verify
 
 
 def main():
@@ -105,7 +105,7 @@ def main():
                     "HOORI_CLIENT_CONNECTIONS": "1", "HOORI_CLIENT_PER_ORIGIN": "1",
                     "HOORI_CLIENT_PENDING_ACQUIRES": "0", "HOORI_CLIENT_TIMEOUT_MS": "2000"})
         cp = ":".join([str(ROOT / "framework/target/test-classes"), str(ROOT / "framework/target/classes")]
-                      + [str(jar) for jar in sorted((runtime / "lib").glob("*.jar"))])
+                      + [str(runtime / jar) for jar in runtime_jars(receipt)])
         engine = env.get("HOORI_ENGINE", "mixed")
         command = [str(runtime / "bin/hoori"), "run", "--engine", engine, "--live-output", "--graceful-signals",
                    "--max-heap-bytes", "33554432", "--allow-environment-read", "--allow-network-listen",

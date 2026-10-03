@@ -18,7 +18,7 @@ import tempfile
 import threading
 import time
 
-from runtime_check import ROOT, verify
+from runtime_check import ROOT, runtime_jars, verify
 
 ROLES = ("registry", "recipes", "shopping", "gateway")
 
@@ -198,7 +198,7 @@ def experiment(args, variant: str, repeat: int, work: Path, receipt: dict, docum
     project = f"hoori-micro-bench-{os.getpid()}-{repeat}-{variant.lower()}"
     override = work / "compose.json"
     classpath = "/opt/bench:/opt/app/lib/hoori-micro-0.1.0-SNAPSHOT.jar:"
-    classpath += ":".join("/opt/hoori/" + path for path in receipt["artifacts"] if path.endswith(".jar"))
+    classpath += ":".join("/opt/hoori/" + path for path in runtime_jars(receipt))
     services = {}
     for i, role in enumerate(ROLES):
         services[role] = {"image": "hoori-micro-benchmark-build-" + role,

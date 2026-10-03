@@ -1,10 +1,11 @@
 # Quellstand und Quellen
 
-Inspektion: 2. Oktober 2026 per `gh` und gegen den sauberen lokalen Checkout.
+Inspektion: 3. Oktober 2026 per `gh` und gegen den sauberen lokalen Checkout.
 Repository: `TrautmannP/hoori` (privat).
-Gepinnter Commit: `d8906e62f5aa335d6ddfeecb60156947a691f29e`.
+Gepinnter Commit: `7d7245aa782ba6f79c47397f008789f13552a4c5`.
 
-Wesentliche direkt gelesene Quellen unter diesem Commit:
+Wesentliche Quellen (HTTP-/REST-Grundlagen aus der bisherigen Baseline,
+Tasks- und Distributionsverträge für #19 erneut direkt geprüft):
 
 - `sdk/hoori-http-api/README.md`, `HttpClient.java`, `HttpServer.java`, `Limits.java`,
   `Headers.java`, `Request.java`, `RequestBudget.java`, `Response.java`: URI-Pooling/DNS/HTTPS,
@@ -16,12 +17,14 @@ Wesentliche direkt gelesene Quellen unter diesem Commit:
   operative Lifecycle-Nutzung und Cold-Compilation-Hinweise.
 - `scripts/build-distribution.sh`, `scripts/build-bundle.sh`:
   Distribution, Prüfsummen, Guest-Lizenz und systemseitige native Abhängigkeiten.
+- `sdk/hoori-concurrent-api`: `Tasks`, `TaskSpec` und Original-POM;
+  `sdk/hoori-concurrent-http-api`: README, `RequestScopes`, `HttpTasks` und POM.
 - `guest-classlib/PROVENANCE.md`: `System.getenv(String)` und
   `--allow-environment-read`.
 - `crates/hoori-cli/src/main.rs`: `build-info`, insbesondere Feature-Liste als JSON-Array.
 
 Pfadpräfix für die Repository-Quellen:
-`https://github.com/TrautmannP/hoori/blob/d8906e62f5aa335d6ddfeecb60156947a691f29e/`
+`https://github.com/TrautmannP/hoori/blob/7d7245aa782ba6f79c47397f008789f13552a4c5/`
 
 Öffentliche Primärquellen:
 
@@ -37,7 +40,7 @@ dieses neu erstellten Consumers. Dieser Unterschied ist in `validation.md` erfas
 
 Ein anderer Hoori-Commit erfordert einen bewussten Lock-Update samt erneuter Maven-,
 Guest- und Container-Abnahme. Bei neuen Artefaktversionen auch die POM-Properties
-und die Importversionen in `scripts/build.sh` aktualisieren. Nie bloß den Lock ändern,
+und die Versionen/SDK-Auswahl in `hoori.lock.json` aktualisieren. Nie bloß den Lock ändern,
 um einen tatsächlich inkompatiblen Build durch die Prüfung zu bekommen.
 
 SHA256SUMS plus Receipt prüfen Konsistenz einer bereits vertrauenswürdig bezogenen

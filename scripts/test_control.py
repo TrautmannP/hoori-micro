@@ -11,7 +11,7 @@ import subprocess
 import threading
 import time
 
-from runtime_check import ROOT, verify
+from runtime_check import ROOT, runtime_jars, verify
 
 
 def request(port, path):
@@ -87,7 +87,7 @@ def main():
                     "HOORI_HEARTBEAT_MS": "100", "HOORI_REGISTRY_TTL_MS": "600", "HOORI_CONTROL_TIMEOUT_MS": "300",
                     "HOORI_CLIENT_TIMEOUT_MS": "300"})
         cp = ":".join([str(ROOT / "framework/target/test-classes"), str(ROOT / "framework/target/classes")]
-                      + [str(jar) for jar in sorted((runtime / "lib").glob("*.jar"))])
+                      + [str(runtime / jar) for jar in runtime_jars(receipt)])
         command = [str(runtime / "bin/hoori"), "run", "--engine", env.get("HOORI_ENGINE", "mixed"),
                    "--live-output", "--graceful-signals", "--max-heap-bytes", "33554432", "--allow-environment-read",
                    "--allow-network-listen", "--allow-network-connect", "--class-path", cp, "hoori/micro/BenchmarkMain"]

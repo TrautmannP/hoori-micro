@@ -17,7 +17,9 @@
 - `HttpServer.run()` ending is not proof of a completed drain. Preserve shutdown
   ordering: stop admission (and deregister), drain handlers, close outbound clients.
 - Hoori currently uses cooperative guest execution. No assumptions of CPU preemption
-  or arbitrary JDK compatibility. Do not add ThreadLocal request context.
+  or arbitrary JDK compatibility. Use explicit TaskContext keys for managed execution;
+  do not add ThreadLocal request context. The optional upstream annotation processor
+  runs only at build time; generated delegates are wired explicitly, never scanned.
 - Run scripts/test-core.sh and Python unit checks for portable changes. For transport,
   lifecycle, API or dependency changes run scripts/build.sh, test-hoori-core.sh and
   scripts/smoke.py using the real pinned distribution. Report unrun checks explicitly.

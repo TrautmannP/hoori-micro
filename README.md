@@ -69,7 +69,7 @@ migrierte Dahemm-Fachlogik.
 ### 1. Passende Hoori-Distribution bauen
 
 Der Bootstrap ist an Hoori-Commit
-`d8906e62f5aa335d6ddfeecb60156947a691f29e` gebunden. Das verhindert, dass unterschiedliche
+`7d7245aa782ba6f79c47397f008789f13552a4c5` gebunden. Das verhindert, dass unterschiedliche
 Quellstände trotz unveränderter SDK-Version `0.1.0` vermischt werden.
 `hoori.lock.json` enthält diese Baseline.
 
@@ -82,7 +82,7 @@ Worktree vermeidet Änderungen am eigenen Arbeitsstand:
 
 ```bash
 # Einen noch nicht vorhandenen Zielpfad wählen.
-git worktree add --detach ../hoori-micro-runtime d8906e62f5aa335d6ddfeecb60156947a691f29e
+git worktree add --detach ../hoori-micro-runtime 7d7245aa782ba6f79c47397f008789f13552a4c5
 cd ../hoori-micro-runtime
 
 export JAVA_HOME=/pfad/zum/jdk-21
@@ -118,10 +118,17 @@ curl -fsS http://127.0.0.1:8080/metrics
 docker compose down
 ```
 
-`build.sh` überprüft die Runtime-Prüfsummen und Revision, installiert ihre drei
-benötigten JARs in `.cache/m2`, führt `mvn clean verify` aus und erzeugt
+`build.sh` überprüft Runtime-Prüfsummen, Revision, SDK-Koordinaten und Original-POMs,
+installiert Guest Base sowie HTTP, REST, Concurrent und Concurrent HTTP in
+`.cache/m2/<SHA256-der-Distribution>`, führt `mvn clean verify` aus und erzeugt
 `.docker-context/`. Dieser Build-Kontext enthält nur Runtime, Anwendungs-JARs und
 Docker-Dateien, keinen privaten Checkout und keine GitHub-Zugangsdaten.
+Die SDKs werden mit ihren ausgelieferten POMs installiert; Guest Base hat upstream
+keinen POM und verwendet dessen dokumentierte `install-file`-Konvention.
+`runtimeSdks` in `hoori.lock.json` bestimmt Prüfung, Installation und Klassenpfad.
+Das originale Distributionspaket bleibt vollständig und prüfbar; seine übrigen
+SDKs einschließlich DB-Adaptern und Processor liegen außerhalb des Klassenpfads.
+Ein HTTP-Service benötigt weder Datenbankbibliotheken noch einen Laufzeit-Processor.
 
 Dockerfile und Compose pinnen `debian:trixie-slim` auf den amd64-Digest
 `sha256:7792b1f7702a86946cd518db72b6a407302c3e9bc1635634368b878189e8221c`
@@ -136,6 +143,7 @@ fehlenden nativen Bibliotheken. Aktualisierungen von Basis/Paketen bewusst neu p
 ./scripts/test-core.sh
 python3 -m unittest discover -s scripts/tests -v
 ./scripts/test-hoori-core.sh
+./scripts/test-task-runtime.sh
 python3 scripts/test_budgets.py
 python3 scripts/smoke.py
 ```

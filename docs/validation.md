@@ -1,8 +1,40 @@
 # Validierung und offene Abnahme
 
-Stand: **2. Oktober 2026**. Qualifizierter Satz: `d8906e6`, sauberer Headless-
+Stand: **3. Oktober 2026**. Tasks-v2-Buildintegration (#19) verwendet den sauberen
+Headless-Release `7d7245a`, Guest Base `0.4.0` und SDKs `0.1.0`. Installation und
+Start verwenden die vier HTTP-/REST-/Concurrent-SDKs aus `runtimeSdks` im Lock.
+Original-POMs, Receipt, Prüfsummen und die Concurrent-Runtime-Bindung werden
+geprüft; der Maven-Cache ist nach der vollständigen Distributionsidentität getrennt.
+Die Distribution bleibt unverändert, optionale SDKs/Processor sind keine
+HTTP-Laufzeitabhängigkeiten. Die neue Request-/Broker-Semantik folgt in #20–#25.
+
+## Tasks-v2-Grundlage (#19)
+
+- `scripts/build.sh`: Maven/Spotless und **22 JUnit-Tests** bestanden.
+- `scripts/test-core.sh`: **116 Assertions und 5 Formatter-Fixtures**;
+  Python `unittest`: **20 Tests**, einschließlich POM-Mischung, Runtime-Bindung,
+  Cache-Isolation und unverändertem Staging.
+- `scripts/test-task-runtime.sh`: unabhängiger SDK-Consumer mit echten
+  RequestScopes und parallelen HttpTasks in **Interpreter/Mixed** bestanden.
+  Kompiliert ohne Micro-Klassen; ausgeführt mit `PATH`/`JAVA_HOME=/nonexistent`
+  und genau den fünf Runtime-JARs aus dem Lock, ohne Annotationen/Processor/DB.
+- `scripts/test-hoori-core.sh` und `scripts/smoke.py`: **beide Engines bestanden**.
+  Die Images starten Registry, Gateway und Fachservices; echte DNS-/HTTP-Calls,
+  Sättigung, Rolling/Katalogwechsel, Recovery und SIGTERM-Drain bestehen.
+  Rohdaten: [Mixed](benchmarks/issue-19-smoke-mixed.json.gz),
+  [Interpreter](benchmarks/issue-19-smoke-interpreter.json.gz).
+- Receipt-SHA256: `8c6d4340bc272b9d73f18972585ae55a8f364df8d77e993a1e9752e32c585e23`.
+  Das Image enthält die vollständige originale Distribution mit 13 SDKs plus
+  Guest Base; geladen werden Guest Base, HTTP, REST, Concurrent, Concurrent HTTP.
+  Kein JDK/Maven im Image, kein zusätzliches Runtime-/VM-Paketformat.
+
+Neue Request-/Cancellation-/DB-Verträge aus #20–#28 sind damit noch nicht abgenommen.
+
+## Bisherige Fachabnahme
+
+Die nachfolgende bisherige Fachabnahme gehört zum Satz `d8906e6`, sauberer Headless-
 Release für `x86_64-unknown-linux-gnu`; VM, Guest Base und sämtliche SDK-JARs aus
-derselben Distribution, vollständiger Pin in `hoori.lock.json`. Temurin 21.0.6,
+derselben Distribution. Sie ersetzt keine erneute Tasks-v2-Abnahme. Temurin 21.0.6,
 Maven 3.9.16, Docker 29.8.1, Compose v5.5.1. Basisimage: amd64-Digest aus
 `docker/Dockerfile`, signierte Debian-Paketquellen vom 30.09.2026.
 

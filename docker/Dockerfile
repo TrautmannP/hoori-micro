@@ -11,6 +11,7 @@ RUN sed -i \
     && apt-get install -y --no-install-recommends ca-certificates curl libgcc-s1 zlib1g \
     && rm -rf /var/lib/apt/lists/*
 COPY runtime/ /opt/hoori/
+COPY runtime-classpath.txt /opt/runtime-classpath.txt
 # Fails at build time on corrupt bundles, missing native dependencies or incompatible ELF.
 RUN cd /opt/hoori && ./verify.sh && ./bin/hoori build-info
 ARG SERVICE

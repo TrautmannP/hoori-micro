@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 import sys
-from runtime_check import ROOT, verify
+from runtime_check import ROOT, runtime_jars, verify
 
 
 def jar(module: str, artifact: str) -> Path:
@@ -16,7 +16,7 @@ def jar(module: str, artifact: str) -> Path:
 
 
 def stage(runtime: Path) -> None:
-    verify(runtime)
+    receipt = verify(runtime)
     work = ROOT / ".docker-context.tmp"
     output = ROOT / ".docker-context"
     if work.exists():
@@ -24,6 +24,7 @@ def stage(runtime: Path) -> None:
     try:
         shutil.copytree(runtime, work / "runtime")
         verify(work / "runtime")
+        (work / "runtime-classpath.txt").write_text("\n".join(runtime_jars(receipt)) + "\n")
         framework = jar("framework", "hoori-micro")
         contracts = jar("examples/demo-contracts", "hoori-micro-demo-contracts")
         apps = {"registry": [framework], "gateway": [framework]}

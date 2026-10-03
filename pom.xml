@@ -26,6 +26,8 @@
     <dependencies>
       <dependency><groupId>dev.hoori</groupId><artifactId>hoori-http-api</artifactId><version>${hoori.sdk.version}</version></dependency>
       <dependency><groupId>dev.hoori</groupId><artifactId>hoori-rest-api</artifactId><version>${hoori.sdk.version}</version></dependency>
+      <dependency><groupId>dev.hoori</groupId><artifactId>hoori-concurrent-api</artifactId><version>${hoori.sdk.version}</version></dependency>
+      <dependency><groupId>dev.hoori</groupId><artifactId>hoori-concurrent-http-api</artifactId><version>${hoori.sdk.version}</version></dependency>
       <dependency><groupId>dev.hoori</groupId><artifactId>hoori-micro</artifactId><version>${project.version}</version></dependency>
       <dependency><groupId>dev.hoori</groupId><artifactId>hoori-micro-demo-contracts</artifactId><version>${project.version}</version></dependency>
     </dependencies>
