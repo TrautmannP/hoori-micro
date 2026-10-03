@@ -67,7 +67,8 @@ def verify(directory: Path, lock: dict | None = None) -> dict:
     if receipt.get("guest_base") != guest:
         raise ValueError("Unexpected Guest Base artifact")
     required = ["bin/hoori", "SYSTEM.txt", "GUEST-LICENSE.txt", "verify.sh", guest]
-    selected = {f"dev.hoori:{name}:{lock['sdkVersion']}" for name in lock["runtimeSdks"]}
+    selected = {f"dev.hoori:{name}:{lock['sdkVersion']}"
+                for name in lock["runtimeSdks"] + lock.get("buildSdks", [])}
     for coordinate in selected:
         artifact = receipt.get("sdk_artifacts", {}).get(coordinate)
         if not artifact:
@@ -100,17 +101,17 @@ def verify(directory: Path, lock: dict | None = None) -> dict:
     return receipt
 
 
-def install(directory: Path, receipt: dict) -> Path:
+def install(directory: Path, receipt: dict, lock: dict | None = None) -> Path:
     repo = maven_repository(directory)
     repo.mkdir(parents=True, exist_ok=True)
     command = ["mvn", "--batch-mode", "--no-transfer-progress", "-q", f"-Dmaven.repo.local={repo}",
                "org.apache.maven.plugins:maven-install-plugin:3.1.3:install-file"]
-    lock = json.loads((ROOT / "hoori.lock.json").read_text())
+    lock = lock or json.loads((ROOT / "hoori.lock.json").read_text())
     # Guest Base has no published POM; use the upstream distribution's installation convention.
     subprocess.run(command + [f"-Dfile={directory / receipt['guest_base']}", "-DgroupId=dev.hoori",
                    "-DartifactId=hoori-guest-base", f"-Dversion={lock['guestVersion']}",
                    "-Dpackaging=jar", "-DgeneratePom=true"], check=True, stdout=sys.stderr)
-    for name in lock["runtimeSdks"]:
+    for name in lock["runtimeSdks"] + lock.get("buildSdks", []):
         artifact = receipt["sdk_artifacts"][f"dev.hoori:{name}:{lock['sdkVersion']}"]
         subprocess.run(command + [f"-Dfile={directory / artifact['jar']}",
                        f"-DpomFile={directory / artifact['pom']}", "-DgeneratePom=false"],

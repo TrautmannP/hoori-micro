@@ -2,6 +2,7 @@
 """Five actual Hoori services: discovery, two gated demo providers, Shopping and Gateway."""
 from concurrent.futures import ThreadPoolExecutor
 from http.client import HTTPConnection
+import argparse
 import hashlib
 import json
 import os
@@ -16,6 +17,9 @@ from stage import jar
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--facade", action="store_true", help="also check the independently built task-facade example")
+    args = parser.parse_args()
     runtime = ROOT / ".docker-context/runtime"
     receipt = verify(runtime)
     engine = os.environ.get("HOORI_ENGINE", "mixed")
@@ -24,12 +28,21 @@ def main():
     jars = [jar(*module) for module in modules]
     cp = [ROOT / "examples/shopping-service/target/test-classes", *jars, *[runtime / p for p in runtime_jars(receipt)]]
     ports, processes, logs = {}, {}, {}
-    for role in ("registry", "recipes", "pantry", "shopping", "gateway"):
+    roles = ["registry", "recipes", "pantry", "shopping", "gateway"] + (["facade"] if args.facade else [])
+    for role in roles:
         with socket.socket() as available:
             available.bind(("127.0.0.1", 0))
             ports[role] = available.getsockname()[1]
     evidence = {"engine": engine, "runtime": receipt["source"], "checks": [],
                 "jars": {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in jars}}
+    if args.facade:
+        from optional_example import classpath, configuration
+        _, facade_lock = configuration("task-facade")
+        verify(runtime, facade_lock)
+        facade_cp = classpath("task-facade", runtime, receipt, facade_lock)
+        assert all("processor" not in p.name and "annotations" not in p.name for p in facade_cp)
+        evidence["facade_classpath"] = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in facade_cp}
+        facade_cp += [ROOT / "examples/task-facade/target/test-classes"]
 
     def request(role, path, body=None, headers=None):
         connection = HTTPConnection("127.0.0.1", ports[role], timeout=15)
@@ -85,11 +98,15 @@ def main():
                 "HOORI_OUTGOING_CALLS": "2" if role == "shopping" else "4", "HOORI_OUTGOING_PENDING_CALLS": "0",
                 "HOORI_GATEWAY_PERMISSIONS": "recipes:read,pantry:read,shopping:read"}
             main = "hoori/micro/" + role.capitalize() if role in ("registry", "gateway") else "dev/hoori/micro/demo/CompositionMain"
+            role_cp = cp
+            if role == "facade":
+                main, role_cp = "dev/hoori/micro/facade/FacadeChecks", facade_cp
+                env.update({"PATH": "/nonexistent", "JAVA_HOME": "/nonexistent"})
             log = (ROOT / f".cache/composition-{engine}-{role}.log").open("w")
             logs[role] = log
             processes[role] = subprocess.Popen([str(runtime / "bin/hoori"), "run", "--engine", engine, "--live-output",
                 "--graceful-signals", "--max-heap-bytes", "33554432", "--allow-environment-read", "--allow-network-listen",
-                "--allow-network-connect", "--class-path", ":".join(map(str, cp)), main], env=env, stdout=log, stderr=log)
+                "--allow-network-connect", "--class-path", ":".join(map(str, role_cp)), main], env=env, stdout=log, stderr=log)
             until(lambda: request(role, "/health/ready")[0] == 200, role + " ready")
 
         expected = {"recipe": {"id": 1, "title": "Kartoffelsuppe"}, "available": ["Kartoffeln", "Möhren"]}
@@ -100,6 +117,29 @@ def main():
         evidence["checks"].append("ordinary route and Gateway use two discovered typed providers with correct correlation")
 
         with ThreadPoolExecutor(max_workers=4) as pool:
+            if args.facade:
+                assert "facade_lazy=true" in Path(logs["facade"].name).read_text()
+                until(lambda: request("facade", "/overview", {"id": 1})[0] == 200, "generated discovered clients")
+                assert result("facade", "/overview", {"id": 1}) == expected
+                for identity in ("facade-first", "facade-reused"):
+                    assert result("facade", "/reused", headers={"X-Request-ID": identity}) == expected
+                    assert all(probe(role)["requestId"] == identity for role in ("recipes", "pantry"))
+                assert request("facade", "/checked")[0] == 200
+                assert request("facade", "/overview", {"id": 0})[0] == 400
+                assert request("facade", "/overview", {"id": 999})[0] == 502
+                for path, maximum in (("/overview", 800), ("/short", 250)):
+                    for role in ("recipes", "pantry"):
+                        gate(role, "closed")
+                    work = pool.submit(request, "facade", path, {"id": 1})
+                    until(lambda: all(probe(role)["active"] == 1 for role in ("recipes", "pantry")), "facade starts both calls")
+                    assert all(0 < probe(role)["budgetMillis"] <= maximum for role in ("recipes", "pantry"))
+                    assert work.result()[0] == 504, "Scoped/parent deadline was extended"
+                    for role in ("recipes", "pantry"):
+                        gate(role, "open")
+                    until(lambda: all(probe(role)["active"] == 0 for role in ("recipes", "pantry")), "facade remote recovery")
+                    assert result("facade", "/overview", {"id": 1}) == expected
+                evidence["checks"].append("generated facade lazy/reused with current context; checked errors, 800ms method/250ms parent bounds, cancellation/recovery; no build tools on runtime path")
+
             for role in ("recipes", "pantry"):
                 gate(role, "closed")
             call = pool.submit(request, "gateway", "/overview/1")
@@ -167,9 +207,9 @@ def main():
             for role in ("recipes", "pantry"):
                 gate(role, "open")
             evidence["checks"].append("SIGTERM drains local fanout against actual Hoori providers")
-        for role in ("gateway", "recipes", "pantry", "registry"):
+        for role in (["facade"] if args.facade else []) + ["gateway", "recipes", "pantry", "registry"]:
             stop(role)
-        target = ROOT / f".cache/composition-{engine}.json"
+        target = ROOT / f".cache/composition-{'facade-' if args.facade else ''}{engine}.json"
         target.write_text(json.dumps(evidence, indent=2) + "\n")
         print(f"PASS: real discovered composition, batch/bulk and shutdown; {target}")
     finally:
