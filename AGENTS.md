@@ -12,6 +12,10 @@
   Keep hoori.lock.json and docs/validation.md honest. Prefer the smallest relevant test.
 - Do not create a client/pool per request. Do not automatically replay writes,
   follow redirects, forward credentials, or derive metric labels from request data.
+- Optional data examples use the original Transaction/JDBC/Jdbi SDKs and a stable
+  manager. Keep remote preparation outside short local transactions; never share
+  handles with children or report UNKNOWN/COMMITTED as rollback. Keep DB and
+  build-time processor dependencies out of the HTTP core.
 - Hoori's guest classlib is partial (no String.repeat, Long.toHexString,
   Double.isInfinite, Math.floorMod). Check new JDK calls against it; run guest checks.
 - `HttpServer.run()` ending is not proof of a completed drain. Preserve shutdown

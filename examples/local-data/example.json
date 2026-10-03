@@ -1,0 +1,7 @@
+{
+  "mainClass": "dev/hoori/micro/data/DataMain",
+  "runtimeSdks": ["hoori-transaction-api", "hoori-jdbc-api", "hoori-jdbi-api"],
+  "buildSdks": ["hoori-task-annotations", "hoori-task-processor"],
+  "externalDependencies": ["org.jdbi:jdbi3-core:3.55.0"],
+  "capabilities": ["--allow-resource-read", "--allow-file-read", "--allow-secure-random", "--allow-host-resolution"]
+}

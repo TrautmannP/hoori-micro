@@ -15,6 +15,7 @@ def configuration(name):
     lock = json.loads((ROOT / "hoori.lock.json").read_text())
     lock["runtimeSdks"] += config["runtimeSdks"]
     lock["buildSdks"] = config["buildSdks"]
+    lock["externalDependencies"] = config.get("externalDependencies", [])
     return config, lock
 
 
@@ -27,7 +28,7 @@ def classpath(name, runtime, receipt, lock):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("build", "run"))
-    parser.add_argument("example", choices=("task-facade",))
+    parser.add_argument("example", choices=("task-facade", "local-data"))
     parser.add_argument("--distribution", type=Path, default=ROOT / ".docker-context/runtime")
     args = parser.parse_args()
     runtime = args.distribution.resolve(strict=True)
@@ -48,10 +49,12 @@ def main():
         env.setdefault("HOORI_BIND_ADDRESS", "127.0.0.1")
         env.setdefault("HOORI_PORT", "8084")
         env.setdefault("HOORI_REGISTRY_URL", "http://127.0.0.1:8090")
+        env.setdefault("HOORI_ADVERTISE_URL", "http://127.0.0.1:" + env["HOORI_PORT"])
         command = [str(runtime / "bin/hoori"), "run", "--engine", env.get("HOORI_ENGINE", "mixed"),
             "--live-output", "--graceful-signals", "--max-heap-bytes", "33554432",
             "--allow-environment-read", "--allow-network-listen", "--allow-network-connect",
-            "--class-path", ":".join(map(str, classpath(args.example, runtime, receipt, lock))), config["mainClass"]]
+            *config.get("capabilities", []), "--class-path",
+            ":".join(map(str, classpath(args.example, runtime, receipt, lock))), config["mainClass"]]
         os.execve(command[0], command, env)
 
 

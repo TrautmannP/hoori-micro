@@ -25,6 +25,14 @@ upstream Buildzeit-Processor. Generierte Task-/Scoped-Delegates sind normale
 Anwendungsklassen und werden ausdrücklich konstruiert. Der HTTP-Reaktor und sein
 Runtime-Classpath bleiben ohne Annotationen/Processor.
 
+Der optionale [Daten-Consumer](../examples/local-data/README.md) bezieht Transaction,
+JDBC und Jdbi ebenfalls als originale SDKs. Ein beim Start konstruierter Manager
+besitzt pro lokaler REQUIRED-Operation einen exklusiven Handle. Remote-Vorbereitung
+liegt vor dieser kurzen Datensatz-/Outbox-Transaktion; der physische Commit liegt
+vor der Antwort. Kinder teilen keine Handles, bestätigte Child-Commits sind unabhängig.
+UNKNOWN wird nicht wiederholt oder als Rollback dargestellt. Der HTTP-Kern erhält
+keine Datenbankabhängigkeit und keinen automatischen Request-Transaktionsrahmen.
+
 ## 2. Actions, Registry und Broker
 
 Aufrufer adressieren eine **fachliche Action** (`recipes.get`) mit der per

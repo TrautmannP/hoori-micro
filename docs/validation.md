@@ -118,7 +118,51 @@ und Guest-Core bestehen; der unveränderte HTTP-Classpath startet auch im erneut
 Docker-Smoke in beiden Engines: [Mixed](benchmarks/facade-smoke-mixed.json.gz),
 [Interpreter](benchmarks/facade-smoke-interpreter.json.gz).
 
-Generierte lokale Transaktionen (#26/#27) und integrierte Kostenkontrolle (#28) folgen separat.
+## Optionale lokale Datenoperationen (#26/#27)
+
+Der unabhängige `local-data`-Build verwendet Original-Transaction-/JDBC-/Jdbi-POMs,
+pgJDBC 42.7.13 und Jdbi Core 3.55.0. `StoreScoped` wird durch denselben Processor
+erzeugt und erhält den stabilen Manager ausdrücklich. Beide Engines laufen ohne
+Build-Annotationen/Processor/JDK/Maven im Runtime-Classpath. Der Launcher erlaubt
+zusätzlich File Read: der echte Treiber benötigt die Host-Zeitzone. Reine HTTP-
+Prozesse bekommen weiterhin ausschließlich ihre bisherige SDK-Auswahl.
+
+`test_data.py` besteht in **Interpreter/Mixed**, mit PostgreSQL 18.6 aus dem upstream
+Digest und unveränderten, gegen `7d7245a` geprüften Datenbank-/Fault-Peer-Helfern:
+
+- Reale Invoke-Requests und beide entdeckten Remote-Provider; kein DB-Acquire,
+  solange die vorbereitenden Remote-Reads am kontrollierten Gate warten.
+  Explizite und generierte Grenze speichern Datensatz/Outbox gemeinsam;
+  SQL-Constraints werden auch durch den generierten Delegate korrekt zurückgerollt.
+- Body-, Pflicht-Child-, Deadline- und gefangener innerer REQUIRED-Fehler rollen
+  zurück. Das Child-Finally-Gate hält die Verbindung bis zum tatsächlichen Ende.
+  Fremde Kinder scheitern mit Lookup und retained Handle vor SQL; unabhängig
+  committete Child-Daten bleiben beim Parent-Rollback erhalten.
+- Gleichzeitige Requests besitzen unterschiedliche PostgreSQL-Backend-PIDs.
+  Nach bestätigtem Commit bleiben Daten trotz Callback-/Encoding-Fehler vorhanden.
+  Ein tatsächlich unterdrücktes COMMIT-ACK erzeugt UNKNOWN, einen einzigen Acquire
+  und physischen Discard ohne Wiederholung. Logs unterscheiden COMMITTED,
+  ROLLED_BACK und UNKNOWN. Ein Encoding-Fehler nach Ende der lokalen Grenze hat
+  keinen aktiven Transaktionskontext; er meldet nicht fälschlich Rollback.
+- Drei Query-Cancel-/Recovery-Zyklen: PostgreSQL wartet nachweislich am Advisory-
+  Lock, echte Treiber-Cancellation meldet SQLSTATE 57014, dann erfolgen Rollback
+  und Close vor Rückkehr. Jdbi behält den SQL-Fehler als Hauptursache: sichere 500,
+  intern ROLLED_BACK. Folgerequests funktionieren. Nach GC/Idle null offene oder
+  retained Test-Verbindungen, beobachtet acht aktive Tasks und fünf Handles.
+- SIGTERM während derselben echten DB-Wartearbeit drainiert und rollt zurück;
+  danach schließt die dienstweite Test-Ressource bei null aktiven Verbindungen.
+  Das Beispiel verwendet keinen Pool; eine beliebige Pool-Integration ist damit
+  nicht qualifiziert. Acquisition kann die Work-Deadline überdauern und ist durch
+  die dokumentierten endlichen Driver-Limits begrenzt.
+
+Rohdaten mit Original-JAR-/Fixture-Hashes und Recovery-Samples:
+[Mixed](benchmarks/data-mixed.json.gz), [Interpreter](benchmarks/data-interpreter.json.gz).
+Maven/Spotless (23 JUnit), Core (117 Assertions/5 Formatter-Fixtures), Python (23),
+Guest-Core und erneuter DB-freier Docker-Smoke bestehen in beiden Engines:
+[Mixed](benchmarks/data-smoke-mixed.json.gz), [Interpreter](benchmarks/data-smoke-interpreter.json.gz).
+Die vollständige upstream Driver-/TLS-/GC-Matrix wurde hier nicht erneut ausgeführt.
+
+Die integrierte Kostenkontrolle (#28) folgt separat.
 #8/#10/#11 bleiben unabhängige Arbeit.
 
 ## Bisherige Fachabnahme
@@ -215,8 +259,9 @@ sechs Läufen die 1000-ms-p99-Grenze, teils auch die 1-%-Fehlergrenze.
   einschließlich JIT liegt nicht vor.
 - Healthcheck-Kosten sind für das aktuelle Image gemessen; ein direkter
   Vorher-/Nachher-Vergleich derselben Probes fehlt noch für die Abnahme von #8.
-- Buildzeit-Generator, Action-/Routing-Indizes und Raw-Body-Copy-Optimierung sind
-  mangels belegtem Nutzen zurückgestellt. Kein zusätzlicher Runtime-Mechanismus.
+- Ein Micro-eigener Generator, Action-/Routing-Indizes und Raw-Body-Copy-Optimierung
+  sind mangels belegtem Nutzen zurückgestellt. Der optionale upstream Processor
+  ist oben separat qualifiziert; keine zusätzliche Laufzeit-Interception.
 
 ## Reproduzieren
 
