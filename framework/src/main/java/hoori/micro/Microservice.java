@@ -22,10 +22,10 @@ import java.util.concurrent.locks.LockSupport;
 
 /**
  * Explicit startup composition on Hoori's cooperative single carrier. run() owns registration,
- * draining and pool cleanup. Configure routes/actions before run(), never in handlers.
+ * draining and pool cleanup. Configure controllers before run(), never in handlers.
  */
 public final class Microservice implements AutoCloseable {
-    private final Service service;
+    private final ServiceDefinition service;
     private final ServiceConfig config;
     private final Router router = new Router();
     private final HttpClient http, control;
@@ -46,7 +46,7 @@ public final class Microservice implements AutoCloseable {
     private boolean closing;
     private long graceDeadline;
 
-    private Microservice(Service service, ServiceConfig config) {
+    private Microservice(ServiceDefinition service, ServiceConfig config) {
         this.service = service;
         this.config = config;
         jsonLimits = new JsonLimits(64, 16384, 128, config.bodyBytes);
@@ -71,9 +71,19 @@ public final class Microservice implements AutoCloseable {
 
             RequestBudget budget = request.raw().budget().limitedToMillis(config.workTimeoutMillis);
 
-            if (request.method().equals("POST")
-                    && request.routeTemplate().equals(ServiceBroker.INVOKE_PATH)
-                    && !service.actions.isEmpty()) budget = Context.incomingBudget(request.raw().headers, budget);
+            Catalog.Entry endpoint = service.endpoint(request.method(), request.routeTemplate());
+
+            if (endpoint != null) {
+                Headers headers = request.raw().headers;
+                String version = uniqueHeader(headers, ServiceBroker.VERSION_HEADER);
+                String key = uniqueHeader(headers, ServiceBroker.ENDPOINT_HEADER);
+
+                if ((version != null || key != null)
+                        && (!Integer.toString(service.version).equals(version) || !endpoint.key.equals(key)))
+                    return Response.text(421, "Endpoint not offered by this instance");
+
+                budget = Context.incomingBudget(headers, budget);
+            }
 
             return broker.executions.request(request.raw(), budget, incoming, scope -> {
                 Response response = next.handle(request);
@@ -83,9 +93,6 @@ public final class Microservice implements AutoCloseable {
                 return response;
             });
         });
-
-        // One fixed internal entry point; new actions never need new routes. Absent without actions.
-        if (!service.actions.isEmpty()) router.post(ServiceBroker.INVOKE_PATH, this::invoke);
 
         controlRoute("GET", "/health/live", request -> health(isLive()));
         controlRoute("GET", "/health/ready", request -> health(isReady()));
@@ -102,27 +109,67 @@ public final class Microservice implements AutoCloseable {
                                         + runtimeMetrics())
                                 .getBytes(StandardCharsets.UTF_8)));
         router.onError((request, failure) -> {
-            // Intentionally no stacktrace, URI, request/response body or secret in logs/errors.
-            String id = request == null ? "unavailable" : request.id();
             Failures.Result result = Failures.classify(failure);
-            System.err.println("request_failed service="
-                    + config.name
-                    + " request_id="
-                    + id
-                    + " reason=" + result.kind().label + " transaction=" + result.transaction());
+            logFailure(request, result);
 
             return result.response();
         });
     }
 
-    public static Microservice create(Service service) {
-        return create(service, Environment.system());
+    public static Microservice create(String name) {
+        return create(name, 1, Environment.system());
     }
 
-    public static Microservice create(Service service, Environment env) {
-        if (service == null) throw new NullPointerException("service");
+    public static Microservice create(String name, int version, Environment environment) {
+        return new Microservice(new ServiceDefinition(name, version), ServiceConfig.from(name, environment));
+    }
 
-        return new Microservice(service.freeze(), ServiceConfig.from(service.name, env));
+    /** Generated graph hook: idempotent for several interfaces targeting the same service/version. */
+    public void dependency(String name, int version) {
+        service.dependency(name, version);
+    }
+
+    /** Generated graph hook: mounts original SDK adapters and derives metadata from their descriptors. */
+    public void controller(hoori.rest.mvc.ControllerRoutes routes, String... permissions) {
+        service.mutable();
+        java.util.List<hoori.rest.mvc.Endpoint> endpoints = routes.endpoints();
+
+        if (permissions.length != endpoints.size()) throw new IllegalArgumentException("Controller metadata mismatch");
+
+        for (int i = 0; i < endpoints.size(); i++) {
+            hoori.rest.mvc.Endpoint endpoint = endpoints.get(i);
+            service.endpoint(
+                    new HttpEndpoint(endpoint.method(), endpoint.template(), endpoint.consumes(), endpoint.produces()),
+                    permissions[i]);
+        }
+        routes.register(router);
+    }
+
+    /** Low-level SDK fixture/adapter hook; normal applications use generated controllers. */
+    public void endpoint(HttpEndpoint endpoint, String permission, Handler handler) {
+        service.endpoint(endpoint, permission);
+        router.route(endpoint.method(), endpoint.path(), handler);
+    }
+
+    /** Complete graph, routes and registration bytes before listening or publishing readiness. */
+    public void prepare() {
+        if (service.frozen) return;
+
+        router.freeze();
+        broker.prepare();
+        service.frozen = true;
+    }
+
+    private static String uniqueHeader(Headers headers, String name) {
+        String result = null;
+        for (int i = 0; i < headers.size(); i++)
+            if (headers.name(i).equalsIgnoreCase(name)) {
+                if (result != null) throw new hoori.rest.RequestException(400, "Duplicate endpoint header");
+
+                result = headers.value(i);
+            }
+
+        return result;
     }
 
     public Router routes() {
@@ -178,17 +225,27 @@ public final class Microservice implements AutoCloseable {
     }
 
     /** Lifecycle/task failures must not be consumed by application exception advice. */
-    public static hoori.http.Response classifyMvc(hoori.rest.Request request, Exception failure) {
+    public hoori.http.Response classifyMvc(hoori.rest.Request request, Exception failure) {
         Failures.Result result = Failures.classify(failure);
 
-        if (result.kind() != Failures.Kind.INTERNAL) return result.response();
-
-        if (failure instanceof hoori.concurrent.OperationFailedException
+        if (result.kind() != Failures.Kind.INTERNAL
+                || failure instanceof hoori.concurrent.OperationFailedException
                 || failure instanceof hoori.concurrent.ScopeFailedException
                 || failure instanceof hoori.concurrent.SubtaskFailedException
-                || failure instanceof hoori.concurrent.BulkFailedException) return MvcErrors.internal();
+                || failure instanceof hoori.concurrent.BulkFailedException) {
+            logFailure(request, result);
+
+            return result.kind() == Failures.Kind.INTERNAL ? MvcErrors.internal() : result.response();
+        }
 
         return null;
+    }
+
+    private void logFailure(hoori.rest.Request request, Failures.Result result) {
+        // Intentionally no stacktrace, URI, request/response body or secret in logs/errors.
+        String id = request == null ? "unavailable" : request.id();
+        System.err.println("request_failed service=" + config.name + " request_id=" + id + " reason="
+                + result.kind().label + " transaction=" + result.transaction());
     }
 
     /** On-demand local diagnostics: at most 8 roots, 32 entries per root, depth 4; no public endpoint. */
@@ -349,6 +406,7 @@ public final class Microservice implements AutoCloseable {
             owner = Thread.currentThread();
         }
         try {
+            prepare();
             server = new HttpServer(
                     config.bindAddress,
                     config.port,
@@ -504,27 +562,6 @@ public final class Microservice implements AutoCloseable {
 
             if (failure != null) throw failure;
         }
-    }
-
-    /** Only this instance's own name and major version; anything else is a stale-catalog miss. */
-    private Response invoke(hoori.rest.Request request) throws Exception {
-        // Root middleware owns the one incoming permit through DTO work and complete managed drain.
-        Headers headers = request.raw().headers;
-        String action = headers.get(ServiceBroker.ACTION_HEADER);
-        Service.Definition<?, ?> definition = null;
-
-        if (action != null
-                && action.startsWith(service.name + ".")
-                && Integer.toString(service.version).equals(headers.get(ServiceBroker.VERSION_HEADER)))
-            definition = service.actions.get(action.substring(service.name.length() + 1));
-
-        if (definition == null) return Response.text(421, "Action not offered by this instance");
-
-        context.check();
-        Response response = definition.invoke(context, request, jsonLimits);
-        context.check();
-
-        return response;
     }
 
     private Limits limits(int connections, int timeout) {

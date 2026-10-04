@@ -17,7 +17,10 @@
     "hoori-rest-processor",
     "hoori-validation-processor",
     "hoori-rest-mvc-processor",
-    "hoori-validation-avaje-processor"
+    "hoori-validation-avaje-processor",
+    "hoori-task-annotations",
+    "hoori-task-processor",
+    "hoori-transaction-api"
   ],
   "externalDependencies": [
     "io.avaje:avaje-validator:2.18",

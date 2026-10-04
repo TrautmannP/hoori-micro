@@ -1,75 +1,93 @@
 package dev.hoori.micro.facade;
 
-import dev.hoori.micro.demo.GetRecipe;
-import dev.hoori.micro.demo.GetRecipeJsonCodec;
-import dev.hoori.micro.demo.Overview;
-import dev.hoori.micro.demo.OverviewJsonCodec;
-import dev.hoori.micro.demo.Pantry;
-import dev.hoori.micro.demo.Recipes;
+import dev.hoori.micro.contracts.dto.Overview;
+import dev.hoori.micro.facade.client.*;
+import dev.hoori.micro.facade.controller.*;
+import dev.hoori.micro.facade.service.*;
 import hoori.concurrent.TaskScope;
+import hoori.concurrent.TaskSpec;
 import hoori.concurrent.Tasks;
-import hoori.http.Response;
 import hoori.micro.Microservice;
-import hoori.micro.Service;
-import hoori.rest.Responses;
+import hoori.rest.mvc.*;
+import hoori.validation.ValidationLimits;
+import jakarta.validation.constraints.Positive;
 import java.io.IOException;
 import java.time.Duration;
+import java.util.Locale;
 
-/** Only the Micro wiring is tested here; signature/generation matrices belong to the upstream processor. */
+/** SDK delegate probes use the same controller/business classes as the generated application graph. */
 public final class FacadeChecks {
+    @RestController
+    public static final class Checks {
+        private final OverviewService overview;
+        private final TaskSpec<dev.hoori.micro.contracts.dto.Recipe> reused;
+        private final PantryClientTasks pantry;
+
+        public Checks(OverviewService overview, RecipeClientTasks recipes, PantryClientTasks pantry) {
+            this.overview = overview;
+            this.reused = recipes.get(1);
+            this.pantry = pantry;
+        }
+
+        @GetMapping("/reused")
+        public Overview reused() throws Exception {
+            return Tasks.parallel(reused, pantry.items(1)).map(Overview::new);
+        }
+
+        @GetMapping("/short/{id}")
+        public Overview shorter(@PathVariable("id") @Positive long id) throws Exception {
+            return TaskScope.named("short-parent")
+                    .within(Duration.ofMillis(250))
+                    .call(scope -> overview.get(id));
+        }
+
+        @GetMapping("/checked")
+        public String checked() throws Exception {
+            IOException expected = new IOException("private detail");
+            int[] cleaned = {0};
+            OverviewService failing = new OverviewServiceScoped(id -> {
+                try {
+                    throw expected;
+                } finally {
+                    cleaned[0]++;
+                }
+            });
+            try {
+                failing.get(1);
+                throw new AssertionError("Checked failure disappeared");
+            } catch (IOException actual) {
+                if (actual != expected || cleaned[0] != 1) throw new AssertionError("Failure/cleanup contract");
+            }
+
+            return "checked failure and cleanup preserved";
+        }
+    }
+
     public static void main(String[] args) throws Exception {
-        try (Microservice app = Microservice.create(
-                Service.named("facade").dependsOn("recipes", 1).dependsOn("pantry", 1))) {
-            FacadeMain.routes(app);
+        Locale.setDefault(Locale.ENGLISH);
+        try (Microservice app = Microservice.create("facade")) {
+            var client = new RecipeClientHttp(app);
             int[] calls = {0};
-            var tasks = new RecipesClientTasks(query -> {
+            var recipes = new RecipeClientTasks(id -> {
                 calls[0]++;
 
-                return app.context().call(Recipes.GET, query);
+                return client.get(id);
             });
-            // No active Micro context exists here: eager broker execution would fail at startup.
-            var reused = tasks.get(new GetRecipe(1));
+            var pantry = new PantryClientTasks(new PantryClientHttp(app));
+            var overview = new OverviewServiceScoped(new OverviewComposition(recipes, pantry));
+            var errors = MvcErrors.builder().classify(app::classifyMvc).build();
+            app.controller(
+                    new OverviewControllerMvc(
+                            new OverviewController(overview), app.jsonLimits(), ValidationLimits.DEFAULT, errors),
+                    new String[] {null});
+            app.controller(
+                    new FacadeChecks_ChecksMvc(
+                            new Checks(overview, recipes, pantry), app.jsonLimits(), ValidationLimits.DEFAULT, errors),
+                    new String[] {null, null, null});
 
             if (calls[0] != 0) throw new AssertionError("Facade started work while constructing a spec");
 
             System.out.println("facade_lazy=true");
-            app.routes()
-                    .get(
-                            "/reused",
-                            request -> Responses.json(
-                                    200,
-                                    Tasks.parallel(reused, app.context().task(Pantry.FOR_RECIPE, new GetRecipe(1)))
-                                            .map(Overview::new),
-                                    OverviewJsonCodec.INSTANCE,
-                                    app.jsonLimits()));
-            OverviewService overview = FacadeMain.overview(app);
-            app.routes().post("/short", request -> {
-                GetRecipe query = request.body(GetRecipeJsonCodec.INSTANCE, app.jsonLimits());
-
-                return TaskScope.named("short-parent")
-                        .within(Duration.ofMillis(250))
-                        .call(scope ->
-                                Responses.json(200, overview.get(query), OverviewJsonCodec.INSTANCE, app.jsonLimits()));
-            });
-            app.routes().get("/checked", request -> {
-                IOException expected = new IOException("private detail");
-                int[] cleaned = {0};
-                OverviewService failing = new OverviewServiceScoped(query -> {
-                    try {
-                        throw expected;
-                    } finally {
-                        cleaned[0]++;
-                    }
-                });
-                try {
-                    failing.get(new GetRecipe(1));
-                    throw new AssertionError("Checked failure disappeared");
-                } catch (IOException actual) {
-                    if (actual != expected || cleaned[0] != 1) throw new AssertionError("Failure/cleanup contract");
-                }
-
-                return Response.text(200, "checked failure and cleanup preserved");
-            });
             app.run();
         }
     }

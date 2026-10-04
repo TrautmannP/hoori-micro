@@ -39,7 +39,6 @@ public final class TasksMain {
             JsonTree.CODEC.write(value, writer);
         }
     };
-    private static final Action<Object, Object> ECHO = new Action<>("peer.echo", INPUT, JsonTree.CODEC);
     private static final List<WeakReference<Object>> REQUESTS = new ArrayList<>();
     private static volatile Cancellation cancellable;
     private static volatile boolean bodyReturned, childFinished, resourceClosed, responseBuilt;
@@ -48,7 +47,7 @@ public final class TasksMain {
         if (System.getenv("TASK_START_RACE") != null) {
             for (int i = 0; i < 32; i++) {
                 AtomicInteger closed = new AtomicInteger();
-                try (Microservice app = Microservice.create(Service.named("startup"))) {
+                try (Microservice app = Microservice.create("startup")) {
                     app.own(() -> closed.incrementAndGet());
                     Throwable[] failed = new Throwable[1];
                     Thread owner = new Thread(() -> {
@@ -75,16 +74,21 @@ public final class TasksMain {
             return;
         }
 
-        Service service = Service.named("tasks")
-                .dependsOn("peer", 1)
-                .dependsOn("other", 1)
-                .action("echo", JsonTree.CODEC, JsonTree.CODEC, (ctx, input) -> ctx.call(ECHO, input));
-        try (Microservice app = Microservice.create(service)) {
+        try (Microservice app = Microservice.create("tasks")) {
+            RemoteClient remote = new RemoteClient(app, "peer", 1);
+            RemoteClient other = new RemoteClient(app, "other", 1);
+            HttpFixture.post(
+                    app,
+                    "/echo",
+                    null,
+                    JsonTree.CODEC,
+                    (ctx, input) -> HttpFixture.call(remote, "/echo", input, INPUT));
             HttpClient cleanup = app.own(new HttpClient(new Limits(32, 4096, 65536, 1, 100, 15000), 1, 100));
             URI peer = URI.create(System.getenv("TASK_PEER"));
             app.own(() -> signal(cleanup, peer, "/closed"));
             Context ctx = app.context();
-            TaskSpec<Object> deferred = ctx.task(ECHO, Map.of("deferred", true));
+            TaskSpec<Object> deferred =
+                    Tasks.task(() -> HttpFixture.call(remote, "/echo", Map.of("deferred", true), INPUT));
 
             if (ENCODED.get() != 0) throw new AssertionError("Task construction encoded input");
 
@@ -119,7 +123,7 @@ public final class TasksMain {
 
                             return ctx.invocation().requestId();
                         }))
-                        .map((remote, childId) -> Map.of("remote", remote, "child", childId, "owner", id));
+                        .map((answer, childId) -> Map.of("remote", answer, "child", childId, "owner", id));
 
                 if (!ctx.invocation().requestId().equals(id) || ctx.ownerRequest() != request.raw())
                     throw new AssertionError("Nested context was not restored");
@@ -128,12 +132,12 @@ public final class TasksMain {
             });
             app.routes()
                     .get(
-                            "/call/{action}",
-                            request -> json(app, ctx.call("peer." + request.pathParam("action"), Map.of())));
-            app.routes().get("/other", request -> json(app, ctx.call("other.echo", Map.of())));
+                            "/call/{route}",
+                            request -> json(app, HttpFixture.call(remote, "/" + request.pathParam("route"), Map.of())));
+            app.routes().get("/other", request -> json(app, HttpFixture.call(other, "/echo", Map.of())));
             app.routes()
                     .get(
-                            "/cancel/{action}",
+                            "/cancel/{route}",
                             request -> json(
                                     app,
                                     TaskScope.named("cancel-probe")
@@ -141,7 +145,8 @@ public final class TasksMain {
                                             .call(scope -> {
                                                 cancellable = scope.cancellation();
                                                 try {
-                                                    return ctx.call("peer." + request.pathParam("action"), Map.of());
+                                                    return HttpFixture.call(
+                                                            remote, "/" + request.pathParam("route"), Map.of());
                                                 } finally {
                                                     cancellable = null;
                                                 }
@@ -153,19 +158,21 @@ public final class TasksMain {
                                     app,
                                     TaskScope.named("short-budget")
                                             .within(Duration.ofMillis(100))
-                                            .call(scope -> ctx.call("peer.hold", Map.of()))));
+                                            .call(scope -> HttpFixture.call(remote, "/hold", Map.of()))));
             app.routes()
                     .get(
                             "/parallel",
                             request -> json(
                                     app,
-                                    Tasks.parallel(ctx.task("peer.hold", Map.of()), ctx.task("other.hold", Map.of()))
+                                    Tasks.parallel(
+                                                    Tasks.task(() -> HttpFixture.call(remote, "/hold", Map.of())),
+                                                    Tasks.task(() -> HttpFixture.call(other, "/hold", Map.of())))
                                             .map((a, b) -> List.of(a, b))));
             app.routes().get("/fail-fast", request -> {
                 Tasks.parallel(
                                 Tasks.task(() -> {
                                     try {
-                                        return ctx.call("peer.hold", Map.of());
+                                        return HttpFixture.call(remote, "/hold", Map.of());
                                     } finally {
                                         signal(cleanup, peer, "/cleanup");
                                         childFinished = true;
@@ -180,7 +187,8 @@ public final class TasksMain {
                 throw new AssertionError("Fail-fast returned success");
             });
             app.routes().get("/settled", request -> {
-                var result = Tasks.parallel(ctx.task("peer.fail", Map.of()), Tasks.task(List::of))
+                var result = Tasks.parallel(
+                                Tasks.task(() -> HttpFixture.call(remote, "/fail", Map.of())), Tasks.task(List::of))
                         .settled();
 
                 if (result.first().isSuccess() || !result.second().isSuccess())
@@ -195,7 +203,9 @@ public final class TasksMain {
                             "/settled-deadline",
                             request -> json(
                                     app,
-                                    Tasks.parallel(ctx.task("peer.hold", Map.of()), Tasks.task(List::of))
+                                    Tasks.parallel(
+                                                    Tasks.task(() -> HttpFixture.call(remote, "/hold", Map.of())),
+                                                    Tasks.task(List::of))
                                             .within(Duration.ofMillis(100))
                                             .settled()));
             app.routes()
@@ -205,7 +215,7 @@ public final class TasksMain {
                                     app,
                                     Tasks.map(
                                                     List.of(0, 1, 2, 3, 4, 5, 6),
-                                                    i -> ctx.call("peer.batch", Map.of("index", i)))
+                                                    i -> HttpFixture.call(remote, "/batch", Map.of("index", i)))
                                             .maxConcurrency(2)
                                             .toList()));
             app.routes().get("/drain", request -> {
@@ -255,13 +265,13 @@ public final class TasksMain {
                     });
                     scope.fork(() -> {
                         try {
-                            return ctx.call("peer.hold", Map.of());
+                            return HttpFixture.call(remote, "/hold", Map.of());
                         } finally {
                             signal(cleanup, peer, "/cleanup");
                             childFinished = true;
                         }
                     });
-                    scope.fork(() -> ctx.call("other.hold", Map.of()));
+                    scope.fork(() -> HttpFixture.call(other, "/hold", Map.of()));
                     bodyReturned = true;
 
                     return Response.text(200, "provisional");
@@ -271,7 +281,7 @@ public final class TasksMain {
                 app.stop();
                 app.stop();
 
-                return json(app, ctx.call(ECHO, Map.of()));
+                return json(app, HttpFixture.call(remote, "/echo", Map.of(), INPUT));
             });
             app.routes().get("/capacity", request -> {
                 TaskScope.named("bounded-children").run(scope -> {

@@ -76,10 +76,11 @@ public final class TaskChecks {
         } catch (TaskCancelledException expected) {
             require(admission.stats().active == 0 && admission.stats().pending == 0, "Pre-cancelled work leaked");
         }
-        try (Microservice app = Microservice.create(Service.named("checks"), key -> null)) {
+        try (Microservice app = Microservice.create("checks", 1, key -> null)) {
             Context context = app.context();
             // Specs may be constructed outside a request; calls cannot run without a live service boundary.
-            TaskSpec<Object> remote = context.task("recipes.get", Map.of("id", 1));
+            RemoteClient client = new RemoteClient(app, "recipes", 1);
+            TaskSpec<Object> remote = Tasks.task(() -> HttpFixture.call(client, "/recipes", Map.of("id", 1)));
             try {
                 remote.run();
                 throw new AssertionError("Missing context accepted");

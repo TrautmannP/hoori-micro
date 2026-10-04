@@ -29,22 +29,24 @@ def main():
         def reply(self):
             body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
             status = 200
-            if self.path == "/_hoori/invoke":
-                calls.append(self.headers.get("X-Hoori-Action"))
+            if not self.path.startswith("/v2/"):
+                calls.append(self.headers.get("X-Hoori-Endpoint"))
                 if hold.is_set():
                     release.wait(5)
             else:
                 url = f"http://127.0.0.1:{self.server.server_port}"
                 body = json.dumps({"epoch": "admission-probe", "revision": 1, "complete": True,
                     "instances": [{"id": name, "service": name, "version": 1, "url": url,
-                        "actions": [{"name": "echo", "method": "POST", "path": "/public/{id}" if name == "recipes" else "/billing-public/{id}",
-                                     "permission": name + ":read"}]} for name in ("recipes", "billing")]}).encode()
+                        "endpoints": [{"method": "POST", "path": "/echo", "consumes": "application/json", "produces": "application/json"},
+                            {"method": "POST", "path": "/public/{id}" if name == "recipes" else "/billing-public/{id}",
+                             "consumes": "application/json", "produces": "application/json",
+                             "permission": name + ":read"}]} for name in ("recipes", "billing")]}).encode()
                 if self.command == "DELETE":
                     status, body = 204, b""
             try:
                 self.send_response(status)
                 for key, value in {"Content-Type": "application/json", "Content-Length": str(len(body)),
-                    "X-Hoori-Catalog-Protocol": "2", "X-Hoori-Catalog-Epoch": "admission-probe",
+                    "X-Hoori-Catalog-Protocol": "3", "X-Hoori-Catalog-Epoch": "admission-probe",
                     "X-Hoori-Catalog-Revision": "1", "X-Hoori-Catalog-View": self.headers.get("X-Hoori-Catalog-View", "all")}.items():
                     self.send_header(key, value)
                 self.end_headers()
@@ -105,7 +107,8 @@ def main():
                     "HOORI_INCOMING_CALLS": "1", "HOORI_INCOMING_PENDING_CALLS": "0",
                     "HOORI_OUTGOING_CALLS": "1", "HOORI_OUTGOING_PENDING_CALLS": "1",
                     "HOORI_CLIENT_CONNECTIONS": "1", "HOORI_CLIENT_PER_ORIGIN": "1",
-                    "HOORI_CLIENT_PENDING_ACQUIRES": "0", "HOORI_CLIENT_TIMEOUT_MS": "2000"})
+                    "HOORI_CLIENT_PENDING_ACQUIRES": "0", "HOORI_CLIENT_TIMEOUT_MS": "2000",
+                    "HOORI_WORK_TIMEOUT_MS": "10000", "HOORI_REQUEST_TIMEOUT_MS": "15000"})
         cp = ":".join([str(ROOT / "framework/target/test-classes"), str(ROOT / "framework/target/classes")]
                       + list(map(str, runtime_classpath(runtime, receipt))))
         engine = env.get("HOORI_ENGINE", "mixed")
@@ -115,16 +118,16 @@ def main():
         process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             until(lambda s: s["instances"] == 2)
-            invoke = {"X-Hoori-Action": "admission.in", "X-Hoori-Version": "1", "Content-Type": "application/json"}
+            invoke = {"X-Hoori-Endpoint": "POST /in application/json application/json", "X-Hoori-Version": "1", "Content-Type": "application/json"}
             with ThreadPoolExecutor(max_workers=2) as executor:
-                incoming = executor.submit(request, "/_hoori/invoke", b'"hold"', invoke)
+                incoming = executor.submit(request, "/in", b'"hold"', invoke)
                 before = until(lambda s: s["incoming_active"] == 1 and s["handlers"] == 1)
-                assert request("/_hoori/invoke", b"{", invoke)[0] == 503
+                assert request("/in", b"{", invoke)[0] == 503
                 assert stats()["reads"] == before["reads"], "Rejected input reached the DTO codec"
                 assert request("/health/ready")[0] == 200
                 assert incoming.result()[0] == 200
-                assert request("/_hoori/invoke", b"{", invoke)[0] == 400
-                assert request("/_hoori/invoke", b'"ok"', invoke)[0] == 200
+                assert request("/in", b"{", invoke)[0] == 400
+                assert request("/in", b'"ok"', invoke)[0] == 200
                 until(lambda s: s["incoming_active"] == 0)
                 process.send_signal(signal.SIGTERM)
                 output, errors = process.communicate(timeout=10)
@@ -143,7 +146,7 @@ def main():
                     count = len(calls)
                     active = executor.submit(request, "/typed", b"{}")
                     before = until(lambda s: s["outgoing_active"] == 1 and len(calls) == count + 1)
-                    pending = executor.submit(request, "/generic", b"{}")
+                    pending = executor.submit(request, "/json", b"{}")
                     until(lambda s: s["outgoing_pending"] == 1)
                     assert request("/billing", b"{}")[0] == 503
                     assert request("/public/1", b"{")[0] == 503, "Gateway parsed rejected parameters"
@@ -156,7 +159,7 @@ def main():
                 count, writes = len(calls), stats()["writes"]
                 encoding = executor.submit(request, "/encode", b"{}")
                 until(lambda s: s["outgoing_active"] == 1 and s["writes"] == writes + 1)
-                expired = executor.submit(request, "/generic", b"{}")
+                expired = executor.submit(request, "/json", b"{}")
                 until(lambda s: s["outgoing_pending"] == 1)
                 assert expired.result()[0] == encoding.result()[0] == 504
                 assert len(calls) == count and stats()["writes"] == writes + 1, "Expired work reached encoding/network"
@@ -170,7 +173,7 @@ def main():
                 count = len(calls)
                 active = executor.submit(request, "/typed", b"{}")
                 until(lambda s: s["outgoing_active"] == 1 and len(calls) == count + 1)
-                pending = executor.submit(request, "/generic", b"{}")
+                pending = executor.submit(request, "/json", b"{}")
                 until(lambda s: s["outgoing_pending"] == 1)
                 process.send_signal(signal.SIGTERM)
                 assert pending.result()[0] == 503
@@ -185,7 +188,7 @@ def main():
                 ROOT / "framework/target/test-classes/hoori/micro/AdmissionMain.class",
                 ROOT / "framework/target/hoori-micro-0.1.0-SNAPSHOT.jar", ROOT / "scripts/test_admission.py")}
             print(json.dumps({"engine": engine, "runtime": receipt, "fingerprints": fingerprints, "pid": process.pid,
-                "incoming_run": incoming_run, "snapshots": snapshots, "wire_actions": calls, "exit": process.returncode,
+                "incoming_run": incoming_run, "snapshots": snapshots, "wire_endpoints": calls, "exit": process.returncode,
                 "stdout": output, "stderr": errors}, sort_keys=True))
             print("PASS: native incoming/outgoing bounds, pre-codec/pre-wire rejection, deadlines, repeated recovery and drain")
         finally:

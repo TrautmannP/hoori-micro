@@ -48,7 +48,7 @@ class ApplicationProcessorTest {
                             System.getProperty("java.class.path")),
                     null,
                     files);
-            task.setProcessors(List.of(new ApplicationProcessor()));
+            task.setProcessors(List.of(new ApplicationProcessor(), new hoori.tasks.processor.TasksProcessor()));
             boolean success = task.call();
 
             return success ? "OK" : diagnostics.getDiagnostics().toString();
@@ -123,5 +123,119 @@ class ApplicationProcessorTest {
                 "Work",
                 "package test; @hoori.micro.app.Service public class Work { public Work() {} public Work(String s) {} }");
         assertTrue(result.contains("exactly one public constructor"), result);
+    }
+
+    @Test
+    void clientUsesSharedHttpModelIncludingLiteralSegmentsAndVoid() throws Exception {
+        assertEquals(
+                "OK",
+                compile(
+                        "App",
+                        APP,
+                        "Recipes",
+                        """
+                package test;
+                @hoori.micro.app.ServiceClient(name="recipes")
+                public interface Recipes {
+                    @hoori.rest.mvc.GetMapping("/recipes/{id}")
+                    String get(@hoori.rest.mvc.PathVariable("id") long id);
+                    @hoori.rest.mvc.DeleteMapping("/recipes/{id}")
+                    void delete(@hoori.rest.mvc.PathVariable("id") long id);
+                    @hoori.rest.mvc.GetMapping("/recipes")
+                    java.util.List<String> search(@hoori.rest.mvc.RequestParam(value="tag", required=false, max=3) java.util.List<String> tags);
+                }
+                """,
+                        "Work",
+                        "package test; @hoori.micro.app.Service public class Work { public Work(Recipes recipes) {} }"));
+    }
+
+    @Test
+    void clientRejectsUnboundPathsAndCredentialHeaders() throws Exception {
+        String declaration =
+                "package test; @hoori.micro.app.ServiceClient(name=\"recipes\") public interface Recipes { ";
+        String result =
+                compile("Recipes", declaration + "@hoori.rest.mvc.GetMapping(\"/recipes/{id}\") String get(); }");
+        assertTrue(result.contains("PathVariable binding"), result);
+        result = compile(
+                "Recipes",
+                declaration
+                        + "@hoori.rest.mvc.GetMapping(\"/recipes\") String get(@hoori.rest.mvc.RequestHeader(\"Authorization\") String auth); }");
+        assertTrue(result.contains("reserved or contains credentials"), result);
+    }
+
+    @Test
+    void publicationRequiresMappedControllerAndSupportedHeaders() throws Exception {
+        String result = compile(
+                "App",
+                APP,
+                "Stray",
+                "package test; public class Stray { @hoori.micro.app.GatewayRoute(permission=\"test:read\") public void run() {} }");
+        assertTrue(result.contains("requires a RestController"), result);
+        result = compile("App", APP, "Web", """
+                package test; @hoori.rest.mvc.RestController public class Web {
+                 @hoori.micro.app.GatewayRoute(permission="test:read")
+                 @hoori.rest.mvc.GetMapping("/test")
+                 public String get(@hoori.rest.mvc.RequestHeader("X-Mode") String mode) { return mode; }
+                }
+                """);
+        assertTrue(result.contains("Gateway forwards only"), result);
+    }
+
+    private static final String SCOPED =
+            "package test; @hoori.tasks.TaskScoped public interface Work { void run() throws Exception; }";
+    private static final String DELEGATE =
+            "package test; @hoori.micro.app.Service public class RealWork implements Work { public void run() {} }";
+    private static final String USE =
+            "package test; @hoori.micro.app.Service public class Use { public Use(Work work) {} }";
+
+    @Test
+    void scopedInterfaceUsesOriginalDelegateAndRejectsAmbiguityAndCycles() throws Exception {
+        assertEquals("OK", compile("App", APP, "Work", SCOPED, "RealWork", DELEGATE, "Use", USE));
+        String result = compile(
+                "App",
+                APP,
+                "Work",
+                SCOPED,
+                "RealWork",
+                DELEGATE,
+                "OtherWork",
+                DELEGATE.replace("RealWork", "OtherWork"),
+                "Use",
+                USE);
+        assertTrue(result.contains("exactly one delegate"), result);
+        result = compile(
+                "App",
+                APP,
+                "Work",
+                SCOPED,
+                "RealWork",
+                DELEGATE.replace("public void run()", "public RealWork(Use use) {} public void run()"),
+                "Use",
+                USE);
+        assertTrue(result.contains("Dependency cycle"), result);
+    }
+
+    @Test
+    void transactionalDecorationRequiresOneStableManager() throws Exception {
+        String contract = SCOPED.replace("TaskScoped", "Transactional");
+        String result = compile("App", APP, "Work", contract, "RealWork", DELEGATE, "Use", USE);
+        assertTrue(result.contains("exactly one TransactionManager"), result);
+        String config =
+                "package test; @hoori.micro.app.Configuration public class Config { @hoori.micro.app.Bean public hoori.transaction.TransactionManager<?> manager() { return null; } }";
+        assertEquals("OK", compile("App", APP, "Work", contract, "RealWork", DELEGATE, "Use", USE, "Config", config));
+        result = compile(
+                "App",
+                APP,
+                "Work",
+                contract,
+                "RealWork",
+                DELEGATE,
+                "Use",
+                USE,
+                "Config",
+                config,
+                "OtherConfig",
+                config.replace("class Config", "class OtherConfig"));
+        assertTrue(result.contains("exactly one TransactionManager"), result);
     }
 }

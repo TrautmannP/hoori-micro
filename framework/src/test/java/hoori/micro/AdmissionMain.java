@@ -35,45 +35,51 @@ public final class AdmissionMain {
             JsonTree.CODEC.write(value, writer);
         }
     };
-    private static final Action<Object, Object> OUT = new Action<>("recipes.echo", INPUT, JsonTree.CODEC);
-    private static final Action<Object, Object> BILL = new Action<>("billing.echo", INPUT, JsonTree.CODEC);
 
     public static void main(String[] args) throws Exception {
-        Service service = Service.named("admission")
-                .dependsOn("recipes", 1)
-                .dependsOn("billing", 1)
-                .action("in", INPUT, JsonTree.CODEC, (ctx, value) -> {
-                    HANDLERS.incrementAndGet();
+        try (Microservice app = Microservice.create("admission")) {
+            RemoteClient recipes = new RemoteClient(app, "recipes", 1);
+            RemoteClient billing = new RemoteClient(app, "billing", 1);
+            HttpFixture.post(app, "/in", null, INPUT, (ctx, value) -> {
+                HANDLERS.incrementAndGet();
 
-                    if (value.equals("hold")) Thread.sleep(1500);
+                if (value.equals("hold")) Thread.sleep(1500);
 
-                    return value;
-                });
-        try (Microservice app = Microservice.create(service)) {
+                return value;
+            });
             Gateway.mount(app, (request, permission) -> permission.equals("recipes:read"));
             app.routes()
                     .post(
                             "/typed",
                             request -> Responses.json(
-                                    200, app.context().call(OUT, "ok"), JsonTree.CODEC, app.jsonLimits()));
+                                    200,
+                                    HttpFixture.call(recipes, "/echo", "ok", INPUT),
+                                    JsonTree.CODEC,
+                                    app.jsonLimits()));
             app.routes()
                     .post(
-                            "/generic",
+                            "/json",
                             request -> Responses.json(
                                     200,
-                                    app.context().call("recipes.echo", Map.of("value", "ok")),
+                                    HttpFixture.call(recipes, "/echo", Map.of("value", "ok")),
                                     JsonTree.CODEC,
                                     app.jsonLimits()));
             app.routes()
                     .post(
                             "/billing",
                             request -> Responses.json(
-                                    200, app.context().call(BILL, "ok"), JsonTree.CODEC, app.jsonLimits()));
+                                    200,
+                                    HttpFixture.call(billing, "/echo", "ok", INPUT),
+                                    JsonTree.CODEC,
+                                    app.jsonLimits()));
             app.routes()
                     .post(
                             "/encode",
                             request -> Responses.json(
-                                    200, app.context().call(OUT, "slow-encode"), JsonTree.CODEC, app.jsonLimits()));
+                                    200,
+                                    HttpFixture.call(recipes, "/echo", "slow-encode", INPUT),
+                                    JsonTree.CODEC,
+                                    app.jsonLimits()));
             app.controlRoute("GET", "/probe", request -> {
                 Map<String, Object> values = new LinkedHashMap<>();
                 values.put("reads", READS.get());

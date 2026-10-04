@@ -39,7 +39,7 @@ def main():
     if args.action == "build":
         repo = install(runtime, receipt, lock)
         mvn = ["mvn", "--batch-mode", "--no-transfer-progress", f"-Dmaven.repo.local={repo}"]
-        subprocess.run(mvn + ["-pl", "framework,examples/demo-contracts", "-am", "install"], cwd=ROOT, check=True)
+        subprocess.run(mvn + ["-pl", "processor,starter,examples/demo-contracts", "-am", "install"], cwd=ROOT, check=True)
         module = ROOT / "examples" / args.example
         subprocess.run(mvn + ["-f", str(module / "pom.xml"), "clean", "verify",
             "org.apache.maven.plugins:maven-dependency-plugin:3.8.1:copy-dependencies",

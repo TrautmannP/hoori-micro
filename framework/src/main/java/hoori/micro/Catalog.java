@@ -4,18 +4,18 @@ import hoori.rest.json.JsonCodec;
 import hoori.rest.json.JsonException;
 import hoori.rest.json.JsonReader;
 import hoori.rest.json.JsonWriter;
-import java.net.URI;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
 /**
- * Immutable registry snapshot: instances and the actions each one actually offers. Unknown JSON
+ * Immutable registry snapshot: instances and the HTTP endpoints each one actually offers. Unknown JSON
  * fields are skipped for additive evolution; invalid names, URLs or routes reject the document.
  */
 final class Catalog {
     static final int MAX_INSTANCES = 256;
+    static final String PROTOCOL = "3";
     static final String PROTOCOL_HEADER = "X-Hoori-Catalog-Protocol";
     static final String EPOCH_HEADER = "X-Hoori-Catalog-Epoch", REVISION_HEADER = "X-Hoori-Catalog-Revision";
     static final String VIEW_HEADER = "X-Hoori-Catalog-View", KNOWN_VIEW_HEADER = "X-Hoori-Catalog-Known-View";
@@ -33,27 +33,27 @@ final class Catalog {
         this.instances = instances;
     }
 
-    /** Round-robin over instances of this major version that offer this action, never per service. */
-    Instance select(String service, int version, String action, int turn) {
-        // ponytail: linear scan over at most 256 instances; index by action if it shows up in profiles.
+    /** Round-robin over instances of this major version that offer this endpoint, never per service. */
+    Instance select(String service, int version, String endpoint, int turn) {
+        // ponytail: linear scan over at most 256 instances; index by endpoint if it shows up in profiles.
         int count = 0;
-        for (Instance instance : instances) if (instance.offers(service, version, action)) count++;
+        for (Instance instance : instances) if (instance.offers(service, version, endpoint)) count++;
 
         if (count == 0) return null;
 
         int pick = (turn & Integer.MAX_VALUE) % count;
         for (Instance instance : instances)
-            if (instance.offers(service, version, action) && pick-- == 0) return instance;
+            if (instance.offers(service, version, endpoint) && pick-- == 0) return instance;
         throw new IllegalStateException();
     }
 
     static final class Entry {
-        final String name, method, path, permission;
+        final HttpEndpoint contract;
+        final String key, permission;
 
-        Entry(String name, String method, String path, String permission) {
-            this.name = name;
-            this.method = method;
-            this.path = path;
+        Entry(HttpEndpoint contract, String permission) {
+            this.contract = Objects.requireNonNull(contract);
+            this.key = contract.key();
             this.permission = permission;
         }
     }
@@ -61,22 +61,20 @@ final class Catalog {
     static final class Instance {
         final String id, service, url;
         final int version;
-        final Entry[] actions;
-        final URI invokeTarget;
+        final Entry[] endpoints;
 
-        Instance(String id, String service, int version, String url, Entry[] actions) {
+        Instance(String id, String service, int version, String url, Entry[] endpoints) {
             this.id = id;
             this.service = service;
             this.version = version;
             this.url = url;
-            this.actions = actions;
-            invokeTarget = URI.create(url + ServiceBroker.INVOKE_PATH);
+            this.endpoints = endpoints;
         }
 
-        boolean offers(String service, int version, String action) {
+        boolean offers(String service, int version, String key) {
             if (this.version != version || !this.service.equals(service)) return false;
 
-            for (Entry entry : actions) if (entry.name.equals(action)) return true;
+            for (Entry entry : endpoints) if (entry.key.equals(key)) return true;
 
             return false;
         }
@@ -86,15 +84,12 @@ final class Catalog {
                     || !service.equals(other.service)
                     || version != other.version
                     || !url.equals(other.url)
-                    || actions.length != other.actions.length) return false;
+                    || endpoints.length != other.endpoints.length) return false;
 
-            for (int i = 0; i < actions.length; i++) {
-                Entry a = actions[i], b = other.actions[i];
+            for (int i = 0; i < endpoints.length; i++) {
+                Entry a = endpoints[i], b = other.endpoints[i];
 
-                if (!a.name.equals(b.name)
-                        || !Objects.equals(a.method, b.method)
-                        || !Objects.equals(a.path, b.path)
-                        || !Objects.equals(a.permission, b.permission)) return false;
+                if (!a.key.equals(b.key) || !Objects.equals(a.permission, b.permission)) return false;
             }
 
             return true;
@@ -130,7 +125,7 @@ final class Catalog {
         }
 
         static Filter parse(String key) {
-            if (key == null) key = "all"; // Old protocol-2 clients still receive the full catalog.
+            if (key == null) key = "all";
 
             if (key.length() > 2300) throw new IllegalArgumentException("Catalog view too long");
 
@@ -151,7 +146,7 @@ final class Catalog {
                     String dependency = key.substring(start, end);
                     int colon = dependency.indexOf(':');
 
-                    if (colon < 1 || dependencies.size() == Service.MAX_DEPENDENCIES)
+                    if (colon < 1 || dependencies.size() == ServiceDefinition.MAX_DEPENDENCIES)
                         throw new IllegalArgumentException("Invalid catalog dependency");
 
                     String name = ServiceName.require(dependency.substring(0, colon));
@@ -159,7 +154,7 @@ final class Catalog {
                     int version = Integer.parseInt(number);
 
                     if (version < 1
-                            || version > Service.MAX_VERSION
+                            || version > ServiceDefinition.MAX_VERSION
                             || !number.equals(Integer.toString(version))
                             || dependencies.put(name, version) != null)
                         throw new IllegalArgumentException("Invalid catalog dependency");
@@ -181,19 +176,19 @@ final class Catalog {
 
                 if (!dependency && !published) continue;
 
-                ArrayList<Entry> actions = new ArrayList<>();
-                for (Entry entry : instance.actions) {
-                    if (dependency || published && entry.path != null)
-                        actions.add(published ? entry : new Entry(entry.name, null, null, null));
+                ArrayList<Entry> endpoints = new ArrayList<>();
+                for (Entry entry : instance.endpoints) {
+                    if (dependency || published && entry.permission != null)
+                        endpoints.add(published ? entry : new Entry(entry.contract, null));
                 }
 
-                if (!actions.isEmpty())
+                if (!endpoints.isEmpty())
                     selected.add(new Instance(
                             instance.id,
                             instance.service,
                             instance.version,
                             instance.url,
-                            actions.toArray(new Entry[0])));
+                            endpoints.toArray(new Entry[0])));
             }
 
             return new Catalog(source.epoch, source.revision, source.complete, selected.toArray(new Instance[0]));
@@ -205,7 +200,8 @@ final class Catalog {
         public Instance read(JsonReader input) {
             String id = null, service = null, url = null;
             long version = 0;
-            ArrayList<Entry> actions = new ArrayList<>();
+            boolean declared = false;
+            ArrayList<Entry> endpoints = new ArrayList<>();
             input.beginObject();
             while (input.hasNext()) {
                 switch (input.nextName()) {
@@ -213,12 +209,14 @@ final class Catalog {
                     case "service" -> service = input.nextString();
                     case "version" -> version = input.nextLong();
                     case "url" -> url = input.nextString();
-                    case "actions" -> {
+                    case "endpoints" -> {
+                        declared = true;
                         input.beginArray();
                         while (input.hasNext()) {
-                            if (actions.size() == Service.MAX_ACTIONS) throw new JsonException("Too many actions");
+                            if (endpoints.size() == ServiceDefinition.MAX_ENDPOINTS)
+                                throw new JsonException("Too many endpoints");
 
-                            actions.add(entry(input));
+                            endpoints.add(entry(input));
                         }
                         input.endArray();
                     }
@@ -230,48 +228,44 @@ final class Catalog {
                 ServiceName.require(id);
                 ServiceName.require(service);
 
-                if (version < 1 || version > Service.MAX_VERSION || url == null) throw new IllegalArgumentException();
+                if (version < 1 || version > ServiceDefinition.MAX_VERSION || url == null || !declared)
+                    throw new IllegalArgumentException();
 
                 url = ServiceConfig.origin(url, "registration");
-                for (int i = 0; i < actions.size(); i++) {
-                    Entry entry = actions.get(i);
-                    ServiceName.require(entry.name);
+                for (int i = 0; i < endpoints.size(); i++) {
+                    Entry entry = endpoints.get(i);
 
-                    if ((entry.method == null) != (entry.path == null)
-                            || (entry.path == null) != (entry.permission == null)) throw new IllegalArgumentException();
-
-                    if (entry.path != null) {
-                        if (!Gateway.METHODS.contains(entry.method)) throw new IllegalArgumentException();
-
-                        Gateway.template(entry.path);
-                        Gateway.permission(service, entry.permission);
-                    }
+                    if (entry.permission != null) Gateway.permission(service, entry.permission);
 
                     for (int j = 0; j < i; j++)
-                        if (actions.get(j).name.equals(entry.name)) throw new IllegalArgumentException();
+                        if (endpoints.get(j).key.equals(entry.key)) throw new IllegalArgumentException();
                 }
             } catch (IllegalArgumentException invalid) {
                 throw new JsonException("Invalid registration");
             }
 
-            return new Instance(id, service, (int) version, url, actions.toArray(new Entry[0]));
+            return new Instance(id, service, (int) version, url, endpoints.toArray(new Entry[0]));
         }
 
         private Entry entry(JsonReader input) {
-            String name = null, method = null, path = null, permission = null;
+            String method = null, path = null, consumes = null, produces = null, permission = null;
             input.beginObject();
             while (input.hasNext()) {
                 switch (input.nextName()) {
-                    case "name" -> name = input.nextString();
                     case "method" -> method = input.nextString();
                     case "path" -> path = input.nextString();
+                    case "consumes" -> consumes = input.nextString();
+                    case "produces" -> produces = input.nextString();
                     case "permission" -> permission = input.nextString();
                     default -> input.skipValue();
                 }
             }
             input.endObject();
-
-            return new Entry(name, method, path, permission);
+            try {
+                return new Entry(new HttpEndpoint(method, path, consumes, produces), permission);
+            } catch (IllegalArgumentException invalid) {
+                throw new JsonException("Invalid HTTP endpoint");
+            }
         }
 
         @Override
@@ -285,18 +279,20 @@ final class Catalog {
                     .value(value.version)
                     .name("url")
                     .value(value.url)
-                    .name("actions")
+                    .name("endpoints")
                     .beginArray();
-            for (Entry entry : value.actions) {
-                output.beginObject().name("name").value(entry.name);
+            for (Entry entry : value.endpoints) {
+                output.beginObject()
+                        .name("method")
+                        .value(entry.contract.method())
+                        .name("path")
+                        .value(entry.contract.path())
+                        .name("consumes")
+                        .value(entry.contract.consumes())
+                        .name("produces")
+                        .value(entry.contract.produces());
 
-                if (entry.path != null)
-                    output.name("method")
-                            .value(entry.method)
-                            .name("path")
-                            .value(entry.path)
-                            .name("permission")
-                            .value(entry.permission);
+                if (entry.permission != null) output.name("permission").value(entry.permission);
 
                 output.endObject();
             }

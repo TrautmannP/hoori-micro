@@ -16,7 +16,7 @@ def main():
     receipt = verify(runtime)
     repo = maven_repository(runtime)
     mvn = ["mvn", "-B", "-ntp", f"-Dmaven.repo.local={repo}"]
-    subprocess.run(mvn + ["-pl", "framework,processor,starter", "-am", "install", "-DskipTests"], cwd=ROOT, check=True)
+    subprocess.run(mvn + ["-pl", "framework,processor,starter", "-am", "install", "-DskipTests", "-Dspotless.skip=true"], cwd=ROOT, check=True)
     work = Path(tempfile.mkdtemp(prefix="hoori-micro-app-"))
     # Only artifacts in the isolated Maven repository connect this consumer to Micro/Hoori.
     shared = work / "shared"

@@ -43,25 +43,26 @@ def main():
         def reply(self):
             nonlocal batch_active, batch_max
             raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-            action = self.headers.get("X-Hoori-Action", "")
+            role = next(name for name, port in peers.items() if port == self.server.server_port)
+            endpoint = role + self.path if self.headers.get("X-Hoori-Endpoint") else ""
             with lock:
-                seen.append({"action": action, "id": self.headers.get("X-Request-ID"),
+                seen.append({"endpoint": endpoint, "id": self.headers.get("X-Request-ID"),
                              "credentials": bool(self.headers.get("Authorization") or self.headers.get("Cookie")),
                              "path": self.path, "time": time.monotonic()})
             status = 200
-            if self.path.startswith("/v1/"):
+            if self.path.startswith("/v2/"):
                 if not registry.is_set():
                     with lock:
                         events.append("registry-wait")
                     registry.wait(15)
                 view = self.headers.get("X-Hoori-Catalog-View", "all")
                 instances = [{"id": role, "service": role, "version": 1, "url": f"http://127.0.0.1:{port}",
-                              "actions": [{"name": name} for name in ("echo", "hold", "fail", "batch")]}
+                              "endpoints": [{"method": "POST", "path": "/" + name, "consumes": "application/json", "produces": "application/json"} for name in ("echo", "hold", "fail", "batch")]}
                              for role, port in peers.items()]
                 body = json.dumps({"epoch": "tasks-test", "revision": 1, "complete": True,
                                    "instances": instances}).encode()
                 self.send_response(200)
-                for k, v in {"X-Hoori-Catalog-Protocol": "2", "X-Hoori-Catalog-Epoch": "tasks-test",
+                for k, v in {"X-Hoori-Catalog-Protocol": "3", "X-Hoori-Catalog-Epoch": "tasks-test",
                              "X-Hoori-Catalog-Revision": "1", "X-Hoori-Catalog-View": view}.items():
                     self.send_header(k, str(v))
             else:
@@ -70,9 +71,9 @@ def main():
                         events.append(self.path[1:])
                     if self.path == "/cleanup":
                         cleanup.wait(15)
-                if action.endswith(".fail"):
+                if endpoint.endswith("/fail"):
                     status = 409
-                body = json.dumps({"id": self.headers.get("X-Request-ID"), "action": action,
+                body = json.dumps({"id": self.headers.get("X-Request-ID"), "endpoint": endpoint,
                                    "input": json.loads(raw) if raw else None,
                                    "detail": "SECRET upstream detail" if status != 200 else "ok"}).encode()
                 self.send_response(status)
@@ -80,22 +81,22 @@ def main():
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             try:
-                if action.endswith((".hold", ".batch")):
+                if endpoint.endswith(("/hold", "/batch")):
                     gate = holds
-                    if action.endswith(".batch"):
+                    if endpoint.endswith("/batch"):
                         with lock:
                             batch_active += 1
                             batch_max = max(batch_max, batch_active)
                     self.wfile.write(body[:1])
                     self.wfile.flush()
                     with lock:
-                        events.append("body:" + action)
+                        events.append("body:" + endpoint)
                     while not gate.wait(.005):
                         if select.select([self.connection], [], [], 0)[0] and not self.connection.recv(1, socket.MSG_PEEK):
                             with lock:
-                                events.append("cancelled:" + action)
+                                events.append("cancelled:" + endpoint)
                             return
-                    if action.endswith(".batch"):
+                    if endpoint.endswith("/batch"):
                         with lock:
                             batch_active -= 1
                     self.wfile.write(body[1:])
@@ -212,29 +213,29 @@ def main():
             evidence["checks"].append("keepalive and overlapping invocation isolation, lazy reusable specs, owner-only request")
             reset()
             first = pool.submit(request, "/call/hold")
-            until(lambda: "body:peer.hold" in events, "response body parked")
+            until(lambda: "body:peer/hold" in events, "response body parked")
             waiting = pool.submit(request, "/cancel/echo")
             until(lambda: state()["poolPending"] == 1, "pool waiter")
             assert any("READ" in item for item in state()["diagnostics"]), state()
             assert request("/other")[0] == 200
             assert request("/control/cancel", b"")[0] == 200
             assert waiting.result()[0] == 503
-            assert not any(item["action"] == "peer.echo" for item in seen)
+            assert not any(item["endpoint"] == "peer/echo" for item in seen)
             assert not first.done()
             holds.set()
             assert first.result()[0] == 200 and request("/call/echo")[0] == 200
             reset()
             cancelled = pool.submit(request, "/cancel/hold")
-            until(lambda: "body:peer.hold" in events, "cancel body parked")
+            until(lambda: "body:peer/hold" in events, "cancel body parked")
             assert request("/other")[0] == 200
             request("/control/cancel", b"")
             assert cancelled.result()[0] == 503
-            until(lambda: "cancelled:peer.hold" in events, "actual body socket cancellation")
+            until(lambda: "cancelled:peer/hold" in events, "actual body socket cancellation")
             assert request("/call/echo")[0] == 200
             evidence["checks"].append("pool and body cancellation preserve concurrent and later same-client calls")
             reset()
             parallel = pool.submit(request, "/parallel")
-            until(lambda: all("body:" + name + ".hold" in events for name in peers), "both calls started before release")
+            until(lambda: all("body:" + name + "/hold" in events for name in peers), "both calls started before release")
             assert not parallel.done()
             holds.set()
             assert parallel.result()[0] == 200
@@ -258,7 +259,7 @@ def main():
             evidence["checks"].append("fail-fast primary business error, actual finally drain, settled/global deadline and safe failures")
             reset()
             batch = pool.submit(request, "/batch")
-            until(lambda: events.count("body:peer.batch") == 1 and state()["poolPending"] == 1, "bounded batch")
+            until(lambda: events.count("body:peer/batch") == 1 and state()["poolPending"] == 1, "bounded batch")
             assert state()["outgoing"] == 2
             holds.set()
             status, body = batch.result()
@@ -300,7 +301,7 @@ def main():
             start("grace")
             reset()
             work = pool.submit(request, "/call/hold")
-            until(lambda: "body:peer.hold" in events, "grace work")
+            until(lambda: "body:peer/hold" in events, "grace work")
             proc.send_signal(signal.SIGTERM)
             holds.set()
             assert work.result()[0] == 200
@@ -308,7 +309,7 @@ def main():
             start("shutdown")
             reset()
             work = pool.submit(request, "/shutdown")
-            until(lambda: all("body:" + name + ".hold" in events for name in peers), "shutdown fanout")
+            until(lambda: all("body:" + name + "/hold" in events for name in peers), "shutdown fanout")
             registry.clear()
             until(lambda: "registry-wait" in events, "slow registry")
             started = time.monotonic()

@@ -18,8 +18,15 @@ final class ValidationErrorsTest {
         assertThrows(
                 UnsupportedOperationException.class,
                 () -> ValidationErrors.read(valid).clear());
-        var failure = new ServiceCallException("recipes", 400, "unexpected HTTP status", null, "recipes.get", fields);
-        assertEquals("recipes.get", failure.action());
+        var failure = new ServiceCallException(
+                "recipes",
+                400,
+                "unexpected HTTP status",
+                null,
+                new HttpEndpoint("GET", "/recipes/{id}", "", "application/json"),
+                fields,
+                null);
+        assertEquals("/recipes/{id}", failure.endpoint().path());
         assertEquals(502, Failures.classify(failure).status());
         assertFalse(failure.getMessage().contains("positive"));
         for (String body : List.of(

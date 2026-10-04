@@ -19,8 +19,8 @@ import java.util.Map;
 
 /** Test-only controls. Static addresses/snapshots never become an application API. */
 public final class BenchmarkMain {
-    private static final Action<Object, Object> ECHO = new Action<>("recipes.echo", JsonTree.CODEC, JsonTree.CODEC);
-    private static final Action<Object, Object> FAIL = new Action<>("recipes.fail", JsonTree.CODEC, JsonTree.CODEC);
+    private static final HttpEndpoint DIRECT = HttpFixture.post("/direct");
+    private static final String DIRECT_KEY = DIRECT.key();
     private static final JsonLimits JSON = new JsonLimits(64, 16384, 128, 65536);
     private static final String ROLE = System.getenv("BENCH_ROLE");
     private static final String VARIANT = System.getenv("BENCH_VARIANT");
@@ -41,31 +41,29 @@ public final class BenchmarkMain {
             return;
         }
 
-        Service service = Service.named(ROLE);
         boolean composition = COMPOSITION != null && !COMPOSITION.equals("single");
+        try (Microservice app = Microservice.create(ROLE)) {
+            RemoteClient recipes = ROLE.equals("shopping") ? new RemoteClient(app, "recipes", 1) : null;
 
-        if (ROLE.equals("recipes"))
-            service.action("echo", JsonTree.CODEC, JsonTree.CODEC, (ctx, input) -> echo(input))
-                    .http("POST", "/bench")
-                    .requirePermission("recipes:read");
+            if (ROLE.equals("recipes")) {
+                HttpFixture.post(app, "/bench", "recipes:read", JsonTree.CODEC, (ctx, input) -> echo(input));
 
-        if (ROLE.equals("recipes") && composition)
-            service.action(FAIL, (ctx, input) -> {
-                Thread.sleep(50);
-                throw new RequestException(409, "Controlled benchmark failure");
-            });
+                if (composition)
+                    HttpFixture.post(app, "/fail", null, JsonTree.CODEC, (ctx, input) -> {
+                        Thread.sleep(50);
+                        throw new RequestException(409, "Controlled benchmark failure");
+                    });
+            }
 
-        if (ROLE.equals("shopping"))
-            service.dependsOn("recipes", 1)
-                    .action(
-                            "echo",
-                            JsonTree.CODEC,
-                            JsonTree.CODEC,
-                            composition ? BenchmarkMain::compose : (ctx, input) -> ctx.call(ECHO, input))
-                    .http("POST", "/bench/meal")
-                    .requirePermission("shopping:read");
+            if (ROLE.equals("shopping"))
+                HttpFixture.post(
+                        app,
+                        "/bench/meal",
+                        "shopping:read",
+                        JsonTree.CODEC,
+                        (ctx, input) ->
+                                composition ? compose(recipes, input) : HttpFixture.call(recipes, "/bench", input));
 
-        try (Microservice app = Microservice.create(service)) {
             if (ROLE.equals("registry")) new Registry(app.config().registryTtlMillis, app.jsonLimits()).mount(app);
 
             if (ROLE.equals("gateway") && VARIANT.equals("D"))
@@ -77,7 +75,7 @@ public final class BenchmarkMain {
                                 "/bench",
                                 request -> Responses.json(
                                         200,
-                                        app.context().call(ECHO, request.body(JsonTree.CODEC, JSON)),
+                                        HttpFixture.call(recipes, "/bench", request.body(JsonTree.CODEC, JSON)),
                                         JsonTree.CODEC,
                                         JSON));
 
@@ -87,7 +85,7 @@ public final class BenchmarkMain {
                                 "/bench",
                                 request -> Responses.json(
                                         200,
-                                        compose(app.context(), request.body(JsonTree.CODEC, JSON)),
+                                        compose(recipes, request.body(JsonTree.CODEC, JSON)),
                                         JsonTree.CODEC,
                                         JSON));
 
@@ -112,13 +110,16 @@ public final class BenchmarkMain {
         }
     }
 
-    private static Object compose(Context ctx, Object input) throws Exception {
-        Action<Object, Object> first =
-                input instanceof Map<?, ?> map && Boolean.TRUE.equals(map.get("failure")) ? FAIL : ECHO;
+    private static Object compose(RemoteClient recipes, Object input) throws Exception {
+        String first = input instanceof Map<?, ?> map && Boolean.TRUE.equals(map.get("failure")) ? "/fail" : "/bench";
 
-        if (COMPOSITION.equals("serial")) return same(ctx.call(first, input), ctx.call(ECHO, input));
+        if (COMPOSITION.equals("serial"))
+            return same(HttpFixture.call(recipes, first, input), HttpFixture.call(recipes, "/bench", input));
 
-        var plan = Tasks.parallel(ctx.task(first, input), ctx.task(ECHO, input)).named("benchmark.composition");
+        var plan = Tasks.parallel(
+                        Tasks.task(() -> HttpFixture.call(recipes, first, input)),
+                        Tasks.task(() -> HttpFixture.call(recipes, "/bench", input)))
+                .named("benchmark.composition");
 
         if (COMPOSITION.equals("fail-fast")) plan.failFast();
 
@@ -133,11 +134,11 @@ public final class BenchmarkMain {
 
     /** Native CPU control, separate from transport timing. No speculative index implementation. */
     private static void lookup() {
-        Catalog.Entry[] actions = {new Catalog.Entry("echo", null, null, null)};
+        Catalog.Entry[] endpoints = {new Catalog.Entry(DIRECT, null)};
         Catalog.Instance[] all = new Catalog.Instance[35];
-        all[0] = new Catalog.Instance("recipes", "recipes", 1, "http://recipes:8080", actions);
+        all[0] = new Catalog.Instance("recipes", "recipes", 1, "http://recipes:8080", endpoints);
         for (int i = 1; i < all.length; i++)
-            all[i] = new Catalog.Instance("extra-" + i, "extra-" + i, 1, "http://extra:8080", actions);
+            all[i] = new Catalog.Instance("extra-" + i, "extra-" + i, 1, "http://extra:8080", endpoints);
         Catalog[] catalogs = {
             new Catalog("lookup", 1, true, new Catalog.Instance[] {all[0]}), new Catalog("lookup", 1, true, all)
         };
@@ -146,7 +147,7 @@ public final class BenchmarkMain {
             for (Catalog catalog : catalogs) {
                 long start = System.nanoTime();
                 for (int i = 0; i < 100_000; i++) {
-                    Catalog.Instance selected = catalog.select("recipes", 1, (i & 1) == 0 ? "echo" : "absent", i);
+                    Catalog.Instance selected = catalog.select("recipes", 1, (i & 1) == 0 ? DIRECT_KEY : "absent", i);
 
                     if (selected != null) checksum++;
                 }
@@ -175,14 +176,14 @@ public final class BenchmarkMain {
         return input;
     }
 
-    /** Same HTTP/JSON limits and request context; B adds the real broker and action dispatcher. */
+    /** Same HTTP/JSON limits and request context; B adds the real broker and HTTP endpoint boundary. */
     private static void fixed() throws Exception {
-        Service service = Service.named(ROLE);
+        ServiceDefinition service = new ServiceDefinition(ROLE, 1);
 
-        if (ROLE.equals("recipes")) service.action("echo", JsonTree.CODEC, JsonTree.CODEC, (ctx, input) -> echo(input));
-        else service.dependsOn("recipes", 1);
+        if (ROLE.equals("recipes")) service.endpoint(HttpFixture.post("/direct"), null);
+        else service.dependency("recipes", 1);
 
-        service.freeze();
+        service.frozen = true;
         ServiceConfig config = ServiceConfig.from(ROLE, Environment.system());
         Limits clientLimits = new Limits(
                         64, 16384, config.bodyBytes, config.clientConnections, 100, config.clientTimeoutMillis)
@@ -193,12 +194,13 @@ public final class BenchmarkMain {
                     : null;
 
             if (broker != null) {
-                Catalog.Entry[] actions = {new Catalog.Entry("echo", null, null, null)};
+                Catalog.Entry[] endpoints = {new Catalog.Entry(DIRECT, null)};
                 int extras = Integer.parseInt(System.getenv("BENCH_CATALOG_INSTANCES"));
                 Catalog.Instance[] instances = new Catalog.Instance[extras + 1];
-                instances[0] = new Catalog.Instance("recipes-fixed", "recipes", 1, "http://recipes:8080", actions);
+                instances[0] = new Catalog.Instance("recipes-fixed", "recipes", 1, "http://recipes:8080", endpoints);
                 for (int i = 1; i < instances.length; i++)
-                    instances[i] = new Catalog.Instance("extra-" + i, "extra-" + i, 1, "http://recipes:8080", actions);
+                    instances[i] =
+                            new Catalog.Instance("extra-" + i, "extra-" + i, 1, "http://recipes:8080", endpoints);
                 broker.accept(Json.encode(new Catalog("fixed", 1, true, instances), Catalog.CODEC, JSON));
             }
 
@@ -234,17 +236,15 @@ public final class BenchmarkMain {
             router.get("/bench/runtime", request -> runtime(broker, client.poolStats(), null, null));
 
             if (ROLE.equals("recipes")) {
-                router.post(
-                        "/direct",
-                        request -> Responses.json(200, echo(request.body(JsonTree.CODEC, JSON)), JsonTree.CODEC, JSON));
-                router.post(ServiceBroker.INVOKE_PATH, request -> {
+                router.post("/direct", request -> {
                     Headers headers = request.raw().headers;
 
-                    if (!ECHO.name.equals(headers.get(ServiceBroker.ACTION_HEADER))
-                            || !"1".equals(headers.get(ServiceBroker.VERSION_HEADER)))
-                        return Response.text(421, "Action not offered by this instance");
+                    if (VARIANT.equals("B")
+                            && (!DIRECT_KEY.equals(headers.get(ServiceBroker.ENDPOINT_HEADER))
+                                    || !"1".equals(headers.get(ServiceBroker.VERSION_HEADER))))
+                        return Response.text(421, "Endpoint not offered by this instance");
 
-                    return service.actions.get("echo").invoke(new Context(broker), request, JSON);
+                    return Responses.json(200, echo(request.body(JsonTree.CODEC, JSON)), JsonTree.CODEC, JSON);
                 });
             } else {
                 router.post("/bench", request -> {
@@ -262,7 +262,17 @@ public final class BenchmarkMain {
                         if (response.status != 200) throw new RequestException(502, "Upstream service unavailable");
 
                         result = Json.decode(response.body, JsonTree.CODEC, JSON);
-                    } else result = new Context(broker).call(ECHO, input);
+                    } else {
+                        Context context = new Context(broker);
+                        result = broker.call(
+                                context.invocation(),
+                                context.effectiveBudget(),
+                                "recipes",
+                                1,
+                                DIRECT,
+                                limits -> new ClientRequest("/direct").body(input, JsonTree.CODEC, limits),
+                                (response, limits) -> RemoteClient.json(response, JsonTree.CODEC, limits));
+                    }
 
                     return Responses.json(200, result, JsonTree.CODEC, JSON);
                 });
@@ -327,10 +337,10 @@ public final class BenchmarkMain {
         values.put("service_bytes_read", s.serviceBytesRead);
         values.put("service_bytes_written", s.serviceBytesWritten);
         Catalog catalog = broker == null ? Catalog.EMPTY : broker.catalog();
-        int actions = 0;
-        for (Catalog.Instance instance : catalog.instances) actions += instance.actions.length;
+        int endpoints = 0;
+        for (Catalog.Instance instance : catalog.instances) endpoints += instance.endpoints.length;
         values.put("catalog_instances", catalog.instances.length);
-        values.put("catalog_actions", actions);
+        values.put("catalog_endpoints", endpoints);
         values.put(
                 "http_pool_active_connections",
                 data.activeConnections + (control == null ? 0 : control.activeConnections));

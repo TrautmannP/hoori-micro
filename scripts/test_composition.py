@@ -28,7 +28,7 @@ def main():
     jars = [jar(*module) for module in modules]
     cp = [ROOT / "examples/shopping-service/target/test-classes", *jars, *runtime_classpath(runtime, receipt)]
     ports, processes, logs = {}, {}, {}
-    roles = ["registry", "recipes", "pantry", "shopping", "gateway"] + (["facade"] if args.facade else [])
+    roles = ["registry", "recipes", "pantry", "shopping", "gateway"] + (["facade", "facade-app"] if args.facade else [])
     for role in roles:
         with socket.socket() as available:
             available.bind(("127.0.0.1", 0))
@@ -99,8 +99,9 @@ def main():
                 "HOORI_GATEWAY_PERMISSIONS": "recipes:read,pantry:read,shopping:read"}
             main = "hoori/micro/" + role.capitalize() if role in ("registry", "gateway") else "dev/hoori/micro/demo/CompositionMain"
             role_cp = cp
-            if role == "facade":
-                main, role_cp = "dev/hoori/micro/facade/FacadeChecks", facade_cp
+            if role in ("facade", "facade-app"):
+                main = "dev/hoori/micro/facade/" + ("FacadeChecks" if role == "facade" else "FacadeApplication")
+                role_cp = facade_cp
                 env.update({"PATH": "/nonexistent", "JAVA_HOME": "/nonexistent"})
             log = (ROOT / f".cache/composition-{engine}-{role}.log").open("w")
             logs[role] = log
@@ -111,22 +112,27 @@ def main():
 
         expected = {"recipe": {"id": 1, "title": "Kartoffelsuppe"}, "available": ["Kartoffeln", "Möhren"]}
         until(lambda: request("gateway", "/overview/1")[0] == 200, "discovered overview")
+        if args.facade:
+            until(lambda: request("facade-app", "/overview/1")[0] == 200, "normal generated facade application")
+            assert result("facade-app", "/overview/1") == expected
+            assert request("facade-app", "/overview/0")[0] == 400
+            stop("facade-app")
+            evidence["checks"].append("normal FacadeApplication main constructs generated clients/task/scoped graph and drains")
         assert result("shopping", "/local") == expected
         assert result("gateway", "/overview/1", headers={"X-Request-ID": "two-providers", "Authorization": "SECRET"}) == expected
         assert all(probe(role)["requestId"] == "two-providers" and not probe(role)["credentials"] for role in ("recipes", "pantry"))
-        evidence["checks"].append("ordinary route and Gateway use two discovered typed providers with correct correlation")
+        evidence["checks"].append("ordinary route and Gateway use two discovered HTTP providers with correct correlation")
 
         def invalid(response, expected):
             status, raw = response
             assert status == 400 and json.loads(raw) == {"code": "validation_failed", "violations": expected}, (status, raw)
 
         positive = [{"path": "id", "code": "positive"}]
-        invalid(request("gateway", "/recipes/0"), positive)
+        invalid(request("gateway", "/recipes/0"), [{"path": "path.id", "code": "positive"}])
         invalid(request("gateway", "/validation", {"id": 0}), positive)
-        invalid(request("shopping", "/_hoori/invoke", {"id": 0},
-                        {"X-Hoori-Action": "shopping.validated", "X-Hoori-Version": "1"}), positive)
+        invalid(request("shopping", "/validation", {"id": 0}), positive)
         assert result("shopping", "/validation-calls") == 0, "Invalid input reached the business handler"
-        assert result("gateway", "/validation", {"id": "1"}) == {"id": 1}
+        assert result("gateway", "/validation", {"id": 1}) == {"id": 1}
         assert result("shopping", "/validation-calls") == 1
         before = probe("recipes")["calls"]
         invalid(request("gateway", "/meals/bulk", {"ids": [1, 0, None]}),
@@ -134,37 +140,36 @@ def main():
         assert probe("recipes")["calls"] == before, "Invalid batch started downstream work"
         for body in ({}, {"id": "not-a-number"}, {"id": None}):
             assert request("gateway", "/validation", body)[0] == 400
-        status, raw = request("shopping", "/_hoori/invoke", {"id": 1},
-                              {"X-Hoori-Action": "shopping.broken-validator", "X-Hoori-Version": "1"})
+        status, raw = request("shopping", "/broken-validator", {"id": 1})
         assert status == 500 and b"PRIVATE" not in raw, (status, raw)
         assert result("shopping", "/validation-calls") == 1
         status, raw = request("gateway", "/downstream-invalid", {})
         assert status == 502 and b"validation_failed" not in raw and b"positive" not in raw, (status, raw)
         assert result("gateway", "/validation", {"id": 1}) == {"id": 1}
-        evidence["checks"].append("generated input codecs and explicit validators: direct RPC/Gateway field errors, no invalid handler/fanout, safe internal/nested failures and recovery")
+        evidence["checks"].append("generated controller input and validation: direct HTTP/Gateway field errors, no invalid handler/fanout, safe internal/nested failures and recovery")
 
         with ThreadPoolExecutor(max_workers=4) as pool:
             if args.facade:
                 assert "facade_lazy=true" in Path(logs["facade"].name).read_text()
-                until(lambda: request("facade", "/overview", {"id": 1})[0] == 200, "generated discovered clients")
-                assert result("facade", "/overview", {"id": 1}) == expected
+                until(lambda: request("facade", "/overview/1")[0] == 200, "generated discovered clients")
+                assert result("facade", "/overview/1") == expected
                 for identity in ("facade-first", "facade-reused"):
                     assert result("facade", "/reused", headers={"X-Request-ID": identity}) == expected
                     assert all(probe(role)["requestId"] == identity for role in ("recipes", "pantry"))
                 assert request("facade", "/checked")[0] == 200
-                assert request("facade", "/overview", {"id": 0})[0] == 400
-                assert request("facade", "/overview", {"id": 999})[0] == 502
-                for path, maximum in (("/overview", 800), ("/short", 250)):
+                assert request("facade", "/overview/0")[0] == 400
+                assert request("facade", "/overview/999")[0] == 502
+                for path, maximum in (("/overview/1", 800), ("/short/1", 250)):
                     for role in ("recipes", "pantry"):
                         gate(role, "closed")
-                    work = pool.submit(request, "facade", path, {"id": 1})
+                    work = pool.submit(request, "facade", path)
                     until(lambda: all(probe(role)["active"] == 1 for role in ("recipes", "pantry")), "facade starts both calls")
                     assert all(0 < probe(role)["budgetMillis"] <= maximum for role in ("recipes", "pantry"))
                     assert work.result()[0] == 504, "Scoped/parent deadline was extended"
                     for role in ("recipes", "pantry"):
                         gate(role, "open")
                     until(lambda: all(probe(role)["active"] == 0 for role in ("recipes", "pantry")), "facade remote recovery")
-                    assert result("facade", "/overview", {"id": 1}) == expected
+                    assert result("facade", "/overview/1") == expected
                 evidence["checks"].append("generated facade lazy/reused with current context; checked errors, 800ms method/250ms parent bounds, cancellation/recovery; no build tools on runtime path")
 
             for role in ("recipes", "pantry"):
@@ -190,7 +195,7 @@ def main():
             until(lambda: probe("pantry")["active"] == 0, "remote provider finishes independently")
             gate("pantry", "fail")
             dashboard = result("gateway", "/dashboard/1")
-            assert dashboard["recipe"]["status"] == "ok" and dashboard["pantry"] == {"status": "unavailable"}
+            assert dashboard["recipe"]["status"] == "ok" and dashboard["pantry"] == {"status": "unavailable", "data": None}
             gate("pantry", "open")
             assert result("gateway", "/dashboard/2")["pantry"] == {"status": "ok", "data": []}
             evidence["checks"].append("fail-fast returns after local cancellation; optional unavailable differs from successful empty")
@@ -212,13 +217,12 @@ def main():
             assert probe("recipes")["calls"] == before + 5, "All-complete batch stopped early on a local failure"
             for bad in ({"ids": [1] * 17}, {"ids": [0]}, {}):
                 assert request("gateway", "/meals/bulk", bad)[0] == 400, bad
-            evidence["checks"].append("batch bound/order/all-complete; bulk performs one RPC; malformed/oversized input rejected")
+            evidence["checks"].append("batch bound/order/all-complete; bulk performs one HTTP request; malformed/oversized input rejected")
 
             gate("recipes", "closed")
             held = [pool.submit(request, "gateway", "/meals/1") for _ in range(2)]
             until(lambda: probe("recipes")["active"] == 2, "global outgoing admission saturated")
-            status, _ = request("shopping", "/_hoori/invoke", {"id": 1},
-                                {"X-Hoori-Action": "shopping.dashboard", "X-Hoori-Version": "1"})
+            status, _ = request("shopping", "/dashboard/1")
             assert status == 503, "Settled swallowed global admission failure"
             gate("recipes", "open")
             assert all(work.result()[0] == 200 for work in held)

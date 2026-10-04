@@ -125,7 +125,7 @@ def http(port: int, path: str, method: str = "GET", payload=None):
     connection = HTTPConnection("127.0.0.1", port, timeout=10)
     try:
         body = None if payload is None else json.dumps(payload).encode()
-        connection.request(method, path, body, {"Content-Type": "application/json"})
+        connection.request(method, path, body, {"Content-Type": "application/json", "X-Hoori-Catalog-Protocol": "3"})
         response = connection.getresponse()
         data = response.read()
         if response.status >= 400:
@@ -239,16 +239,16 @@ def experiment(args, variant: str, repeat: int, work: Path, receipt: dict, docum
             while not control_stop.is_set():
                 for n in range(args.catalog_instances):
                     name = f"extra-{n}"
-                    http(args.port, f"/v1/instances/{name}", "PUT", {
+                    http(args.port, f"/v2/instances/{name}", "PUT", {
                         "id": name, "service": name, "version": 1, "url": "http://recipes:8080",
-                        "actions": [{"name": "echo"}]})
+                        "endpoints": [{"method": "POST", "path": "/bench", "consumes": "application/json", "produces": "application/json"}]})
                 # One changing unrelated provider, using the actual registration protocol.
-                http(args.port, "/v1/instances/changing", "PUT", {
+                http(args.port, "/v2/instances/changing", "PUT", {
                     "id": "changing", "service": "changing", "version": 1, "url": "http://recipes:8080",
-                    "actions": [{"name": f"route-{n}", "method": "POST",
+                    "endpoints": [{"method": "POST", "consumes": "application/json", "produces": "application/json",
                                  "path": f"/unrelated/{n}/" + ("a" if change % 2 else "b"),
                                  "permission": "changing:read"} for n in range(args.public_routes)]
-                               if args.public_routes else [{"name": "echo" if change % 2 else "added"}]})
+                               if args.public_routes else [{"method": "POST", "path": "/echo" if change % 2 else "/added", "consumes": "application/json", "produces": "application/json"}]})
                 change += not args.stable_catalog
                 control_stop.wait(2)
         except Exception as error:
@@ -298,7 +298,7 @@ def experiment(args, variant: str, repeat: int, work: Path, receipt: dict, docum
         if args.stable_catalog:
             # Measure before the burst: #4's known registrar timeout bug must not mimic a saving.
             def registry_ids():
-                catalog = json.loads(http(args.port, "/v1/catalog"))
+                catalog = json.loads(http(args.port, "/v2/catalog"))
                 if not catalog["complete"]:
                     raise RuntimeError("Stable catalog has not completed warmup")
                 return sorted(instance["id"] for instance in catalog["instances"])

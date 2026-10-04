@@ -4,7 +4,7 @@ package hoori.micro;
 public final class ApplicationChecks {
     public static void main(String[] args) throws Exception {
         java.util.List<Integer> closed = new java.util.ArrayList<>();
-        try (Microservice app = Microservice.create(Service.named("app-check"))) {
+        try (Microservice app = Microservice.create("app-check", 1, key -> null)) {
             AutoCloseable shared = () -> closed.add(0);
             app.ownBean(shared);
             app.ownBean(shared);

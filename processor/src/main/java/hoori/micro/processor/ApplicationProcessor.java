@@ -43,17 +43,49 @@ public final class ApplicationProcessor extends AbstractProcessor {
     private final Set<String> emitted = new HashSet<>();
     private final Map<String, TypeElement> sources = new LinkedHashMap<>();
     private String application;
+    private ClientGenerator clients;
+    private final Set<String> generatedClients = new HashSet<>();
+    private final Map<String, String> pending = new LinkedHashMap<>();
 
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment round) {
-        if (round.processingOver()) return false;
+        if (round.processingOver()) {
+            for (var entry : pending.entrySet()) error(sources.get(entry.getKey()), entry.getValue());
+
+            return false;
+        }
 
         for (Element root : round.getRootElements()) collect(root);
+
+        if (clients == null) clients = new ClientGenerator(processingEnv);
+
+        for (TypeElement type : sources.values()) {
+            for (ExecutableElement method : ElementFilter.methodsIn(type.getEnclosedElements()))
+                if (annotation(method, API + "GatewayRoute") != null
+                        && annotation(type, "hoori.rest.mvc.RestController") == null)
+                    error(method, "GatewayRoute requires a RestController HTTP method");
+            AnnotationMirror client = annotation(type, API + "ServiceClient");
+
+            if (client == null || !generatedClients.add(type.getQualifiedName().toString())) continue;
+
+            try {
+                clients.generate(type, (String) value(client, "name"), (Integer) value(client, "version"));
+            } catch (HttpContract.Invalid invalid) {
+                error(invalid.element, invalid.getMessage());
+            } catch (hoori.rest.processor.JsonCodecs.InvalidMapping invalid) {
+                error(invalid.element, invalid.getMessage());
+            } catch (IOException failed) {
+                error(type, "Cannot generate client: " + failed.getMessage());
+            }
+        }
+
         for (TypeElement root : new ArrayList<>(sources.values())) {
             boolean app = annotation(root, API + "MicroApplication") != null;
             boolean module = annotation(root, API + "MicroModule") != null;
 
-            if ((!app && !module) || !emitted.add(root.getQualifiedName().toString())) continue;
+            String rootName = root.getQualifiedName().toString();
+
+            if ((!app && !module) || emitted.contains(rootName)) continue;
 
             try {
                 require(!app || !module, root, "Choose MicroApplication or MicroModule, not both");
@@ -73,14 +105,36 @@ public final class ApplicationProcessor extends AbstractProcessor {
 
                     if (name.startsWith(pkg + ".") && component(type)) components.add(type);
                 }
+                for (TypeElement type : sources.values()) {
+                    if (!type.getQualifiedName().toString().startsWith(pkg + ".")
+                            || annotation(type, "hoori.tasks.GenerateTasks") == null) continue;
+
+                    String name = type.getQualifiedName() + "Tasks";
+                    TypeElement facade = processingEnv.getElementUtils().getTypeElement(name);
+
+                    if (facade == null)
+                        throw new Pending("Missing " + name + "; enable the original Hoori TasksProcessor");
+
+                    components.add(facade);
+                }
 
                 if (app) {
-                    require(application == null, root, "Duplicate MicroApplication in this module: " + application);
+                    require(
+                            application == null || application.equals(rootName),
+                            root,
+                            "Duplicate MicroApplication in this module: " + application);
                     application = root.getQualifiedName().toString();
                     imports(root, components);
                     generate(root, components);
                 } else metadata(root, components);
+
+                emitted.add(rootName);
+                pending.remove(rootName);
+            } catch (Pending deferred) {
+                pending.put(rootName, deferred.getMessage());
             } catch (HttpContract.Invalid invalid) {
+                emitted.add(rootName);
+                pending.remove(rootName);
                 error(invalid.element, invalid.getMessage());
             } catch (IOException failure) {
                 error(root, "Cannot generate application: " + failure.getMessage());
@@ -108,6 +162,10 @@ public final class ApplicationProcessor extends AbstractProcessor {
             TypeElement module = (TypeElement) processingEnv.getTypeUtils().asElement((TypeMirror) value.getValue());
             String name = module.getQualifiedName().toString();
             TypeElement metadata = processingEnv.getElementUtils().getTypeElement(name + "MicroMetadata");
+
+            if (metadata == null && annotation(module, API + "MicroModule") != null)
+                throw new Pending("Missing build metadata for imported MicroModule " + name);
+
             require(metadata != null, app, "Missing build metadata for imported MicroModule " + name);
             AnnotationMirror types = annotation(metadata, API + "ComponentTypes");
             require(types != null, app, "Invalid MicroModule metadata: " + name);
@@ -153,10 +211,12 @@ public final class ApplicationProcessor extends AbstractProcessor {
                     HttpContract.visible(type) && type.getTypeParameters().isEmpty(),
                     type,
                     "Component must be public and non-generic");
-            require(
-                    annotation(type, API + "ServiceClient") == null,
-                    type,
-                    "ServiceClient requires the HTTP client generator");
+
+            if (annotation(type, API + "ServiceClient") != null) {
+                nodes.add(new Node(type.asType(), type, null, null, false, nodes.size()));
+                continue;
+            }
+
             require(
                     type.getKind() == ElementKind.CLASS && !type.getModifiers().contains(Modifier.ABSTRACT),
                     type,
@@ -194,6 +254,63 @@ public final class ApplicationProcessor extends AbstractProcessor {
                         method.getReturnType(), method, method, owner, (Boolean) value(bean, "owned"), nodes.size()));
             }
         }
+        // Decorate only interface injection points using the SDK's real generated delegates.
+        // Concrete/self calls remain ordinary Java calls; no runtime interception is introduced.
+        var scoped = new HashSet<String>();
+        for (Node node : new ArrayList<>(nodes)) {
+            if (node.call == null) continue;
+
+            for (var parameter : node.call.getParameters()) {
+                Element element = processingEnv.getTypeUtils().asElement(parameter.asType());
+
+                if (!(element instanceof TypeElement type)
+                        || type.getKind() != ElementKind.INTERFACE
+                        || !policy(type, "hoori.tasks.TaskScoped") && !policy(type, "hoori.tasks.Transactional")
+                        || !scoped.add(type.getQualifiedName().toString())) continue;
+
+                require(type.getTypeParameters().isEmpty(), type, "Micro scoped interfaces must be non-generic");
+                List<Node> delegates = nodes.stream()
+                        .filter(n -> n.delegate == null
+                                && processingEnv.getTypeUtils().isAssignable(n.type, type.asType()))
+                        .toList();
+                require(delegates.size() == 1, parameter, "Scoped interface needs exactly one delegate: " + type);
+                String generatedName = type.getQualifiedName() + "Scoped";
+                TypeElement generated = processingEnv.getElementUtils().getTypeElement(generatedName);
+
+                if (generated == null)
+                    throw new Pending("Missing " + generatedName + "; enable the original Hoori TasksProcessor");
+
+                Node wrapper = new Node(
+                        type.asType(),
+                        generated,
+                        ElementFilter.constructorsIn(generated.getEnclosedElements())
+                                .get(0),
+                        null,
+                        false,
+                        nodes.size());
+                wrapper.delegate = delegates.get(0);
+
+                if (policy(type, "hoori.tasks.Transactional")) {
+                    TypeElement manager =
+                            processingEnv.getElementUtils().getTypeElement("hoori.transaction.TransactionManager");
+                    require(manager != null, type, "Transactional interface needs hoori-transaction-api");
+                    List<Node> managers = nodes.stream()
+                            .filter(n -> processingEnv
+                                    .getTypeUtils()
+                                    .isAssignable(
+                                            processingEnv.getTypeUtils().erasure(n.type),
+                                            processingEnv.getTypeUtils().erasure(manager.asType())))
+                            .toList();
+                    require(
+                            managers.size() == 1,
+                            type,
+                            "Transactional interface needs exactly one TransactionManager bean");
+                    wrapper.manager = managers.get(0);
+                }
+
+                nodes.add(wrapper);
+            }
+        }
         require(nodes.size() <= 128, app, "Application bean limit is 128");
         var ordered = new ArrayList<Node>();
         for (Node node : nodes) visit(node, nodes, ordered, new ArrayList<>());
@@ -206,8 +323,8 @@ public final class ApplicationProcessor extends AbstractProcessor {
         var code = new StringBuilder("package " + pkg + ";\npublic final class " + app.getSimpleName()
                 + "MicroModule implements hoori.micro.app.ApplicationModule {\n"
                 + "  public hoori.micro.Microservice create(hoori.micro.Environment environment, String[] args) throws Exception {\n"
-                + "    var app = hoori.micro.Microservice.create(hoori.micro.Service.named(" + literal(name)
-                + ").version(" + version + "), environment);\n"
+                + "    var app = hoori.micro.Microservice.create(" + literal(name)
+                + ", " + version + ", environment);\n"
                 + "    try {\n");
         for (Node node : ordered) {
             code.append("      ")
@@ -219,13 +336,13 @@ public final class ApplicationProcessor extends AbstractProcessor {
             if (node.owned) code.append("app.ownBean(");
             else code.append("java.util.Objects.requireNonNull(");
 
-            if (node.owner == null) code.append("new ").append(node.type);
+            if (node.call == null) code.append("new ").append(clients.companion((TypeElement) node.origin));
+            else if (node.owner == null) code.append("new ").append(node.call.getEnclosingElement());
             else code.append("b").append(node.owner.index).append('.').append(node.call.getSimpleName());
 
             code.append('(').append(String.join(", ", node.arguments)).append("));\n");
         }
-        code.append(
-                "      var errors = hoori.rest.mvc.MvcErrors.builder().classify(hoori.micro.Microservice::classifyMvc);\n");
+        code.append("      var errors = hoori.rest.mvc.MvcErrors.builder().classify(app::classifyMvc);\n");
         for (Node node : nodes)
             if (annotation(node.origin, "hoori.rest.mvc.RestControllerAdvice") != null)
                 code.append("      errors.advice(new ")
@@ -235,14 +352,52 @@ public final class ApplicationProcessor extends AbstractProcessor {
                         .append("));\n");
         code.append("      var errorBoundary = errors.build();\n");
         for (Node node : nodes)
-            if (annotation(node.origin, "hoori.rest.mvc.RestController") != null)
-                code.append("      new ")
-                        .append(companion((TypeElement) node.origin))
+            if (annotation(node.origin, "hoori.rest.mvc.RestController") != null) {
+                TypeElement controller = (TypeElement) node.origin;
+                var methods = clients.contracts.analyze(controller);
+                for (ExecutableElement method : ElementFilter.methodsIn(controller.getEnclosedElements()))
+                    if (annotation(method, API + "GatewayRoute") != null)
+                        require(
+                                methods.stream().anyMatch(m -> m.element().equals(method)),
+                                method,
+                                "GatewayRoute needs an HTTP mapping");
+                code.append("      app.controller(new ")
+                        .append(companion(controller))
                         .append("(b")
                         .append(node.index)
                         .append(
-                                ", app.jsonLimits(), hoori.validation.ValidationLimits.DEFAULT, errorBoundary).register(app.routes());\n");
-        code.append("      app.routes().freeze();\n      return app;\n"
+                                ", app.jsonLimits(), hoori.validation.ValidationLimits.DEFAULT, errorBoundary), new String[] {");
+                for (int i = 0; i < methods.size(); i++) {
+                    if (i != 0) code.append(", ");
+
+                    var method = methods.get(i);
+                    AnnotationMirror gateway = annotation(method.element(), API + "GatewayRoute");
+                    String permission = gateway == null ? null : (String) value(gateway, "permission");
+
+                    if (permission != null) {
+                        require(
+                                permission.matches(
+                                        java.util.regex.Pattern.quote(name) + ":[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?"),
+                                method.element(),
+                                "Gateway permission must belong to " + name);
+                        require(
+                                !method.responseKind().equals("RAW"),
+                                method.element(),
+                                "Published MVC endpoints need a finite JSON or empty response contract");
+                        for (var parameter : method.parameters())
+                            require(
+                                    !parameter.source().equals("HEADER")
+                                            || parameter.name().equalsIgnoreCase("Accept")
+                                            || parameter.name().equalsIgnoreCase("Content-Type"),
+                                    parameter.element(),
+                                    "Gateway forwards only Accept and Content-Type request headers; keep other header contracts internal");
+                    }
+
+                    code.append(literal(permission));
+                }
+                code.append("});\n");
+            }
+        code.append("      app.prepare();\n      return app;\n"
                 + "    } catch (Exception | Error failure) {\n"
                 + "      try { app.close(); } catch (Exception cleanup) { failure.addSuppressed(cleanup); }\n"
                 + "      throw failure;\n    }\n  }\n}\n");
@@ -257,7 +412,26 @@ public final class ApplicationProcessor extends AbstractProcessor {
 
         if (node.owner != null) visit(node.owner, nodes, ordered, path);
 
-        for (var parameter : node.call.getParameters()) {
+        if (node.delegate != null) {
+            visit(node.delegate, nodes, ordered, path);
+            node.arguments.add("b" + node.delegate.index);
+
+            if (node.manager != null) {
+                visit(node.manager, nodes, ordered, path);
+                node.arguments.add("b" + node.manager.index);
+            }
+
+            path.remove(path.size() - 1);
+            ordered.add(node);
+
+            return;
+        }
+
+        if (node.call == null) node.arguments.add("app");
+
+        for (var parameter : node.call == null
+                ? java.util.List.<javax.lang.model.element.VariableElement>of()
+                : node.call.getParameters()) {
             String special = switch (parameter.asType().toString()) {
                 case "hoori.micro.Microservice" -> "app";
                 case "hoori.micro.Environment" -> "environment";
@@ -273,6 +447,13 @@ public final class ApplicationProcessor extends AbstractProcessor {
             List<Node> candidates = nodes.stream()
                     .filter(n -> processingEnv.getTypeUtils().isAssignable(n.type, parameter.asType()))
                     .toList();
+            List<Node> wrappers = candidates.stream()
+                    .filter(n ->
+                            n.delegate != null && processingEnv.getTypeUtils().isSameType(n.type, parameter.asType()))
+                    .toList();
+
+            if (!wrappers.isEmpty()) candidates = wrappers;
+
             require(
                     candidates.size() == 1,
                     parameter,
@@ -309,6 +490,7 @@ public final class ApplicationProcessor extends AbstractProcessor {
         final boolean owned;
         final int index;
         final List<String> arguments = new ArrayList<>();
+        Node delegate, manager;
 
         Node(TypeMirror type, Element origin, ExecutableElement call, Node owner, boolean owned, int index) {
             this.type = type;
@@ -317,6 +499,19 @@ public final class ApplicationProcessor extends AbstractProcessor {
             this.owner = owner;
             this.owned = owned;
             this.index = index;
+        }
+    }
+
+    private boolean policy(TypeElement type, String name) {
+        if (annotation(type, name) != null) return true;
+
+        return ElementFilter.methodsIn(processingEnv.getElementUtils().getAllMembers(type)).stream()
+                .anyMatch(method -> annotation(method, name) != null);
+    }
+
+    private static final class Pending extends RuntimeException {
+        Pending(String message) {
+            super(message);
         }
     }
 

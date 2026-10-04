@@ -1,6 +1,6 @@
 package hoori.micro;
 
-/** Lowercase DNS-label names for services, actions and instance IDs. */
+/** Lowercase DNS-label names for services, permission scopes and instance IDs. */
 final class ServiceName {
     private ServiceName() {}
 

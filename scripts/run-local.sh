@@ -4,11 +4,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 case "${1:-}" in
   registry) export HOORI_MAIN_CLASS=hoori/micro/Registry HOORI_OUTBOUND=none port=8090 ;;
-  recipes) export HOORI_MAIN_CLASS=dev/hoori/micro/demo/RecipesMain HOORI_OUTBOUND=http port=8081 ;;
-  pantry) export HOORI_MAIN_CLASS=dev/hoori/micro/demo/PantryMain HOORI_OUTBOUND=http port=8083 ;;
-  shopping) export HOORI_MAIN_CLASS=dev/hoori/micro/demo/ShoppingMain HOORI_OUTBOUND=http port=8082 ;;
+  recipes) export HOORI_MAIN_CLASS=dev/hoori/micro/recipes/RecipesApplication HOORI_OUTBOUND=http port=8081 ;;
+  pantry) export HOORI_MAIN_CLASS=dev/hoori/micro/pantry/PantryApplication HOORI_OUTBOUND=http port=8083 ;;
+  shopping) export HOORI_MAIN_CLASS=dev/hoori/micro/shopping/ShoppingApplication HOORI_OUTBOUND=http port=8082 ;;
   gateway) export HOORI_MAIN_CLASS=hoori/micro/Gateway HOORI_OUTBOUND=http port=8080
-    export HOORI_GATEWAY_PERMISSIONS=${HOORI_GATEWAY_PERMISSIONS:-recipes:read,pantry:read,shopping:read,shopping:demo} ;;
+    export HOORI_GATEWAY_PERMISSIONS=${HOORI_GATEWAY_PERMISSIONS:-recipes:read,recipes:write,pantry:read,shopping:read,shopping:write,shopping:demo} ;;
   *) echo 'usage: scripts/run-local.sh registry|recipes|pantry|shopping|gateway (after scripts/build.sh)' >&2; exit 2 ;;
 esac
 export HOORI_HOME="$PWD/.docker-context/runtime"

@@ -12,10 +12,3 @@ cp="$PWD/framework/target/classes:$PWD/framework/target/test-classes:$(python3 s
 "$runtime/bin/hoori" run --engine "${HOORI_ENGINE:-mixed}" --class-path "$cp" hoori/micro/TaskChecks
 "$runtime/bin/hoori" run --engine "${HOORI_ENGINE:-mixed}" --class-path "$cp" hoori/micro/CapacityChecks
 "$runtime/bin/hoori" run --engine "${HOORI_ENGINE:-mixed}" --class-path "$cp" hoori/micro/ApplicationChecks
-dto_cp="$PWD/examples/demo-contracts/target/classes:$PWD/examples/demo-contracts/target/test-classes:$cp"
-for stress in normal gc-stress; do
-  flags=()
-  [[ "$stress" != gc-stress ]] || flags=(--gc-stress)
-  PATH=/nonexistent JAVA_HOME=/nonexistent "$runtime/bin/hoori" run --engine "${HOORI_ENGINE:-mixed}" \
-    "${flags[@]}" --allow-resource-read --class-path "$dto_cp" dev/hoori/micro/demo/CodecChecks
-done

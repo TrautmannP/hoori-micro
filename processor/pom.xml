@@ -7,6 +7,9 @@
  <dependencies>
   <dependency><groupId>dev.hoori</groupId><artifactId>hoori-micro</artifactId></dependency>
   <dependency><groupId>dev.hoori</groupId><artifactId>hoori-rest-mvc-processor</artifactId><version>${hoori.sdk.version}</version></dependency>
+  <dependency><groupId>dev.hoori</groupId><artifactId>hoori-task-processor</artifactId><version>${hoori.sdk.version}</version><scope>test</scope></dependency>
+  <dependency><groupId>dev.hoori</groupId><artifactId>hoori-task-annotations</artifactId><version>${hoori.sdk.version}</version><scope>test</scope></dependency>
+  <dependency><groupId>dev.hoori</groupId><artifactId>hoori-transaction-api</artifactId><version>${hoori.sdk.version}</version><scope>test</scope></dependency>
  </dependencies>
  <build><plugins><plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><configuration><proc>none</proc></configuration></plugin></plugins></build>
 </project>
