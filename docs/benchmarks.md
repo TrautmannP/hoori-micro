@@ -1,8 +1,9 @@
 # Lokale Vergleichsbenchmarks
 
-**Historische Messungen:** Die Ergebnisse unten stammen von den jeweils genannten
-Ständen vor der MVC-Migration. Der aktuelle Benchmark-Consumer nutzt HTTP-Endpunkte;
-für ihn liegt keine neue Performance-Freigabe vor.
+Der aktuelle [Framework-Vergleich vom 5. Oktober 2026](#framework-optimierungen-5-oktober-2026)
+verwendet den gepinnten HTTP-Consumer. Frühere Abschnitte bleiben datierte
+Messungen ihrer jeweiligen Stände. Keine dieser Messungen ist eine
+Produktions- oder allgemeine Performance-Freigabe.
 
 `scripts/benchmark.py` verwendet die verifizierte Headless-Release-Distribution und
 den echten HTTP-/REST-Transport. `BenchmarkMain` liegt ausschließlich in den
@@ -23,8 +24,8 @@ Verbrauch gehört weiterhin zur ausgewiesenen Gesamtsumme. Die vier Rollen erhal
 je 0,5 CPU, 256 MiB Containerspeicher und 32 MiB logisches Guest-Heap-Limit:
 zusammen 2 CPU und 1 GiB. Das erzeugt keine CPU-Parallelität im einzelnen Guest.
 Pools: vier Verbindungen insgesamt/pro Origin, Server: 32, Client-Timeout: 2 s,
-Request-Timeout: 10 s. Sicherheits- und Containergrenzen bleiben aktiv; zusätzliche
-Benchmark-Ports liegen nur auf Loopback. Keine Credentials, Redirects oder Retries.
+Request-Timeout: 10 s, verwaltetes Arbeitsbudget: 2 s. Sicherheits- und
+Containergrenzen bleiben aktiv; zusätzliche Benchmark-Ports liegen nur auf Loopback. Keine Credentials, Redirects oder Retries.
 
 Nach `scripts/build.sh`:
 
@@ -82,12 +83,120 @@ Commit, Arbeitsbaumstatus und Artefakthashes stehen in der Ergebnisdatei.
 RSS-Summen können gemeinsam genutzte Seiten mehrfach zählen.
 
 Vergleiche nur gleiche Einstellungen und Messmodi, berichte Median und Spannweite
-der Wiederholungen. Ein Kandidat muss die Streuung übersteigen und die vorab gesetzten
-Grenzen einhalten. SDK-Upgrades zuerst ohne Framework-Optimierung messen.
+der Wiederholungen. Ein behaupteter HTTP-Kapazitätsgewinn muss die Streuung
+übersteigen und die vorab gesetzten Grenzen einhalten. Isolierte Kostenoptimierungen heben bestehende
+Latenz- oder Fehlergrenzen nicht auf. SDK-Upgrades zuerst ohne Framework-Optimierung messen.
 Diese lokalen Läufe sind keine Produktions-/Sicherheitsfreigabe. Echte parallele
 Replikate und wiederholte Rolling-/Recovery-Zyklen sind separat unter
 [validation.md](validation.md) und am Ende dieses Dokuments erfasst. Die folgenden
 Abschnitte sind datierte Messstände mit jeweils eigenen Pins und Einstellungen.
+
+## Framework-Optimierungen, 5. Oktober 2026
+
+Ausgangspunkt ist `07dcf7d`, unverändert mit Hoori-Release `83d2b8f`, Guest Base
+0.4.0 und SDKs 0.1.0. Drei kleine Änderungen bleiben: `Context.effectiveBudget`
+liest die Request-Ownership einmal; sofortige Admission benötigt keinen
+Cancellation-Callback; `ClientRequest` legt Query-Builder erst bei Bedarf an,
+teilt den leeren Body und gibt einen unveränderten Pfad direkt zurück. Der Broker
+berechnet den Endpunktschlüssel einmal pro Aufruf. Budget-/Cancellation-Prüfungen,
+Queue-Grenzen und tatsächlicher Drain bleiben erhalten.
+
+Die Fixture verwendet bereits **vor** der Ausgangsmessung statische
+Endpunktdeskriptoren wie die generierten Clients. Das beseitigt einen Zusatzaufwand
+der alten Fixture und zählt nicht als Framework-Gewinn. Die Last läuft über
+`BenchmarkMain` und die echten SDKs/Broker/Request-Grenzen, nicht über die erzeugten
+MVC-Controller; deren funktionale Abnahme steht in [validation.md](validation.md).
+
+### Isolierte native Kosten
+
+`scripts/benchmark_costs.py` misst je Engine drei frische Prozesse, pro Probe
+10.000 Aufrufe nach einer Aufwärmrunde und fünf Messrunden. Die Tabelle zeigt
+Wandzeit pro Aufruf: Median der Prozessmediane [min–max], Mikrosekunden.
+Keine HTTP-Durchsatz- oder CPU-Messung. Der Allokationszähler enthält den in beiden
+Ständen gleichen Snapshot-Aufwand von rund 0,04 Byte/Aufruf.
+
+| Probe | Interpreter vorher → nachher, µs | Mixed vorher → nachher, µs | Guest-Bytes vorher → nachher |
+|---|---:|---:|---:|
+| effektives Budget | 78,72 [75,15–79,17] → 40,95 [40,35–41,15] | 134,05 [133,66–135,18] → 75,32 [73,54–82,28] | 80,04 → 64,04 |
+| sofortige Admission/Close | 38,11 [38,04–38,72] → 17,78 [17,43–19,50] | 62,20 [61,98–67,91] → 33,52 [33,40–33,65] | 40,04 → 20,04 |
+| Client-Request ohne Query | 7,92 [7,79–8,01] → 6,47 [6,46–6,47] | 13,70 [13,51–13,83] → 6,15 [6,14–6,21] | 590,04 → 564,04 |
+
+Die Einzelrunden, Quell-Diffs und endgültigen Proben stehen in den
+[Kosten-Rohdaten](benchmarks/framework-costs-2026-10-05.json.gz).
+
+### HTTP-Vergleich und Grenzen
+
+Drei frische Prozesse je Stand/Engine/C- bzw. D-Pfad; vorher/nachher mit
+unverändertem Bytecode der Fixture und abwechselnder Reihenfolge. Warmup 10 s mit
+geschlossener Last, danach je 10 s geschlossene Last und offene Last mit 16/s.
+Acht Worker, Pool vier und die oben genannten CPU-/RAM-/Timeout-Grenzen.
+Keine weiteren eigenen Builds oder Tests während der Zeitmessung. Der Desktop-Host
+ist kein dedizierter Benchmark-Rechner; die beobachtete Streuung bleibt ausgewiesen.
+
+[HTTP-Rohdaten](benchmarks/framework-http-2026-10-05.json.gz) enthalten alle 24
+Experimente, Artefakthashes, Prozess-/Containeridentitäten und Messreihenfolge.
+Framework-SHA256: vorher `c804b7b9…`, nach drei Kostenoptimierungen `ce628f2c…`.
+Die Tabelle zeigt Median [min–max] der geschlossenen Phasen. CPU und Allokation
+summieren alle vier Rollen einschließlich Hintergrundarbeit, Probes und Fehler;
+der Nenner zählt ausschließlich erfolgreiche Antworten.
+
+| Engine/Pfad | Erfolge/s vorher → nachher | p99 aller Versuche, ms | CPU-ms/Erfolg | Guest-KiB/Erfolg |
+|---|---:|---:|---:|---:|
+| Interpreter C | 78,04 [41,04–84,12] → 74,18 [74,09–81,47] | 774 [707–1328] → 805 [726–908] | 10,74 [9,94–20,23] → 11,32 [10,32–11,35] | 23,62 [23,53–24,59] → 23,49 [23,36–23,52] |
+| Interpreter D | 73,45 [68,78–74,21] → 74,32 [61,09–74,74] | 2004 [2004–2005] → 2006 [2003–2008] | 16,41 [16,24–17,78] → 16,49 [16,09–19,76] | 36,03 [36,01–36,12] → 35,76 [35,74–36,04] |
+| Mixed C | 63,61 [61,87–63,79] → 62,52 [61,59–64,26] | 882 [697–900] → 813 [797–875] | 13,45 [13,43–13,79] → 13,77 [13,24–13,99] | 23,89 [23,85–23,92] → 23,72 [23,66–23,77] |
+| Mixed D | 59,21 [51,78–60,52] → 52,93 [39,41–59,21] | 2010 [2006–2012] → 2014 [2007–2014] | 21,16 [20,53–23,76] → 23,68 [21,19–31,44] | 36,36 [36,29–36,68] → 36,28 [36,05–37,02] |
+
+**Kein belastbarer HTTP-Durchsatz- oder CPU-Gewinn.** Die Mediane schwanken in beide
+Richtungen, die Spannweiten überlappen. Weniger logische Guest-Allokationen bedeuten
+auch keine belegte RSS-Ersparnis. Geschlossene Fehler vor/nach den drei Änderungen:
+Interpreter C 7/7, D 36/33; Mixed C 7/9, D 31/33. Alle Gateway-D-Läufe verfehlen
+weiter das p99-Ziel von 1000 ms.
+
+Offene Last: Interpreter liefert je Stand 960/960 korrekte Antworten über C/D,
+p99 nachher höchstens 32,77 ms. Mixed vorher 838/960 Erfolge, 12 Fehler und 110 nicht
+gestartete Ankünfte; nachher 809/960, 17 Fehler und 134 nicht gestartet. Dort
+beträgt die höchste nachher-p99 2332 ms. Nicht gestartete Ankünfte sind begrenzte
+Generator-Abweisungen und zählen zur Fehlerquote. Der feste Warmup schließt spätere
+Runtime-Arbeit nicht aus; diese kurzen Phasen belegen keinen dauerhaft warmen
+Produktionsbetrieb. Die drei Kostenänderungen lösen die HTTP-Latenzgrenze nicht.
+
+Ein fünfter Versuch gab nach einer Permit-Freigabe mit Wartenden außerhalb des
+Locks per `Thread.yield()` Rechenzeit ab. Die nativen Admission-/Cancellation-/
+Kapazitätsprüfungen bestanden in beiden Engines. Zwei Interpreter-D-Screenings
+lieferten jedoch weiterhin p99 von 2004/1942 ms und 5/3 Fehler. Der dort höhere
+Durchsatz ist gegen die beobachtete Streuung kein belastbarer Nachweis; der
+Zielwert wurde nicht erreicht. Auch diese Änderung bleibt außerhalb des
+Produktionscodes. Patch, JAR-Hash und Rohwerte liegen im Kostenarchiv.
+
+### Verworfener Versuch und Hoori-Folgearbeit
+
+Eine vierte Runde verhinderte das Überholen wartender Calls durch FIFO. Zwei
+kurze Interpreter-D-Läufe senkten p99 auf 172/181 ms, erhöhten aber 503-Fehler auf
+23/26 gegenüber zuvor 4/6 Deadline-Fehlern. Der Versuch wurde verworfen; schnelle
+Ablehnungen sind keine erfolgreiche Beschleunigung. Native Queue-/Cancellation-
+Checks allein hatten diese Lastverschiebung nicht ausgeschlossen.
+
+Der SDK-only-Reproducer `DeadlineCosts` belegt pro 6000 getrennten Operations mit
+endlichem Budget 6000 neu erzeugte und drainierte Timer-Tasks sowie 12000
+Kontextwechsel. Ohne endliches Budget entstehen keine zusätzlichen Tasks.
+136 zusätzliche Guest-Bytes/Operation und die gemessenen Zeitkosten sind unter
+[Hoori #231](https://github.com/TrautmannP/hoori/issues/231) mit Reproducer und
+Abnahmekriterien erfasst. Diese Timeroptimierung gehört in das originale SDK bzw.
+die VM; der Micro-Consumer behält seine Deadline- und Abschlussgarantien.
+Die Rohdaten enthalten die getrennten Profile beider Engines. Der deadlinefreie
+Scope-Pfad liegt im Mixed-Median bei 338,70 µs gegenüber 189,99 µs im Interpreter;
+[Hoori #232](https://github.com/TrautmannP/hoori/issues/232) verfolgt die häufigen
+Runtime-/Interpreter-Übergänge dieses separaten Falls. Die Zähler belegen Aufrufe,
+keinen isolierten Zeitanteil der einzelnen Übergänge.
+
+```bash
+# Nach Build/Stage; archivierte JARs für vorher und nachher getrennt einsetzen:
+python3 scripts/benchmark_costs.py --framework /pfad/framework.jar --output .cache/costs.json
+python3 scripts/benchmark_costs.py --probe deadlines --output .cache/deadlines.json
+python3 scripts/benchmark.py --framework-jar /pfad/framework.jar --variants CD --repeats 3 --engine interpreter --seconds 10 --warmup 10 --warmup-rate 0 --idle 2 --workers 8 --pool 4 --rate 16 --burst-rate 32 --phases closed-small sustained --output .cache/http.json
+# HTTP getrennt auch mit --engine mixed; keine eigenen Builds/Tests während der Last.
+```
 
 ## Ausgangsmessung, 29. September 2026
 

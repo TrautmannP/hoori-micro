@@ -1,7 +1,7 @@
 # Validierung
 
-Stand: **5. Oktober 2026**. Die Abnahme der einheitlichen Registry-HTTP-API läuft
-gegen die saubere Headless-Release-Distribution
+Stand: **5. Oktober 2026**. Die funktionale Abnahme der drei
+Framework-Kostenoptimierungen läuft gegen die saubere Headless-Release-Distribution
 `83d2b8fc83ffee6ed7c748409ff7b4802d8a341b`, Guest Base `0.4.0`,
 SDKs `0.1.0`, Build-JDK `21.0.12.1`. Der Lock prüft Original-POMs, Receipt und
 SHA256s. Acht Runtime-SDKs plus sechs gepinnte Avaje-/Jakarta-JARs stehen auf dem
@@ -10,7 +10,7 @@ HTTP-Klassenpfad; Processor und optionale DB-JARs gehören nicht dazu.
 **Bestanden:** 38 JUnit-Tests (25 Framework, 13 Processor), 117 portable Core-Assertions,
 5 Formatter-Fixtures und 24 Python-Tests. Die zusätzlichen 23 OpenAPI-Assertions
 laufen auf dem Host und nativ. Alle nativen Gates der folgenden Tabelle sind in
-**Interpreter und Mixed** bestanden. Die [Abnahme-Receipt](validation/openapi.json)
+**Interpreter und Mixed** bestanden. Die [Abnahme-Receipt](validation/performance.json)
 ordnet App-/Runtime-Hashes, Checks und Rohbeleg-Hashes dieser Abnahme zu.
 
 | Gate | Gegenstand |
@@ -25,6 +25,15 @@ ordnet App-/Runtime-Hashes, Checks und Rohbeleg-Hashes dieser Abnahme zu.
 | `python3 scripts/test_tasks.py` | Request-Kontext, Fehlerpriorität, Child-/Cleanup-Grenzen und Kapazität |
 | `python3 scripts/test_control.py` | Registry-Erneuerung, Timeout-Recovery und getrennter Control-Pool |
 | `python3 scripts/smoke.py` | Docker, sieben OpenAPI-Publikationsstände je Engine, fehlendes Artefakt, Rolling Updates, TTL/Epochen, Sättigung und SIGTERM |
+
+Die neue Admission-Regression belegt freie Permits bei ausgeschöpfter
+Cancellation-Callback-Kapazität und vollständige Queue-Bereinigung nach gescheiterter
+Registrierung. Die [fünf Performance-Runden](benchmarks.md#framework-optimierungen-5-oktober-2026)
+und 24 abschließenden HTTP-Vergleichsläufe verwenden denselben Runtime-Pin.
+Drei isolierte Kostenverbesserungen bleiben; FIFO und Release-Yield wurden
+verworfen. Ein HTTP-Kapazitätsgewinn oder bestandenes Gateway-p99-Ziel ist damit
+nicht nachgewiesen. Hoori-Folgearbeit: [#231](https://github.com/TrautmannP/hoori/issues/231)
+und [#232](https://github.com/TrautmannP/hoori/issues/232).
 
 Native Gates laufen mit `HOORI_ENGINE=mixed` und `HOORI_ENGINE=interpreter`.
 Rohbelege liegen unter `.cache/`; die kompakte Receipt ist versioniert.
@@ -45,8 +54,9 @@ Nicht erneut gelaufen: `test_application_build.py`, `test_clients.py`,
 `test-task-runtime.sh`, historische Last-/Performance-Matrizen und CI.
 Die lokale HTML-Referenz wurde über echtes HTTP geprüft, ohne visuelle Browserabnahme.
 
-Frühere unabhängige App-, GC-Stress-, Task-Fassaden- und PostgreSQL-Läufe stehen
-im Git-Stand `97fe5b3`. Die vorherige [MVC-Abnahme](validation/mvc-http.json), der
+Die vorherige [OpenAPI-/Registry-Abnahme](validation/openapi.json) bleibt ihrem
+Code- und JAR-Stand zugeordnet. Frühere unabhängige App-, GC-Stress-, Task-Fassaden-
+und PostgreSQL-Läufe stehen im Git-Stand `97fe5b3`. Die vorherige [MVC-Abnahme](validation/mvc-http.json), der
 [erste MVC-Schnitt](validation/mvc-application.json), historische
 [DTO-/Tasks-Nachweise](validation/history-pre-mvc.md) und [Benchmarkdaten](benchmarks.md)
 bleiben ihren jeweiligen Code-/Runtime-Ständen zugeordnet. Die OpenAPI-Abnahme

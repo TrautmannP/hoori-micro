@@ -1,0 +1,156 @@
+{
+  "checked_at_utc": "2026-10-04T23:35:57.668642+00:00",
+  "scope": "Three measured framework cost reductions; FIFO and cooperative release-yield experiments rejected",
+  "code_base": "07dcf7dbf3e9e1cb61884dff5ee4db1b4b88a57e",
+  "implementation_diff_sha256": "031eba1405a2b4b7f36c6bfda456a0287c95f62be0ebb199e392a5a05e8e6439",
+  "runtime": {
+    "source": {
+      "dirty": false,
+      "revision": "83d2b8fc83ffee6ed7c748409ff7b4802d8a341b"
+    },
+    "build": {
+      "features": [],
+      "profile": "release",
+      "revision": "83d2b8fc83ffee6ed7c748409ff7b4802d8a341b",
+      "target": "x86_64-unknown-linux-gnu",
+      "version": "0.1.0"
+    },
+    "toolchain": {
+      "javac": "javac 21.0.12.1",
+      "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+    },
+    "distribution_sha256": "22bf09efdf15a85ddadac94325e402668070bb7be9a9452cb5521f7bff75cada",
+    "binary_sha256": "6e5ff53f1941b61867f5583d5cb123e1f44da0bce216a6eacec9c47bab7e4604"
+  },
+  "http_application_jars_sha256": {
+    "hoori-micro-0.1.0-SNAPSHOT.jar": "ce628f2c745ad088fcee9b9936449db55a4b9627d8f37a5033b72bb1189d1797",
+    "hoori-micro-demo-contracts-0.1.0-SNAPSHOT.jar": "0fb07f64058079a2867df53416a5047126f2df6e1e5d0d4f26f3ea7e85f8c99d",
+    "recipes-service-0.1.0-SNAPSHOT.jar": "b31e1e4e7991022336cf96265429b75ad8275924e9f2f61a2904fccfff6b66a1",
+    "pantry-service-0.1.0-SNAPSHOT.jar": "14fdc87819f91ff1296870467dd5327ce1644de0e1378e4b2e4b6e2bba69bdd5",
+    "shopping-service-0.1.0-SNAPSHOT.jar": "98f8b38f586e7478c6a947b515ccab18a1c2745af3ad966e188d8f6ee5735f90"
+  },
+  "portable": {
+    "core_assertions": 117,
+    "formatter_fixtures": 5,
+    "python_tests": 24,
+    "maven_junit": {
+      "tests": 38,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "spotless": "passed"
+  },
+  "native": {
+    "engines": [
+      "interpreter",
+      "mixed"
+    ],
+    "all_selected_functional_gates": "passed",
+    "commands": [
+      "scripts/test-hoori-core.sh",
+      "python3 scripts/test_http.py",
+      "python3 scripts/test_admission.py",
+      "python3 scripts/test_budgets.py",
+      "python3 scripts/test_tasks.py",
+      "python3 scripts/test_control.py",
+      "python3 scripts/smoke.py"
+    ],
+    "added_regression": "A free admission permit uses no Cancellation registration; queue registration failure releases the waiter slot",
+    "core_openapi_assertions": 23,
+    "http_checks": [
+      "OpenAPI canonical artifact hashes, exact gateway publication, local references, hidden internal endpoints and local docs",
+      "direct/client/gateway CRUD: exact path/query UTF-8, 201/relative Location, typed result, void/204, public 404",
+      "bounded validation and media errors, unpublished route, 405/Allow, endpoint/version mismatch, external internal headers ignored",
+      "singleton clients use current request identity, no credentials, overview/dashboard and ordered batch/bulk",
+      "all generated applications and gateway drain cleanly on SIGTERM"
+    ],
+    "docker": {
+      "interpreter": {
+        "complete": true,
+        "publication_operation_counts": [
+          15,
+          15,
+          16,
+          16,
+          11,
+          15,
+          16
+        ]
+      },
+      "mixed": {
+        "complete": true,
+        "publication_operation_counts": [
+          15,
+          15,
+          16,
+          16,
+          11,
+          15,
+          16
+        ]
+      }
+    }
+  },
+  "performance": {
+    "rounds": 5,
+    "retained": [
+      1,
+      2,
+      3
+    ],
+    "rejected": [
+      4,
+      5
+    ],
+    "final_http_experiments": 24,
+    "isolated_probe_processes_per_engine_and_artifact": 3,
+    "http_capacity_acceptance": false,
+    "http_capacity_gain_demonstrated": false,
+    "upstream_issues": [
+      "https://github.com/TrautmannP/hoori/issues/231",
+      "https://github.com/TrautmannP/hoori/issues/232"
+    ],
+    "artifacts_sha256": {
+      "docs/benchmarks/framework-costs-2026-10-05.json.gz": "9d3eba7f82b29bc05e9583dca27ae3155399fbc4d11c25603c1915d145e28742",
+      "docs/benchmarks/framework-http-2026-10-05.json.gz": "a376395a574a4a924807504065e27e830a2cbd4e5ed8165b133586742ca9cf6b"
+    }
+  },
+  "not_rerun": [
+    "scripts/test_application_build.py",
+    "scripts/test_clients.py",
+    "scripts/test_mvc.py --gc-stress",
+    "scripts/test_composition.py --facade",
+    "scripts/test_data.py",
+    "scripts/test-task-runtime.sh",
+    "historical performance matrices",
+    "CI",
+    "visual browser QA"
+  ],
+  "evidence_sha256": {
+    ".cache/perf/final/format.log": "80edd34fc7146a25c96e57e870b4ae73412fbb32f597d076a333732cce35f600",
+    ".cache/perf/final/core-host.log": "0d196b6ad6e4ffba4f37869220986c0b5b8836dfdb96e3c24cf37e07b0b76017",
+    ".cache/perf/final/python.log": "6816ea0d4263551dff62a9bbe34928a550a22cab9420e486e0009a54c300696c",
+    ".cache/perf/final/build.log": "28dd5c303045fdb26ca5f20262ad4837c921ab51ae8399760c8036fe61f839ea",
+    ".cache/perf/final/core-interpreter.log": "3e1ea247178726452557c7c5fb58dc33c484716f1e0c88a7d738d0f4f5d5db9f",
+    ".cache/perf/final/core-mixed.log": "3e1ea247178726452557c7c5fb58dc33c484716f1e0c88a7d738d0f4f5d5db9f",
+    ".cache/perf/final/test_http-interpreter.log": "1b9ed21cc63b6c909253be19e30b7ad9234f75d6e15ced87e3b99634c1eeed1f",
+    ".cache/perf/final/test_admission-interpreter.log": "963c810e4045e747e1af069e4afdc7f3282560013bb5c5c3bd89442eef0ce935",
+    ".cache/perf/final/test_budgets-interpreter.log": "0774733e32eb87b463e96a93aa885b4d7f3b4ce95b663b55f855f3e88a1e24c0",
+    ".cache/perf/final/test_tasks-interpreter.log": "1a6674d0342fe37ad2f1791ce22ea92a4ffcbc0544529a9cc1aac9bbd91a8ba7",
+    ".cache/perf/final/test_control-interpreter.log": "5ab55d4fa2b5cc7d63330ed1b04762edd1cf1a5eba4f4cad35df82a6ab505423",
+    ".cache/perf/final/smoke-interpreter.log": "ca89fabbbef7784a77710edf9d3cf59220aedfaefd6d1351cdeaad959d3b568f",
+    ".cache/perf/final/test_http-mixed.log": "3cdc2faae2ee11057c79553d322f3d3fa171d1feacb0409baa4af1e5ac3d6942",
+    ".cache/perf/final/test_admission-mixed.log": "566a09f0c97d0d3b2a7420e62ecbd70f4ea0c31a3b881c02f41fe5ce199c6388",
+    ".cache/perf/final/test_budgets-mixed.log": "7af1b1c942e131b728e5113b4b98c77f4b6ad1432ed81f276234d2f9c932dfce",
+    ".cache/perf/final/test_tasks-mixed.log": "309a0b532bd43bd24e2ff83a47b87aa5869e8b49301eb7b4f5ca29efa7c4b17a",
+    ".cache/perf/final/test_control-mixed.log": "850ac26631f7ac458087677ce3dd950c339ad627de40e950b9703241754abab8",
+    ".cache/perf/final/smoke-mixed.log": "80fbe2ce286070a736aad24e33129a54f61d18c5714aed6b3cb87032b9c7bc05",
+    ".cache/http-interpreter.json": "e200868396d16466fdaa8c3c87b9efed88b919bf6cc555ded3afc9be33bcf44f",
+    ".cache/http-mixed.json": "aa4a5a54628be904ae1426575ac474003a6cadd6c726f0ad916392553a8300d1",
+    ".cache/tasks-interpreter.json": "e75cfdd6d3ec19a1daa89159c966b9b02940336270eea28277b24cc7b66daafd",
+    ".cache/tasks-mixed.json": "c0d116a78d28687ca8ac615e371a0b3849a15c143f79729dd7d1145caf4f49e8",
+    ".cache/hoori-micro-check-1310016.json": "1398c486ecca9cd53b9f037b70f51010f4480c6608a4a2b447c104c08477dcff",
+    ".cache/hoori-micro-check-1243708.json": "64b37d7f53d7edf1d23e191870fb2fe224ad5317d9ccc306dc5df8360abafc92"
+  }
+}
