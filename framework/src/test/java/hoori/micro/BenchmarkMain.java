@@ -20,6 +20,8 @@ import java.util.Map;
 /** Test-only controls. Static addresses/snapshots never become an application API. */
 public final class BenchmarkMain {
     private static final HttpEndpoint DIRECT = HttpFixture.post("/direct");
+    private static final HttpEndpoint ECHO = HttpFixture.post("/bench");
+    private static final HttpEndpoint FAIL = HttpFixture.post("/fail");
     private static final String DIRECT_KEY = DIRECT.key();
     private static final JsonLimits JSON = new JsonLimits(64, 16384, 128, 65536);
     private static final String ROLE = System.getenv("BENCH_ROLE");
@@ -61,8 +63,7 @@ public final class BenchmarkMain {
                         "/bench/meal",
                         "shopping:read",
                         JsonTree.CODEC,
-                        (ctx, input) ->
-                                composition ? compose(recipes, input) : HttpFixture.call(recipes, "/bench", input));
+                        (ctx, input) -> composition ? compose(recipes, input) : call(recipes, ECHO, input));
 
             if (ROLE.equals("registry")) new Registry(app.config().registryTtlMillis, app.jsonLimits()).mount(app);
 
@@ -75,7 +76,7 @@ public final class BenchmarkMain {
                                 "/bench",
                                 request -> Responses.json(
                                         200,
-                                        HttpFixture.call(recipes, "/bench", request.body(JsonTree.CODEC, JSON)),
+                                        call(recipes, ECHO, request.body(JsonTree.CODEC, JSON)),
                                         JsonTree.CODEC,
                                         JSON));
 
@@ -111,14 +112,12 @@ public final class BenchmarkMain {
     }
 
     private static Object compose(RemoteClient recipes, Object input) throws Exception {
-        String first = input instanceof Map<?, ?> map && Boolean.TRUE.equals(map.get("failure")) ? "/fail" : "/bench";
+        HttpEndpoint first = input instanceof Map<?, ?> map && Boolean.TRUE.equals(map.get("failure")) ? FAIL : ECHO;
 
-        if (COMPOSITION.equals("serial"))
-            return same(HttpFixture.call(recipes, first, input), HttpFixture.call(recipes, "/bench", input));
+        if (COMPOSITION.equals("serial")) return same(call(recipes, first, input), call(recipes, ECHO, input));
 
         var plan = Tasks.parallel(
-                        Tasks.task(() -> HttpFixture.call(recipes, first, input)),
-                        Tasks.task(() -> HttpFixture.call(recipes, "/bench", input)))
+                        Tasks.task(() -> call(recipes, first, input)), Tasks.task(() -> call(recipes, ECHO, input)))
                 .named("benchmark.composition");
 
         if (COMPOSITION.equals("fail-fast")) plan.failFast();
@@ -130,6 +129,14 @@ public final class BenchmarkMain {
         if (!first.equals(second)) throw new AssertionError("Different composed business results");
 
         return first;
+    }
+
+    /** Generated clients also construct their finite endpoint descriptors once, before requests. */
+    private static Object call(RemoteClient client, HttpEndpoint endpoint, Object input) {
+        return client.call(
+                endpoint,
+                limits -> new ClientRequest(endpoint.path()).body(input, JsonTree.CODEC, limits),
+                (response, limits) -> RemoteClient.json(response, JsonTree.CODEC, limits));
     }
 
     /** Native CPU control, separate from transport timing. No speculative index implementation. */

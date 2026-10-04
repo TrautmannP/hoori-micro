@@ -210,7 +210,9 @@ def experiment(args, variant: str, repeat: int, work: Path, receipt: dict, docum
             "--gc-threshold-bytes", "2097152", "--allow-environment-read", "--allow-network-listen",
             *([] if role == "registry" else ["--allow-network-connect", "--allow-host-resolution"]),
             "--class-path", classpath, "hoori/micro/BenchmarkMain"],
-            "volumes": [f"{ROOT / 'framework/target/test-classes'}:/opt/bench:ro"],
+            "volumes": [f"{ROOT / 'framework/target/test-classes'}:/opt/bench:ro"]
+                + ([f"{args.framework_jar.resolve()}:/opt/app/lib/hoori-micro-0.1.0-SNAPSHOT.jar:ro"]
+                   if args.framework_jar else []),
             "cpus": args.cpus, "mem_limit": f"{args.memory_mib}m",
             "ports": [f"127.0.0.1:{args.port + i}:8080"],
             "environment": {"BENCH_ROLE": role, "BENCH_VARIANT": variant, "BENCH_COMPOSITION": args.composition,
@@ -294,7 +296,8 @@ def experiment(args, variant: str, repeat: int, work: Path, receipt: dict, docum
                 raise RuntimeError("Business path did not converge")
             time.sleep(.5)
         result["cold_idle"] = snapshot()
-        load(port, path, payload, args.warmup, args.workers, args.rate, args.p99_ms, args.error_fraction)
+        warmup_rate = args.rate if args.warmup_rate is None else args.warmup_rate
+        load(port, path, payload, args.warmup, args.workers, warmup_rate, args.p99_ms, args.error_fraction)
         if args.stable_catalog:
             # Measure before the burst: #4's known registrar timeout bug must not mimic a saving.
             def registry_ids():
@@ -324,6 +327,8 @@ def experiment(args, variant: str, repeat: int, work: Path, receipt: dict, docum
             phases = [("compose", 64, args.rate, args.delay_ms)]
             if args.composition != "serial":
                 phases += [("failure", 64, args.rate, args.delay_ms)]
+        elif args.phases:
+            phases = [phase for phase in phases if phase[0] in args.phases]
         for name, size, rate, delay in phases:
             payload = {"value": "x" * size, "delayMillis": delay}
             if name == "failure":
@@ -393,13 +398,17 @@ def experiment(args, variant: str, repeat: int, work: Path, receipt: dict, docum
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--framework-jar", type=Path, help="Read-only override for paired runs of archived framework JARs")
     parser.add_argument("--variants", default="ABCD")
     parser.add_argument("--composition", choices=("single", "serial", "parallel", "fail-fast"), default="single")
     parser.add_argument("--engine", choices=("mixed", "interpreter"), default="mixed")
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--seconds", type=float, default=10)
     parser.add_argument("--warmup", type=float, default=10)
+    parser.add_argument("--warmup-rate", type=float, help="Warmup arrivals/s; 0 uses closed load, default follows --rate")
     parser.add_argument("--idle", type=float, default=5)
+    parser.add_argument("--phases", nargs="+", choices=("closed-small", "open-large", "sustained", "slow", "burst", "recovery"),
+                        help="Run only selected phases for isolated optimization rounds; default runs all")
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--pool", type=int, default=4)
     parser.add_argument("--rate", type=float, default=4)
@@ -419,9 +428,12 @@ def main() -> int:
     args = parser.parse_args()
     if args.composition != "single" and any(variant not in "CD" for variant in args.variants):
         parser.error("Composition costs use the actual Micro paths C/D")
+    if args.composition != "single" and args.phases:
+        parser.error("Composition selects its own measured phases")
     if (not args.variants or any(variant not in "ABCD" for variant in args.variants)
             or len(set(args.variants)) != len(args.variants) or args.repeats < 1 or args.seconds <= 0
             or args.warmup <= 0 or args.idle < 0 or not 1 <= args.workers <= 128 or not 1 <= args.pool <= 32
+            or args.warmup_rate is not None and args.warmup_rate < 0
             or not 0 <= args.catalog_instances <= 128 or not 0 <= args.delay_ms <= 1000
             or not 0 <= args.public_routes <= 128
             or args.rate <= 0 or args.burst_rate <= 0 or args.cpus <= 0 or args.memory_mib <= 0
@@ -437,6 +449,10 @@ def main() -> int:
     framework = ROOT / "framework/target/hoori-micro-0.1.0-SNAPSHOT.jar"
     if any(digest(framework) != digest(ROOT / f".docker-context/apps/{role}/lib/{framework.name}") for role in ROLES):
         parser.error("Staged framework differs from the build; run scripts/build.sh again")
+    if args.framework_jar is not None:
+        if not args.framework_jar.is_file():
+            parser.error("Framework JAR override does not exist")
+        framework = args.framework_jar
     args.output.parent.mkdir(parents=True, exist_ok=True)
     if args.output.exists():
         parser.error("Output already exists; choose a new file")
@@ -445,7 +461,7 @@ def main() -> int:
                 "commit": command(["git", "rev-parse", "HEAD"]),
                 "git_status": command(["git", "status", "--short"]),
                 "fixture_sha256": digest(fixture), "load_script_sha256": digest(Path(__file__)),
-                "framework_jar_sha256": digest(ROOT / "framework/target/hoori-micro-0.1.0-SNAPSHOT.jar"),
+                "framework_jar_sha256": digest(framework),
                 "docker_version": command(["docker", "version", "--format", "{{.Server.Version}}"]),
                 "compose_version": command(["docker", "compose", "version", "--short"]), "runs": []}
     document["measurement_mode"] = "profile" if args.profile else "timing"
