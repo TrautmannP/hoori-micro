@@ -1,15 +1,18 @@
 package dev.hoori.micro.facade;
 
-import dev.hoori.micro.demo.GetRecipe;
+import dev.hoori.micro.demo.DemoValidation;
+import dev.hoori.micro.demo.GetRecipeJsonCodec;
 import dev.hoori.micro.demo.Overview;
+import dev.hoori.micro.demo.OverviewJsonCodec;
 import dev.hoori.micro.demo.Pantry;
 import dev.hoori.micro.demo.Recipes;
 import hoori.concurrent.Tasks;
 import hoori.micro.Microservice;
 import hoori.micro.Service;
 import hoori.rest.Responses;
+import hoori.rest.validation.ValidatedBody;
 
-/** Optional build-time facade; the standard Shopping example needs no processor. */
+/** Optional build-time facade; task generation is independent of DTO generation. */
 public final class FacadeMain {
     public static OverviewService overview(Microservice app) {
         RecipesClient recipes = query -> app.context().call(Recipes.GET, query);
@@ -28,11 +31,12 @@ public final class FacadeMain {
         app.routes()
                 .post(
                         "/overview",
-                        request -> Responses.json(
-                                200,
-                                overview.get(request.body(GetRecipe.CODEC, app.jsonLimits())),
-                                Overview.CODEC,
-                                app.jsonLimits()));
+                        ValidatedBody.handle(
+                                GetRecipeJsonCodec.INSTANCE,
+                                app.jsonLimits(),
+                                DemoValidation.GET_RECIPE,
+                                (request, input) -> Responses.json(
+                                        200, overview.get(input), OverviewJsonCodec.INSTANCE, app.jsonLimits())));
     }
 
     public static void main(String[] args) throws Exception {

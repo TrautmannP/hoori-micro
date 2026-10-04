@@ -12,7 +12,7 @@ import socket
 import subprocess
 import time
 
-from runtime_check import ROOT, runtime_jars, verify
+from runtime_check import ROOT, runtime_classpath, verify
 from stage import jar
 
 
@@ -26,7 +26,7 @@ def main():
     modules = [("framework", "hoori-micro"), ("examples/demo-contracts", "hoori-micro-demo-contracts")]
     modules += [(f"examples/{name}-service", f"{name}-service") for name in ("recipes", "pantry", "shopping")]
     jars = [jar(*module) for module in modules]
-    cp = [ROOT / "examples/shopping-service/target/test-classes", *jars, *[runtime / p for p in runtime_jars(receipt)]]
+    cp = [ROOT / "examples/shopping-service/target/test-classes", *jars, *runtime_classpath(runtime, receipt)]
     ports, processes, logs = {}, {}, {}
     roles = ["registry", "recipes", "pantry", "shopping", "gateway"] + (["facade"] if args.facade else [])
     for role in roles:
@@ -105,7 +105,7 @@ def main():
             log = (ROOT / f".cache/composition-{engine}-{role}.log").open("w")
             logs[role] = log
             processes[role] = subprocess.Popen([str(runtime / "bin/hoori"), "run", "--engine", engine, "--live-output",
-                "--graceful-signals", "--max-heap-bytes", "33554432", "--allow-environment-read", "--allow-network-listen",
+                "--graceful-signals", "--max-heap-bytes", "33554432", "--allow-environment-read", "--allow-network-listen", "--allow-resource-read",
                 "--allow-network-connect", "--class-path", ":".join(map(str, role_cp)), main], env=env, stdout=log, stderr=log)
             until(lambda: request(role, "/health/ready")[0] == 200, role + " ready")
 
@@ -115,6 +115,33 @@ def main():
         assert result("gateway", "/overview/1", headers={"X-Request-ID": "two-providers", "Authorization": "SECRET"}) == expected
         assert all(probe(role)["requestId"] == "two-providers" and not probe(role)["credentials"] for role in ("recipes", "pantry"))
         evidence["checks"].append("ordinary route and Gateway use two discovered typed providers with correct correlation")
+
+        def invalid(response, expected):
+            status, raw = response
+            assert status == 400 and json.loads(raw) == {"code": "validation_failed", "violations": expected}, (status, raw)
+
+        positive = [{"path": "id", "code": "positive"}]
+        invalid(request("gateway", "/recipes/0"), positive)
+        invalid(request("gateway", "/validation", {"id": 0}), positive)
+        invalid(request("shopping", "/_hoori/invoke", {"id": 0},
+                        {"X-Hoori-Action": "shopping.validated", "X-Hoori-Version": "1"}), positive)
+        assert result("shopping", "/validation-calls") == 0, "Invalid input reached the business handler"
+        assert result("gateway", "/validation", {"id": "1"}) == {"id": 1}
+        assert result("shopping", "/validation-calls") == 1
+        before = probe("recipes")["calls"]
+        invalid(request("gateway", "/meals/bulk", {"ids": [1, 0, None]}),
+                [{"path": "ids[1]", "code": "positive"}, {"path": "ids[2]", "code": "not_null"}])
+        assert probe("recipes")["calls"] == before, "Invalid batch started downstream work"
+        for body in ({}, {"id": "not-a-number"}, {"id": None}):
+            assert request("gateway", "/validation", body)[0] == 400
+        status, raw = request("shopping", "/_hoori/invoke", {"id": 1},
+                              {"X-Hoori-Action": "shopping.broken-validator", "X-Hoori-Version": "1"})
+        assert status == 500 and b"PRIVATE" not in raw, (status, raw)
+        assert result("shopping", "/validation-calls") == 1
+        status, raw = request("gateway", "/downstream-invalid", {})
+        assert status == 502 and b"validation_failed" not in raw and b"positive" not in raw, (status, raw)
+        assert result("gateway", "/validation", {"id": 1}) == {"id": 1}
+        evidence["checks"].append("generated input codecs and explicit validators: direct RPC/Gateway field errors, no invalid handler/fanout, safe internal/nested failures and recovery")
 
         with ThreadPoolExecutor(max_workers=4) as pool:
             if args.facade:

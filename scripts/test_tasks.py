@@ -14,7 +14,7 @@ import subprocess
 import threading
 import time
 
-from runtime_check import ROOT, runtime_jars, verify
+from runtime_check import ROOT, runtime_classpath, verify
 
 
 def main():
@@ -176,7 +176,7 @@ def main():
             env["TASK_START_FAIL"] = "1"
         if startup_race:
             env["TASK_START_RACE"] = "1"
-        cp = [ROOT / "framework/target/test-classes", ROOT / "framework/target/classes"] + [runtime / jar for jar in runtime_jars(receipt)]
+        cp = [ROOT / "framework/target/test-classes", ROOT / "framework/target/classes"] + runtime_classpath(runtime, receipt)
         log = (ROOT / f".cache/tasks-{engine}-{label}.log").open("w")
         proc = subprocess.Popen([str(runtime / "bin/hoori"), "run", "--engine", engine, "--live-output", "--graceful-signals",
             "--max-heap-bytes", "33554432", "--allow-environment-read", "--allow-network-listen", "--allow-network-connect",

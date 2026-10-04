@@ -16,8 +16,8 @@ public final class MealStore implements Store {
             handle.execute(
                     "insert into meal_drafts(id, recipe_id, title, available_count) values (?, ?, ?, ?)",
                     id,
-                    prepared.recipe().id,
-                    prepared.recipe().title,
+                    prepared.recipe().id(),
+                    prepared.recipe().title(),
                     prepared.available().size());
             handle.execute("insert into meal_outbox(id, event) values (?, 'meal-drafted')", id);
         });

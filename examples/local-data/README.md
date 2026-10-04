@@ -16,6 +16,10 @@ Die Probe verwendet die unveränderten, zur Runtime-Revision geprüften Datenban
 und Fault-Peer-Helfer des Hoori-Checkouts. Der App-Build braucht nur die Distribution.
 Sie erzeugt ein eigenes kurzlebiges Testschema und entfernt ihren Container wieder.
 
+`Draft` verwendet einen generierten JSON-Codec und `@Positive` für beide IDs.
+Der explizite Validator läuft vor Remote-Vorbereitung und lokaler Transaktion;
+ungültige IDs liefern HTTP 400 mit Feldpfad/Code und starten keinen Schreibvorgang.
+
 ## Lokal verwenden
 
 In einer **eigenen Demo-Datenbank** [schema.sql](schema.sql) mit `psql` ausführen.

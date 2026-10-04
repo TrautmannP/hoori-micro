@@ -5,6 +5,8 @@ import hoori.rest.Request;
 import hoori.rest.Responses;
 import hoori.rest.json.JsonCodec;
 import hoori.rest.json.JsonLimits;
+import hoori.rest.validation.ValidatedBody;
+import hoori.validation.DtoValidator;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 
@@ -48,6 +50,12 @@ public final class Service {
     }
 
     public <I, O> Service action(String name, JsonCodec<I> input, JsonCodec<O> output, Handler<I, O> handler) {
+        return action(name, input, output, null, handler);
+    }
+
+    /** A null validator keeps the codec-only contract. Validation uses the existing request scope. */
+    public <I, O> Service action(
+            String name, JsonCodec<I> input, JsonCodec<O> output, DtoValidator<I> validator, Handler<I, O> handler) {
         mutable();
 
         if (input == null || output == null || handler == null) throw new NullPointerException();
@@ -56,7 +64,7 @@ public final class Service {
 
         if (actions.size() == MAX_ACTIONS) throw new IllegalArgumentException("At most 128 actions");
 
-        last = new Definition<>(name, input, output, handler);
+        last = new Definition<>(name, input, output, validator, handler);
         actions.put(name, last);
 
         return this;
@@ -68,7 +76,7 @@ public final class Service {
 
         if (!name.equals(contract.service)) throw new IllegalArgumentException("Contract belongs to another service");
 
-        return action(contract.operation, contract.input, contract.output, handler);
+        return action(contract.operation, contract.input, contract.output, contract.validator, handler);
     }
 
     /** Offers the previous action to gateways. Not public until requirePermission() is also set. */
@@ -159,13 +167,20 @@ public final class Service {
         final JsonCodec<I> input;
         final JsonCodec<O> output;
         final Handler<I, O> handler;
+        final DtoValidator<I> validator;
         String method, path, permission;
 
-        Definition(String name, JsonCodec<I> input, JsonCodec<O> output, Handler<I, O> handler) {
+        Definition(
+                String name,
+                JsonCodec<I> input,
+                JsonCodec<O> output,
+                DtoValidator<I> validator,
+                Handler<I, O> handler) {
             this.name = name;
             this.input = input;
             this.output = output;
             this.handler = handler;
+            this.validator = validator;
         }
 
         Catalog.Entry entry() {
@@ -174,7 +189,18 @@ public final class Service {
 
         Response invoke(Context ctx, Request request, JsonLimits limits) throws Exception {
             ctx.check();
-            I params = request.body(input, limits);
+
+            if (validator == null) return respond(ctx, request.body(input, limits), limits);
+
+            Response response = ValidatedBody.handle(
+                            input, limits, validator, (ignored, params) -> respond(ctx, params, limits))
+                    .handle(request);
+            ctx.check();
+
+            return response;
+        }
+
+        private Response respond(Context ctx, I params, JsonLimits limits) throws Exception {
             ctx.check();
             O result = handler.handle(ctx, params);
 

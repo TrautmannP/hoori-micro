@@ -6,5 +6,18 @@
   <artifactId>hoori-micro-demo-contracts</artifactId>
   <dependencies>
     <dependency><groupId>dev.hoori</groupId><artifactId>hoori-micro</artifactId></dependency>
+    <dependency><groupId>dev.hoori</groupId><artifactId>hoori-rest-annotations</artifactId><scope>provided</scope></dependency>
   </dependencies>
+  <build><plugins><plugin>
+    <groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId>
+    <configuration><annotationProcessorPaths>
+      <path><groupId>dev.hoori</groupId><artifactId>hoori-rest-processor</artifactId><version>${hoori.sdk.version}</version></path>
+      <path><groupId>dev.hoori</groupId><artifactId>hoori-validation-processor</artifactId><version>${hoori.sdk.version}</version></path>
+      <path><groupId>io.avaje</groupId><artifactId>avaje-validator-generator</artifactId><version>${avaje.validator.version}</version></path>
+    </annotationProcessorPaths><annotationProcessors>
+      <annotationProcessor>hoori.validation.processor.ValidationProfileProcessor</annotationProcessor>
+      <annotationProcessor>hoori.rest.processor.JsonCodecProcessor</annotationProcessor>
+      <annotationProcessor>io.avaje.validation.generator.ValidationProcessor</annotationProcessor>
+    </annotationProcessors></configuration>
+  </plugin></plugins></build>
 </project>

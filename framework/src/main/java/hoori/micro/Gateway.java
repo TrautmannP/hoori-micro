@@ -108,7 +108,9 @@ public final class Gateway implements Middleware {
             } catch (ServiceCallException rejected) {
                 int status = rejected.upstreamStatus();
 
-                // Keep the status of a provider's client error, never its body. 421/5xx stay upstream failures.
+                if (!rejected.violations().isEmpty()) return ValidationErrors.response(rejected.violations());
+
+                // Other peer bodies stay private. Nested call failures are mapped by the provider to 502.
                 if (status >= 400 && status < 500 && status != 421) return Response.text(status, "Request rejected");
 
                 throw rejected;

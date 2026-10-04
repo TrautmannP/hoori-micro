@@ -12,10 +12,10 @@ import java.util.List;
 public final class Recipes {
     private Recipes() {}
 
-    public static final Action<GetRecipe, Recipe> GET =
-            new Action<>("recipes.get", GetRecipe.CODEC, RecipeCodec.INSTANCE);
-    public static final Action<GetRecipe, Recipe> SLOW =
-            new Action<>("recipes.slow", GetRecipe.CODEC, RecipeCodec.INSTANCE);
+    public static final Action<GetRecipe, Recipe> GET = new Action<>(
+            "recipes.get", GetRecipeJsonCodec.INSTANCE, RecipeJsonCodec.INSTANCE, DemoValidation.GET_RECIPE);
+    public static final Action<GetRecipe, Recipe> SLOW = new Action<>(
+            "recipes.slow", GetRecipeJsonCodec.INSTANCE, RecipeJsonCodec.INSTANCE, DemoValidation.GET_RECIPE);
     public static final JsonCodec<List<Recipe>> LIST = new JsonCodec<>() {
         public List<Recipe> read(JsonReader input) {
             List<Recipe> recipes = new ArrayList<>();
@@ -23,7 +23,7 @@ public final class Recipes {
             while (input.hasNext()) {
                 if (recipes.size() == 16) throw new JsonException("At most 16 recipes");
 
-                recipes.add(RecipeCodec.INSTANCE.read(input));
+                recipes.add(RecipeJsonCodec.INSTANCE.read(input));
             }
             input.endArray();
 
@@ -34,10 +34,10 @@ public final class Recipes {
             if (value.size() > 16) throw new JsonException("At most 16 recipes");
 
             output.beginArray();
-            for (Recipe recipe : value) RecipeCodec.INSTANCE.write(recipe, output);
+            for (Recipe recipe : value) RecipeJsonCodec.INSTANCE.write(recipe, output);
             output.endArray();
         }
     };
     public static final Action<RecipeIds, List<Recipe>> GET_MANY =
-            new Action<>("recipes.get-many", RecipeIds.CODEC, LIST);
+            new Action<>("recipes.get-many", RecipeIdsJsonCodec.INSTANCE, LIST, DemoValidation.RECIPE_IDS);
 }

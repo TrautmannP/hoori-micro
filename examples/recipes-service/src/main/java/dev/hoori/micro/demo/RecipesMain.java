@@ -16,7 +16,7 @@ public final class RecipesMain {
     static Service definition() {
         Service recipes = Service.named("recipes")
                 .version(1)
-                .action(Recipes.GET, (ctx, input) -> find(input.id))
+                .action(Recipes.GET, (ctx, input) -> find(input.id()))
                 .http("get", "GET", "/recipes/{id}")
                 .requirePermission("get", "recipes:read")
                 .action(Recipes.GET_MANY, (ctx, input) -> {
@@ -35,7 +35,7 @@ public final class RecipesMain {
                         throw new InterruptedIOException("Demo interrupted");
                     }
 
-                    return find(input.id);
+                    return find(input.id());
                 })
                 .action(
                         "context",
@@ -51,8 +51,9 @@ public final class RecipesMain {
         if ("1".equals(System.getenv("HOORI_DEMO_RECOMMEND")))
             recipes.action(
                             "recommend",
-                            GetRecipe.CODEC,
-                            RecipeCodec.INSTANCE,
+                            GetRecipeJsonCodec.INSTANCE,
+                            RecipeJsonCodec.INSTANCE,
+                            DemoValidation.GET_RECIPE,
                             (ctx, input) -> new Recipe(2, "Apfelstrudel"))
                     .http("recommend", "GET", "/recipes/{id}/recommendation")
                     .requirePermission("recommend", "recipes:read");

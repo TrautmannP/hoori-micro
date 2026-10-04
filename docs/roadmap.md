@@ -11,7 +11,9 @@ Action-Definitionen mit Registry, Broker und Gateway, Konfigurationsvalidierung,
 HTTP-/Runtime-Metriken, Request-ID/Restbudget-Kontext, Pool-Ownership, vorbereitete
 Gateway-Snapshots, verwaltete Request-Roots mit Kontext, Cancellation und echtem
 Scope-Drain, typisierter Fan-out und Batch/Bulk, Deregistrierung, Demo-Services,
-Runtime-Provenienzprüfung und Prüf-Scripte. Optionale separate Beispiele zeigen
+Runtime-Provenienzprüfung und Prüf-Scripte. Annotierte Records liefern generierte
+JSON-Codecs und explizite Validierung mit begrenzten RPC-/Gateway-Feldfehlern.
+Optionale separate Beispiele zeigen
 Buildzeit-Fassaden und lokale Transaktionen mit atomarem Daten-/Outbox-Commit.
 Build, Guest-Checks und Smoke-Test sind gelaufen (siehe `validation.md`).
 

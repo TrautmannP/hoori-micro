@@ -1,47 +1,21 @@
 package dev.hoori.micro.demo;
 
-import hoori.rest.json.JsonCodec;
-import hoori.rest.json.JsonException;
-import hoori.rest.json.JsonReader;
-import hoori.rest.json.JsonWriter;
+import hoori.rest.codegen.GenerateJsonCodec;
+import hoori.rest.codegen.JsonList;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Size;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
-/** Bounded batch input; order and duplicates are meaningful. */
-public record RecipeIds(List<Long> ids) {
+/** Parsing stops at 16 elements; validation rejects null/non-positive IDs before the handler. */
+@GenerateJsonCodec
+@Valid
+public record RecipeIds(
+        @JsonList(max = 16) @NotNull @Size(max = 16) List<@NotNull @Positive Long> ids) {
     public RecipeIds {
-        if (ids == null || ids.size() > 16) throw new JsonException("At most 16 recipe IDs");
-
-        ids = List.copyOf(ids);
-        for (long id : ids) if (id < 1) throw new JsonException("Invalid recipe ID");
+        if (ids != null) ids = Collections.unmodifiableList(new ArrayList<>(ids));
     }
-
-    public static final JsonCodec<RecipeIds> CODEC = new JsonCodec<>() {
-        public RecipeIds read(JsonReader input) {
-            List<Long> ids = null;
-            input.beginObject();
-            while (input.hasNext()) {
-                if (!input.nextName().equals("ids")) input.skipValue();
-                else {
-                    ids = new ArrayList<>();
-                    input.beginArray();
-                    while (input.hasNext()) {
-                        if (ids.size() == 16) throw new JsonException("At most 16 recipe IDs");
-
-                        ids.add(input.nextLong());
-                    }
-                    input.endArray();
-                }
-            }
-            input.endObject();
-
-            return new RecipeIds(ids);
-        }
-
-        public void write(RecipeIds value, JsonWriter output) {
-            output.beginObject().name("ids").beginArray();
-            for (long id : value.ids()) output.value(id);
-            output.endArray().endObject();
-        }
-    };
 }

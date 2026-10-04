@@ -12,11 +12,19 @@ import hoori.micro.JsonTree;
 import hoori.micro.Microservice;
 import hoori.micro.Service;
 import hoori.transaction.Transactions;
+import hoori.validation.ValidationLimits;
+import hoori.validation.Validators;
+import java.util.Locale;
 import java.util.Map;
 
 /** Remote preparation, then one short local data/outbox commit; no business-write replay. */
 public final class DataMain {
     public static Service definition(JdbiTransactions manager) {
+        Locale.setDefault(Locale.ENGLISH);
+        var drafts = Validators.builder()
+                .record(Draft.class, DraftValidationAdapter::new)
+                .build()
+                .forType(Draft.class, ValidationLimits.DEFAULT);
         Store repository = new MealStore(manager);
         Store explicit = (id, prepared) -> TaskScope.named("drafts.save")
                 .with(Transactions.required(manager))
@@ -26,10 +34,20 @@ public final class DataMain {
         return Service.named("drafts")
                 .dependsOn("recipes", 1)
                 .dependsOn("pantry", 1)
-                .action("save", Draft.CODEC, JsonTree.CODEC, (ctx, input) -> save(ctx, input, explicit))
+                .action(
+                        "save",
+                        DraftJsonCodec.INSTANCE,
+                        JsonTree.CODEC,
+                        drafts,
+                        (ctx, input) -> save(ctx, input, explicit))
                 .http("save", "POST", "/drafts")
                 .requirePermission("save", "drafts:write")
-                .action("save-scoped", Draft.CODEC, JsonTree.CODEC, (ctx, input) -> save(ctx, input, generated))
+                .action(
+                        "save-scoped",
+                        DraftJsonCodec.INSTANCE,
+                        JsonTree.CODEC,
+                        drafts,
+                        (ctx, input) -> save(ctx, input, generated))
                 .http("save-scoped", "POST", "/drafts/scoped")
                 .requirePermission("save-scoped", "drafts:write");
     }

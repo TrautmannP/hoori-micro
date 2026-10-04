@@ -145,7 +145,7 @@ public final class DataChecks {
                 return Response.text(200, "collected");
             });
             app.routes().post("/case/{mode}", request -> {
-                Draft input = request.body(Draft.CODEC, app.jsonLimits());
+                Draft input = request.body(DraftJsonCodec.INSTANCE, app.jsonLimits());
                 String mode = request.pathParam("mode");
                 var operation = TaskScope.named("data.check").with(Transactions.required(manager));
 

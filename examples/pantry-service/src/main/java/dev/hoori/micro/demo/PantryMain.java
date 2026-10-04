@@ -10,9 +10,9 @@ public final class PantryMain {
     static Service definition() {
         return Service.named("pantry")
                 .action(Pantry.FOR_RECIPE, (ctx, input) -> {
-                    if (input.id == 1) return List.of("Kartoffeln", "Möhren");
+                    if (input.id() == 1) return List.of("Kartoffeln", "Möhren");
 
-                    if (input.id == 2) return List.of();
+                    if (input.id() == 2) return List.of();
 
                     throw new RequestException(404, "Recipe stock not found");
                 })

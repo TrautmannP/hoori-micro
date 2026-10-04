@@ -1,7 +1,9 @@
 package dev.hoori.micro.facade;
 
 import dev.hoori.micro.demo.GetRecipe;
+import dev.hoori.micro.demo.GetRecipeJsonCodec;
 import dev.hoori.micro.demo.Overview;
+import dev.hoori.micro.demo.OverviewJsonCodec;
 import dev.hoori.micro.demo.Pantry;
 import dev.hoori.micro.demo.Recipes;
 import hoori.concurrent.TaskScope;
@@ -38,15 +40,16 @@ public final class FacadeChecks {
                                     200,
                                     Tasks.parallel(reused, app.context().task(Pantry.FOR_RECIPE, new GetRecipe(1)))
                                             .map(Overview::new),
-                                    Overview.CODEC,
+                                    OverviewJsonCodec.INSTANCE,
                                     app.jsonLimits()));
             OverviewService overview = FacadeMain.overview(app);
             app.routes().post("/short", request -> {
-                GetRecipe query = request.body(GetRecipe.CODEC, app.jsonLimits());
+                GetRecipe query = request.body(GetRecipeJsonCodec.INSTANCE, app.jsonLimits());
 
                 return TaskScope.named("short-parent")
                         .within(Duration.ofMillis(250))
-                        .call(scope -> Responses.json(200, overview.get(query), Overview.CODEC, app.jsonLimits()));
+                        .call(scope ->
+                                Responses.json(200, overview.get(query), OverviewJsonCodec.INSTANCE, app.jsonLimits()));
             });
             app.routes().get("/checked", request -> {
                 IOException expected = new IOException("private detail");

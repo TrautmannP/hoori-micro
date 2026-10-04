@@ -1,12 +1,43 @@
 # Validierung und offene Abnahme
 
-Stand: **3. Oktober 2026**. Tasks-v2-Buildintegration (#19) verwendet den sauberen
-Headless-Release `7d7245a`, Guest Base `0.4.0` und SDKs `0.1.0`. Installation und
-Start verwenden die vier HTTP-/REST-/Concurrent-SDKs aus `runtimeSdks` im Lock.
-Original-POMs, Receipt, Prüfsummen und die Concurrent-Runtime-Bindung werden
-geprüft; der Maven-Cache ist nach der vollständigen Distributionsidentität getrennt.
-Die Distribution bleibt unverändert, optionale SDKs/Processor sind keine
-HTTP-Laufzeitabhängigkeiten. Die neue Request-/Broker-Semantik ist unten separat belegt.
+Stand: **4. Oktober 2026**. Aktueller Pin ist der saubere Headless-Release
+`6f581305baa31f75b6ffdf8214f527b966ac66d1`, Guest Base `0.4.0`, SDKs `0.1.0`.
+Die sechs SDKs aus `runtimeSdks` und die sechs originalen Avaje-/Jakarta-JARs aus
+`runtimeDependencies` werden geprüft. Processor und Codegen-Annotationen bleiben
+auf dem Buildpfad; DB-Abhängigkeiten bleiben im separaten Datenbeispiel.
+Original-POMs, Receipt, Prüfsummen und Concurrent-Runtime-Bindung gehören zur
+Prüfung. Der Maven-Cache ist nach Distributionsidentität getrennt.
+
+## Annotationbasierte DTOs (4. Oktober 2026)
+
+- `scripts/build.sh`: **25 JUnit-Tests und Spotless** bestanden; Codegenerierung
+  durch die originalen Hoori-/Avaje-Processor. Beide optionalen Beispiele bauen.
+- Portable Checks: **117 Assertions, 5 Formatter-Fixtures, 24 Python-Tests**.
+  Externe Runtime-JARs müssen exakt den SHA256-Pins entsprechen; zusätzliche
+  Processor-/fremde JARs werden beim Staging abgewiesen.
+- `scripts/test-hoori-core.sh`: **Interpreter/Mixed bestanden**. Die generierten
+  DTO-Checks laufen zusätzlich jeweils mit GC-Stress und ohne JDK/Processor auf
+  dem Laufzeitpfad: Zahlstrings, Pflichtfelder, Typen, Duplikate, Überlauf,
+  Listenlimit, sichere `id`-/`ids[n]`-Fehler und unveränderte JSON-Ergebnisse.
+- `test_composition.py --facade`: **beide Engines bestanden**. Direkte RPCs und
+  Gateway liefern begrenzte Feldfehler. Ungültige Inputs erreichen keinen Handler
+  und starten keinen Fan-out. Defekte Validatoren bleiben 500, Fehler eines inneren
+  Calls bleiben außen 502. Task-Fassade, Budgets, Cancellation und Drain bestehen.
+- `test_data.py`: **beide Engines bestanden**, mit echtem PostgreSQL und den zum
+  Pin passenden Original-Fault-Peers. Ungültige Draft-IDs starten weder Remote-
+  Reads noch DB-Acquisition. Commit/Rollback/UNKNOWN, Cancel und Recovery bestehen.
+- `scripts/smoke.py`: **beide Engines bestanden**. Die Container führen echte
+  Hoori-Services ohne JDK/Maven aus; Rolling Updates, Registry-Ausfall, Sättigung,
+  Katalogwechsel, Recovery und SIGTERM-Drain bestehen.
+- Receipt-SHA256: `0d5421b2a679ec5c420a71484edc76e62831822f87df95b7fc8b85f33e753d4c`.
+  Pin, Runtime-/App-JAR-Hashes und Check-Nachweise:
+  [DTO-Abnahme](validation/annotated-dtos.json).
+
+Das ist ein begrenztes DTO-Profil und eine lokale Consumer-Abnahme. Die folgenden
+Tasks-v2-Nachweise und Performance-Messungen stammen vom früheren Pin `7d7245a`;
+sie wurden durch dieses Upgrade nicht pauschal neu qualifiziert. Insbesondere
+wurden `test-task-runtime.sh`, `test_admission.py`, `test_budgets.py`, `test_control.py`,
+`test_tasks.py` und die Performance-Benchmarks für diesen Pin nicht separat wiederholt.
 
 ## Tasks-v2-Grundlage (#19)
 

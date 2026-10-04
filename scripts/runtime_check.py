@@ -26,6 +26,19 @@ def maven_repository(directory: Path) -> Path:
     return ROOT / ".cache/m2" / identity
 
 
+def external_jars(directory: Path, lock: dict | None = None) -> list[Path]:
+    lock = lock or json.loads((ROOT / "hoori.lock.json").read_text())
+    expected = lock.get("runtimeDependencies", {})
+    actual = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in directory.glob("*.jar")}
+    if actual != expected:
+        raise ValueError("Validation runtime dependencies differ from hoori.lock.json")
+    return [directory / name for name in sorted(expected)]
+
+
+def runtime_classpath(directory: Path, receipt: dict, lock: dict | None = None) -> list[Path]:
+    return [directory / jar for jar in runtime_jars(receipt, lock)] + external_jars(directory.parent / "dependencies", lock)
+
+
 def verify(directory: Path, lock: dict | None = None) -> dict:
     directory = directory.resolve(strict=True)
     lock = lock or json.loads((ROOT / "hoori.lock.json").read_text())
@@ -130,7 +143,7 @@ def main() -> int:
         directory = Path(sys.argv[1]).resolve(strict=True)
         receipt = verify(directory)
         if sys.argv[-1] == "--classpath":
-            print(":".join(str(directory / jar) for jar in runtime_jars(receipt)))
+            print(":".join(map(str, runtime_classpath(directory, receipt))))
         elif sys.argv[-1] == "--install":
             print(install(directory, receipt))
         else:

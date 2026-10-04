@@ -15,7 +15,7 @@ Dispatcher und der veröffentlichte Katalog:
 
 ```java
 Service recipes = Service.named("recipes").version(1)
-        .action(Recipes.GET, (ctx, input) -> repository.get(input.id))
+        .action(Recipes.GET, (ctx, input) -> repository.get(input.id()))
         .http("get", "GET", "/recipes/{id}").requirePermission("get", "recipes:read");
 ```
 
@@ -24,7 +24,7 @@ keinen Host und keine Instanz:
 
 ```java
 Service shopping = Service.named("shopping").dependsOn("recipes", 1)
-        .action("meal", GetRecipe.CODEC, RecipeCodec.INSTANCE,
+        .action("meal", GetRecipeJsonCodec.INSTANCE, RecipeJsonCodec.INSTANCE, DemoValidation.GET_RECIPE,
                 (ctx, input) -> ctx.call(Recipes.GET, input));        // typisiert
 // generisch, ohne Vertragsklasse:  ctx.call("recipes.get", Map.of("id", 1))
 ```
@@ -47,11 +47,64 @@ Service shopping = Service.named("shopping").dependsOn("recipes", 1)
 Details und Grenzen: [Architektur](docs/architecture.md),
 [Konfiguration](docs/configuration.md), geplanter [Security-Ablauf](docs/security.md).
 
+## DTOs mit Annotationen
+
+```java
+@GenerateJsonCodec
+@Valid
+public record GetRecipe(@JsonNumber(allowString = true) @Positive long id) {}
+```
+
+`@GenerateJsonCodec` und `@JsonNumber` kommen aus `hoori.rest.codegen`, `@Valid`
+und `@Positive` aus Jakarta Validation. Der originale Hoori-Processor erzeugt
+`GetRecipeJsonCodec`; Avaje erzeugt `GetRecipeValidationAdapter` beim Kompilieren.
+Die Verdrahtung erfolgt einmal beim Start, wie in
+[DemoValidation](examples/demo-contracts/src/main/java/dev/hoori/micro/demo/DemoValidation.java):
+
+```java
+Locale.setDefault(Locale.ENGLISH);
+var validators = Validators.builder()
+        .record(GetRecipe.class, GetRecipeValidationAdapter::new).build();
+var input = validators.forType(GetRecipe.class, ValidationLimits.DEFAULT);
+var get = new Action<>("recipes.get", GetRecipeJsonCodec.INSTANCE, RecipeJsonCodec.INSTANCE, input);
+Service recipes = Service.named("recipes").action(get, (ctx, query) -> repository.get(query.id()));
+```
+
+Der Anbieter decodiert und validiert **vor dem Handler**, auch bei internen Calls.
+`new GetRecipe(0)` allein validiert nichts. Ohne Validator bleibt der bisherige
+Codec-Vertrag möglich. Normale REST-Routen verwenden `ValidatedBody.handle(...)`;
+das [Fassadenbeispiel](examples/task-facade/src/main/java/dev/hoori/micro/facade/FacadeMain.java)
+zeigt die originale SDK-Anbindung.
+
+Fehlende Pflichtfelder, falsche JSON-Typen und übergroße Listen scheitern im Codec.
+`@JsonList(max = 16)` begrenzt bereits das Einlesen; `@NotNull`, `@Positive` und
+`@Size` prüfen danach die Werte. Zahlstrings sind nur mit `@JsonNumber` zulässig.
+Über das Gateway liefert `/recipes/0` HTTP 400:
+
+```json
+{"code":"validation_failed","violations":[{"path":"id","code":"positive"}]}
+```
+
+Broker-Aufrufer können `ServiceCallException.action()` und `violations()` auswerten.
+Das Gateway übernimmt nur das geprüfte, begrenzte Schema ohne Werte oder Meldungen.
+Fehler eines nachgelagerten Calls werden nicht automatisch dem äußeren Input
+zugeordnet; unerwartete Validatorfehler bleiben 500, sonstige Upstream-Fehler 502.
+
+Unterstützt ist das begrenzte Hoori-Profil: öffentliche Records, `@NotNull`,
+`@NotBlank`, `@Size`, `@Positive`, `@Min`, `@Max`, verschachteltes `@Valid` und
+Listenelemente. Weitere DTOs werden ausdrücklich registriert; der Profile-Processor
+weist nicht unterstützte Constraints beim Build ab. Die Processor-Konfiguration
+steht im [Demo-POM](examples/demo-contracts/pom.xml), ohne Laufzeitsuche nach DTOs.
+Die beiden bestehenden Array-Antworten (`Recipes.LIST`, `Pantry.ITEMS`) behalten ihre
+kleinen begrenzten Codecs, damit ihr JSON-Format erhalten bleibt. Resultat-Invarianten
+von `Recipe` und `Overview` bleiben in den Record-Konstruktoren.
+
 ## Was enthalten ist
 
 | Bereich | Implementiert |
 |---|---|
 | Service-Lifecycle | Expliziter Bootstrap, Live-/Ready-Zustände, Signal-Polling, geordneter Shutdown mit Deregistrierung |
+| DTOs | Generierte Record-Codecs, explizite Avaje-Validatoren und begrenzte Feldfehler über RPC/Gateway |
 | Actions | `Service`-Definition, typisierte `Action`-Verträge, generische Aufrufe (`JsonTree`), ein fester Invoke-Endpunkt |
 | Registry | Zentrale In-Memory-Registry mit TTL, Heartbeats, Wiederanmeldung nach Neustart, `complete`-Markierung |
 | Broker | Abhängigkeitsspezifischer Katalog ohne Gateway-Metadaten, Auswahl pro Action/Hauptversion, direkte Aufrufe, begrenztes Katalogalter |
@@ -72,7 +125,7 @@ JDBC-/Jdbi-Transaktionen mit eigener Demo-Datenbank; der HTTP-Kern bleibt DB-fre
 ### 1. Passende Hoori-Distribution bauen
 
 Der Bootstrap ist an Hoori-Commit
-`7d7245aa782ba6f79c47397f008789f13552a4c5` gebunden. Das verhindert, dass unterschiedliche
+`6f581305baa31f75b6ffdf8214f527b966ac66d1` gebunden. Das verhindert, dass unterschiedliche
 Quellstände trotz unveränderter SDK-Version `0.1.0` vermischt werden.
 `hoori.lock.json` enthält diese Baseline.
 
@@ -85,7 +138,7 @@ Worktree vermeidet Änderungen am eigenen Arbeitsstand:
 
 ```bash
 # Einen noch nicht vorhandenen Zielpfad wählen.
-git worktree add --detach ../hoori-micro-runtime 7d7245aa782ba6f79c47397f008789f13552a4c5
+git worktree add --detach ../hoori-micro-runtime 6f581305baa31f75b6ffdf8214f527b966ac66d1
 cd ../hoori-micro-runtime
 
 export JAVA_HOME=/pfad/zum/jdk-21
@@ -124,13 +177,19 @@ docker compose down
 ```
 
 `build.sh` überprüft Runtime-Prüfsummen, Revision, SDK-Koordinaten und Original-POMs,
-installiert Guest Base sowie HTTP, REST, Concurrent und Concurrent HTTP in
+installiert Guest Base sowie die gewählten SDKs und Build-Processor in
 `.cache/m2/<SHA256-der-Distribution>`, führt `mvn clean verify` aus und erzeugt
-`.docker-context/`. Dieser Build-Kontext enthält nur Runtime, Anwendungs-JARs und
+`.docker-context/`. Dieser Build-Kontext enthält Runtime, Anwendungs-JARs, geprüfte Validation-Abhängigkeiten und
 Docker-Dateien, keinen privaten Checkout und keine GitHub-Zugangsdaten.
 Die SDKs werden mit ihren ausgelieferten POMs installiert; Guest Base hat upstream
 keinen POM und verwendet dessen dokumentierte `install-file`-Konvention.
 `runtimeSdks` in `hoori.lock.json` bestimmt Prüfung, Installation und Klassenpfad.
+Validation-/REST-Validation-SDKs gehören dazu; `buildSdks` lädt zusätzlich die
+JSON-/Validation-Processor nur für den Build. Die sechs originalen Runtime-JARs
+von Avaje 2.18/Jakarta Validation 3.1.1 samt transitiven Abhängigkeiten werden
+mit den SHA256-Pins in `runtimeDependencies` geprüft und separat kopiert.
+Die Demo setzt eine feste Locale und benötigt `--allow-resource-read` für
+Provider-Ressourcen; die Launcher setzen diese Capability.
 Das originale Distributionspaket bleibt vollständig und prüfbar; seine übrigen
 SDKs einschließlich DB-Adaptern und Processor liegen außerhalb des Klassenpfads.
 Ein HTTP-Service benötigt weder Datenbankbibliotheken noch einen Laufzeit-Processor.
@@ -194,7 +253,7 @@ public static void main(String[] args) throws Exception {
 
 Action-Fehler mit fachlicher Bedeutung als `RequestException(status, öffentlicheMeldung)`
 werfen; Aufrufer sehen den Status über `ServiceCallException.upstreamStatus()`, nie den
-Body. Aus einer normalen Route heraus ruft `app.context().call(...)` andere
+rohen Body; bekannte Feldfehler stehen separat in `violations()`. Aus einer normalen Route heraus ruft `app.context().call(...)` andere
 Actions auf. Jede Fachroute besitzt automatisch eine verwaltete Request-Operation. Kein eingehender Authorization-/Cookie-Header wird weitergegeben.
 
 `ctx.call(...)` führt direkt aus. `ctx.task(...)` erzeugt einen normalen, noch nicht
@@ -269,7 +328,7 @@ Der Check läuft auch bei `mvn verify` und damit in `scripts/build.sh`.
 
 ```text
 framework/                  hoori.micro: Service, Broker, Registry, Gateway
-examples/demo-contracts/    Typisierte Demo-Actions (Recipes.GET) und Codecs
+examples/demo-contracts/    Annotierte Records, generierte Codecs und typisierte Actions
 examples/recipes-service/  Rein lesender Recipe-Anbieter
 examples/pantry-service/   Unabhängiger lesender Pantry-Anbieter
 examples/shopping-service/ Direkter Call, typisiertes Overview, Dashboard, Batch/Bulk

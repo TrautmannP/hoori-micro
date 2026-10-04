@@ -14,7 +14,7 @@ import sys
 import time
 
 from optional_example import classpath, configuration
-from runtime_check import ROOT, runtime_jars, verify
+from runtime_check import ROOT, runtime_classpath, verify
 from stage import jar
 
 
@@ -50,7 +50,7 @@ def main():
     data_cp += [ROOT / "examples/local-data/target/test-classes"]
     core_cp = [jar("framework", "hoori-micro"), jar("examples/demo-contracts", "hoori-micro-demo-contracts")]
     core_cp += [jar(f"examples/{role}-service", role + "-service") for role in ("recipes", "pantry", "shopping")]
-    core_cp += [ROOT / "examples/shopping-service/target/test-classes", *[runtime / p for p in runtime_jars(receipt)]]
+    core_cp += [ROOT / "examples/shopping-service/target/test-classes", *runtime_classpath(runtime, receipt)]
     evidence = {"runtime": receipt["source"], "engine": engine, "classpath_sha256": hashes,
                 "fixtures_sha256": fixture_hashes, "postgres_image": IMAGE, "checks": [], "recovery": []}
     evidence["probe_sha256"] = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in
@@ -144,10 +144,19 @@ def main():
                 logs[role] = log
                 processes[role] = subprocess.Popen([str(runtime / "bin/hoori"), "run", "--engine", engine, "--live-output",
                     "--graceful-signals", "--max-heap-bytes", "33554432", "--allow-environment-read", "--allow-network-listen",
-                    "--allow-network-connect", *(config["capabilities"] if role == "data" else []),
+                    "--allow-network-connect", *(config["capabilities"] if role == "data" else ["--allow-resource-read"]),
                     "--class-path", ":".join(map(str, cp)), main], env=runtime_env, stdout=log, stderr=log)
                 until(lambda: request(role, "/health/ready")[0] == 200, role + " ready")
             until(lambda: request("data", "/discovery")[0] == 200, "read-only discovery readiness")
+            opened = probe()["opened"]
+            remote_calls = {role: probe(role)["calls"] for role in ("recipes", "pantry")}
+            for action in ("save", "save-scoped"):
+                status, raw = invoke(0, action, recipe=0)
+                assert status == 400 and json.loads(raw) == {"code": "validation_failed", "violations": [
+                    {"path": "id", "code": "positive"}, {"path": "recipeId", "code": "positive"}]}, (status, raw)
+            assert probe()["opened"] == opened and rows(0) == "0|0"
+            assert all(probe(role)["calls"] == remote_calls[role] for role in remote_calls)
+            evidence["checks"].append("generated Draft validation rejects both IDs before remote reads and local DB acquisition")
             assert invoke(1)[0] == 200 and rows(1) == "1|1"
             assert invoke(3, "save-scoped")[0] == 200 and rows(3) == "1|1"
             assert invoke(3, "save-scoped")[0] == 500 and rows(3) == "1|1", "Generated boundary must roll back a SQL constraint failure"

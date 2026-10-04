@@ -22,8 +22,10 @@ Actions sind Lambdas an einer expliziten `Service`-Definition.
 
 Das optionale [Fassadenbeispiel](../examples/task-facade/README.md) verwendet den
 upstream Buildzeit-Processor. Generierte Task-/Scoped-Delegates sind normale
-Anwendungsklassen und werden ausdrücklich konstruiert. Der HTTP-Reaktor und sein
-Runtime-Classpath bleiben ohne Annotationen/Processor.
+Anwendungsklassen und werden ausdrücklich konstruiert. JSON-Codecs und DTO-Validatoren
+werden ebenfalls beim Build generiert. Kein Processor und keine Hoori-Codegen-
+Annotation liegt im Laufzeit-Classpath; die originalen Avaje-/Jakarta-APIs sind
+Runtime-Abhängigkeiten der expliziten Validierungsgrenze.
 
 Der optionale [Daten-Consumer](../examples/local-data/README.md) bezieht Transaction,
 JDBC und Jdbi ebenfalls als originale SDKs. Ein beim Start konstruierter Manager
@@ -129,15 +131,24 @@ Headern statt in einem JSON-Umschlag, damit der Eingabe-Codec den Body direkt un
 ohne zweites Parsen liest. Antwort: 200 mit JSON-Ergebnis oder ein Fehlerstatus.
 Fachliche Fehler wirft eine Action als `RequestException(status, meldung)`.
 
-Typisierte Verträge (`Action<I, O>`) enthalten nur Name und Codecs. Generische Aufrufe
+Typisierte Verträge (`Action<I, O>`) enthalten Name, Codecs und optional einen
+wiederverwendbaren `DtoValidator<I>`. Generische Aufrufe
 verwenden `Map` und `JsonTree` (Map, List, String, Long, Double, Boolean, null).
 Provider registrieren denselben Vertrag mit `action(contract, handler)`; fremde
 Service-Namen werden beim Start abgewiesen. `http(actionName, method, path)` und
 `requirePermission(actionName, permission)` binden Metadaten ausdrücklich an die
 Action. Das optionale Buildzeit-Fassadenbeispiel verwendet den upstream Processor;
-der Core benötigt keine Annotationen oder generierten Klassen.
+der Framework-Build benötigt keinen Processor. DTO-Consumer konfigurieren die
+JSON-/Validation-Processor ausdrücklich.
 Ergebnisse müssen 2xx mit `application/json` (optional `charset=utf-8`) sein; sonst
-`ServiceCallException` mit Status, aber ohne Upstream-Body.
+`ServiceCallException` mit Status, aber ohne rohen Upstream-Body. Der Anbieter führt
+`ValidatedBody` nach Admission/Decoding vor dem Handler in derselben Request-Operation
+aus. Bekannte Feldfehler ergeben HTTP 400 mit `validation_failed` und ausschließlich
+`path`/`code`. Der Broker akzeptiert nur dieses Schema: maximal 12288 Bytes, 32 Fehler,
+256 ASCII-Pfadzeichen und 32 Codezeichen. Unbekannte Felder oder malformed Bodies
+werden verworfen. `action()` bezeichnet das direkte Ziel; `violations()` ist unveränderlich.
+Ein Validierungsfehler aus einem inneren Call bleibt am äußeren Service eine 502.
+Unerwartete Validator-Ausnahmen sowie Cancellation/Deadline behalten ihre Zuordnung.
 
 **Gateway** (`hoori.micro.Gateway`): Eine Middleware, die für sonst unbekannte Pfade
 den vorbereiteten Routing-Snapshot anwendet. Veröffentlicht wird nur, was der Anbieter mit
@@ -147,7 +158,8 @@ begrenzt. Konflikte (gleiche Methode, überlappende Templates gleicher Spezifit�
 verschiedene Actions) werden im Service beim Start abgewiesen und im Gateway für alle
 Beteiligten zurückgehalten. Pfadparameter werden als JSON-Strings übergeben und mit
 einem optionalen JSON-Objekt-Body zusammengeführt; Query-Parameter nicht.
-Client-Fehler des Anbieters behalten ihren Status, nie ihren Body. Abweichende
+Client-Fehler des Anbieters behalten ihren Status; ausschließlich geprüfte
+Validierungsfehler werden als neues begrenztes JSON ausgegeben. Abweichende
 Route/Permission derselben Action und Hauptversion während eines Rolling Updates
 werden ebenfalls zurückgehalten.
 

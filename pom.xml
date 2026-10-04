@@ -22,6 +22,7 @@
     <hoori.formatter.path>${maven.multiModuleProjectDirectory}/scripts/BlankLines.java</hoori.formatter.path>
     <hoori.sdk.version>0.1.0</hoori.sdk.version>
     <hoori.guest.version>0.4.0</hoori.guest.version>
+    <avaje.validator.version>2.18</avaje.validator.version>
     <junit.version>5.11.4</junit.version>
   </properties>
   <dependencyManagement>
@@ -30,6 +31,8 @@
       <dependency><groupId>dev.hoori</groupId><artifactId>hoori-rest-api</artifactId><version>${hoori.sdk.version}</version></dependency>
       <dependency><groupId>dev.hoori</groupId><artifactId>hoori-concurrent-api</artifactId><version>${hoori.sdk.version}</version></dependency>
       <dependency><groupId>dev.hoori</groupId><artifactId>hoori-concurrent-http-api</artifactId><version>${hoori.sdk.version}</version></dependency>
+      <dependency><groupId>dev.hoori</groupId><artifactId>hoori-rest-validation-api</artifactId><version>${hoori.sdk.version}</version></dependency>
+      <dependency><groupId>dev.hoori</groupId><artifactId>hoori-rest-annotations</artifactId><version>${hoori.sdk.version}</version></dependency>
       <dependency><groupId>dev.hoori</groupId><artifactId>hoori-micro</artifactId><version>${project.version}</version></dependency>
       <dependency><groupId>dev.hoori</groupId><artifactId>hoori-micro-demo-contracts</artifactId><version>${project.version}</version></dependency>
     </dependencies>

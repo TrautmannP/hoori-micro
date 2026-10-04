@@ -199,7 +199,13 @@ final class ServiceBroker {
         }
 
         if (response.status < 200 || response.status >= 300)
-            throw new ServiceCallException(service, response.status, "unexpected HTTP status", null);
+            throw new ServiceCallException(
+                    service,
+                    response.status,
+                    "unexpected HTTP status",
+                    null,
+                    service + "." + action,
+                    ValidationErrors.read(response));
 
         if (!jsonContentType(response.headers))
             throw new ServiceCallException(service, response.status, "expected application/json", null);
@@ -460,7 +466,7 @@ final class ServiceBroker {
         }
     }
 
-    private static boolean jsonContentType(Headers headers) {
+    static boolean jsonContentType(Headers headers) {
         String type = null;
         for (int i = 0; i < headers.size(); i++) {
             if (headers.name(i).equalsIgnoreCase("Content-Type")) {

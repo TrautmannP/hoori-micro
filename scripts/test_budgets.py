@@ -14,7 +14,7 @@ import subprocess
 import threading
 import time
 
-from runtime_check import ROOT, runtime_jars, verify
+from runtime_check import ROOT, runtime_classpath, verify
 
 
 def main():
@@ -166,7 +166,7 @@ def main():
         env = os.environ.copy()
         engine = env.get("HOORI_ENGINE", "mixed")
         cp = ":".join([str(ROOT / "framework/target/test-classes"), str(ROOT / "framework/target/classes")]
-                      + [str(runtime / jar) for jar in runtime_jars(receipt)])
+                      + list(map(str, runtime_classpath(runtime, receipt))))
         command = [str(runtime / "bin/hoori"), "run", "--engine", engine, "--live-output", "--graceful-signals",
                    "--max-heap-bytes", "33554432", "--allow-environment-read", "--allow-network-listen",
                    "--allow-network-connect", "--class-path", cp, "hoori/micro/BudgetMain"]

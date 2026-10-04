@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import subprocess
 
-from runtime_check import ROOT, install, runtime_jars, verify
+from runtime_check import ROOT, install, runtime_classpath, verify
 from stage import jar
 
 
@@ -14,15 +14,17 @@ def configuration(name):
     config = json.loads((ROOT / "examples" / name / "example.json").read_text())
     lock = json.loads((ROOT / "hoori.lock.json").read_text())
     lock["runtimeSdks"] += config["runtimeSdks"]
-    lock["buildSdks"] = config["buildSdks"]
-    lock["externalDependencies"] = config.get("externalDependencies", [])
+    lock["buildSdks"] += config["buildSdks"]
+    lock["externalDependencies"] += config.get("externalDependencies", [])
+    config["capabilities"] = list(dict.fromkeys(["--allow-resource-read", *config.get("capabilities", [])]))
     return config, lock
 
 
 def classpath(name, runtime, receipt, lock):
     return [jar("framework", "hoori-micro"), jar("examples/demo-contracts", "hoori-micro-demo-contracts"),
-            jar("examples/" + name, name), *[runtime / p for p in runtime_jars(receipt, lock)],
-            *sorted((ROOT / "examples" / name / "target/lib").glob("*.jar"))]
+            jar("examples/" + name, name), *runtime_classpath(runtime, receipt, lock),
+            *sorted(p for p in (ROOT / "examples" / name / "target/lib").glob("*.jar")
+                    if p.name not in lock["runtimeDependencies"])]
 
 
 def main():

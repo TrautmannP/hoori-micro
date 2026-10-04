@@ -23,8 +23,11 @@ Direkte Aufrufe und Selbstaufrufe des ursprünglichen Delegates bleiben gewöhnl
 Java-Aufrufe. Es gibt keine automatische Interception oder Instanzsuche.
 
 Erzeugte Klassen stehen in `target/generated-sources/annotations` und im App-JAR.
-Annotationen/Processor bleiben auf dem Build-/Compilepfad. Zum Ausführen werden
-nur das App-JAR, Micro, Verträge und die vier SDKs samt Guest Base geladen.
+Task-/JSON-Codegen-Annotationen und Processor bleiben auf dem Build-/Compilepfad.
+Der Runtime-Pfad enthält App, Micro, Verträge, Guest Base und die ausgewählten SDKs
+samt geprüften Avaje-/Jakarta-Abhängigkeiten aus dem Root-Lock.
+Die REST-Grenze validiert `GetRecipe` mit `ValidatedBody` vor der Task-Fassade;
+`id: 0` liefert einen begrenzten HTTP-400-Feldfehler.
 `HOORI_ENGINE=interpreter` wählt die andere Engine; die Port-/Registry-Variablen
 aus der allgemeinen Konfiguration gelten ebenfalls.
 

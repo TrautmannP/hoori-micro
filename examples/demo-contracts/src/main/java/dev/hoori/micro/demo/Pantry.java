@@ -38,5 +38,5 @@ public final class Pantry {
         }
     };
     public static final Action<GetRecipe, List<String>> FOR_RECIPE =
-            new Action<>("pantry.items", GetRecipe.CODEC, ITEMS);
+            new Action<>("pantry.items", GetRecipeJsonCodec.INSTANCE, ITEMS, DemoValidation.GET_RECIPE);
 }

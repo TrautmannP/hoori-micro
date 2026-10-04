@@ -1,11 +1,11 @@
 # Quellstand und Quellen
 
-Inspektion: 3. Oktober 2026 per `gh` und gegen den sauberen lokalen Checkout.
+Inspektion: 4. Oktober 2026 per `gh` und gegen den sauberen lokalen Checkout.
 Repository: `TrautmannP/hoori` (privat).
-Gepinnter Commit: `7d7245aa782ba6f79c47397f008789f13552a4c5`.
+Gepinnter Commit: `6f581305baa31f75b6ffdf8214f527b966ac66d1`.
 
 Wesentliche Quellen (HTTP-/REST-Grundlagen aus der bisherigen Baseline,
-Tasks-, optionale Daten- und Distributionsverträge für #19–#28 direkt geprüft):
+Tasks-, DTO-, optionale Daten- und Distributionsverträge direkt geprüft):
 
 - `sdk/hoori-http-api/README.md`, `HttpClient.java`, `HttpServer.java`, `Limits.java`,
   `Headers.java`, `Request.java`, `RequestBudget.java`, `Response.java`: URI-Pooling/DNS/HTTPS,
@@ -13,6 +13,10 @@ Tasks-, optionale Daten- und Distributionsverträge für #19–#28 direkt geprü
 - `sdk/hoori-rest-api/README.md`, `pom.xml`, `Router.java`, `Attribute.java`,
   `json/Json.java`, `JsonReader.java`, `JsonWriter.java`, `JsonLimits.java`:
   explizite Routen, Fehler und Codec-Schnittstellen.
+- `sdk/hoori-rest-{annotations,processor}`, `sdk/hoori-validation-{api,processor}`,
+  `sdk/hoori-rest-validation-api`, `examples/hello-rest-validation` und
+  `scripts/validation_test.py`: originale Record-Codecs, Avaje 2.18/Jakarta 3.1.1,
+  explizite Adapter, unterstütztes Profil, Fehlerformat und Provider-JAR-Prüfsummen.
 - `examples/hello-rest/README.md`: unabhängige Consumer, CLI-Argumente,
   operative Lifecycle-Nutzung und Cold-Compilation-Hinweise.
 - `scripts/build-distribution.sh`, `scripts/build-bundle.sh`:
@@ -30,7 +34,7 @@ Tasks-, optionale Daten- und Distributionsverträge für #19–#28 direkt geprü
 - `crates/hoori-cli/src/main.rs`: `build-info`, insbesondere Feature-Liste als JSON-Array.
 
 Pfadpräfix für die Repository-Quellen:
-`https://github.com/TrautmannP/hoori/blob/7d7245aa782ba6f79c47397f008789f13552a4c5/`
+`https://github.com/TrautmannP/hoori/blob/6f581305baa31f75b6ffdf8214f527b966ac66d1/`
 
 Öffentliche Primärquellen:
 

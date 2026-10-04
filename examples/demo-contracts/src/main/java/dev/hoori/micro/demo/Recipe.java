@@ -1,12 +1,13 @@
 package dev.hoori.micro.demo;
 
-/** Wire DTO only; never a shared domain entity or persistence model. */
-public final class Recipe {
-    public final long id;
-    public final String title;
+import hoori.rest.codegen.GenerateJsonCodec;
+import hoori.rest.json.JsonException;
 
-    public Recipe(long id, String title) {
-        this.id = id;
-        this.title = title;
+/** Wire result with the same invariants as the previous response codec. */
+@GenerateJsonCodec
+public record Recipe(long id, String title) {
+    public Recipe {
+        if (id < 1 || title == null || title.isEmpty() || title.length() > 200)
+            throw new JsonException("Invalid recipe");
     }
 }

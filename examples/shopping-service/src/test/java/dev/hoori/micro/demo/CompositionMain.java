@@ -24,7 +24,46 @@ public final class CompositionMain {
             case "shopping" -> ShoppingMain.definition();
             default -> throw new IllegalArgumentException("Unknown demo role");
         };
+        int[] validationCalls = {0};
+
+        if (role.equals("shopping")) {
+            definition
+                    .action(
+                            "validated",
+                            GetRecipeJsonCodec.INSTANCE,
+                            JsonTree.CODEC,
+                            DemoValidation.GET_RECIPE,
+                            (ctx, input) -> {
+                                validationCalls[0]++;
+
+                                return Map.of("id", input.id());
+                            })
+                    .http("POST", "/validation")
+                    .requirePermission("shopping:read")
+                    .action(
+                            "downstream-invalid",
+                            JsonTree.CODEC,
+                            RecipeJsonCodec.INSTANCE,
+                            (ctx, input) -> ctx.call(Recipes.GET, new GetRecipe(0)))
+                    .http("POST", "/downstream-invalid")
+                    .requirePermission("shopping:read");
+            var broken = hoori.validation.Validators.builder()
+                    .record(GetRecipe.class, GetRecipeValidationAdapter::new)
+                    .rule(GetRecipe.class, "id", "demo_rule", input -> {
+                        throw new IllegalStateException("PRIVATE rule failure");
+                    })
+                    .build()
+                    .forType(GetRecipe.class, hoori.validation.ValidationLimits.DEFAULT);
+            definition.action("broken-validator", GetRecipeJsonCodec.INSTANCE, JsonTree.CODEC, broken, (ctx, input) -> {
+                validationCalls[0]++;
+
+                return Map.of();
+            });
+        }
+
         try (Microservice app = Microservice.create(definition)) {
+            app.routes().get("/validation-calls", request -> Responses.json(200, validationCalls[0], JsonTree.CODEC));
+
             if (!role.equals("shopping"))
                 app.routes().use((request, next) -> {
                     if (!request.routeTemplate().equals("/_hoori/invoke")) return next.handle(request);
@@ -94,7 +133,7 @@ public final class CompositionMain {
                                 request -> Responses.json(
                                         200,
                                         ShoppingMain.overview(app.context(), new GetRecipe(1)),
-                                        Overview.CODEC,
+                                        OverviewJsonCodec.INSTANCE,
                                         app.jsonLimits()));
 
             app.run();
