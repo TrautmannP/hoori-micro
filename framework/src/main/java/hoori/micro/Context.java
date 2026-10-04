@@ -38,23 +38,20 @@ public final class Context {
     }
 
     RequestBudget effectiveBudget() throws IOException {
-        check();
-        RequestBudget request = RequestBudget.until(invocation().deadlineNanos);
-        Budget work = budget();
-
-        if (work.isFinite()) request = request.limitedTo(RequestBudget.until(work.deadlineNanos()));
-
-        return request.limitedToMillis(broker.callTimeoutMillis());
-    }
-
-    void check() throws IOException {
-        invocation();
+        Invocation current = invocation();
         Cancellation.checkpoint();
 
         if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("Request cancelled");
 
-        if (RequestBudget.until(invocation().deadlineNanos).isExpired())
-            throw new SocketTimeoutException("Request budget expired");
+        RequestBudget request = RequestBudget.until(current.deadlineNanos);
+
+        if (request.isExpired()) throw new SocketTimeoutException("Request budget expired");
+
+        Budget work = Budget.current();
+
+        if (work.isFinite()) request = request.limitedTo(RequestBudget.until(work.deadlineNanos()));
+
+        return request.limitedToMillis(broker.callTimeoutMillis());
     }
 
     /** Only known provider endpoints accept a relative wire budget. Gateways ignore it. */
