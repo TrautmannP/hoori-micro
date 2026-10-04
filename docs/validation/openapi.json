@@ -1,0 +1,237 @@
+{
+  "schema": 1,
+  "date": "2026-10-04",
+  "scope": "Local functional acceptance of API-first OpenAPI JSON contracts, protocol 4 and gateway publication",
+  "application_code_commit": "e966ce513e1865d85f5c5531e4d30eeb64ff79ab",
+  "runtime": {
+    "source": {
+      "dirty": false,
+      "revision": "83d2b8fc83ffee6ed7c748409ff7b4802d8a341b"
+    },
+    "build": {
+      "features": [],
+      "profile": "release",
+      "revision": "83d2b8fc83ffee6ed7c748409ff7b4802d8a341b",
+      "target": "x86_64-unknown-linux-gnu",
+      "version": "0.1.0"
+    },
+    "toolchain": {
+      "javac": "javac 21.0.12.1",
+      "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+    },
+    "distribution_sha256": "22bf09efdf15a85ddadac94325e402668070bb7be9a9452cb5521f7bff75cada",
+    "binary_sha256": "6e5ff53f1941b61867f5583d5cb123e1f44da0bce216a6eacec9c47bab7e4604"
+  },
+  "http_runtime_classpath_sha256": {
+    "hoori-guest-base-0.4.0.jar": "ce843f845da7d12d321353ebea270815781d3b9fa964ca5f6e0ce3c34c232b28",
+    "hoori-http-api-0.1.0.jar": "d019b6cafbbc94eea0eca6d6b314aae1fb9a2697062f0e87510a00ea69ece660",
+    "hoori-rest-api-0.1.0.jar": "9b744a80bbf8c76c74c0faf980d153cd9bc0a8a1c49f75ba971546e5e3e2e37d",
+    "hoori-concurrent-api-0.1.0.jar": "4ce30e3f77b9a6b5d893c06ff5c8e952f0e4b4b09bdd33be60741de84c95a30f",
+    "hoori-concurrent-http-api-0.1.0.jar": "09e91799117ec832c070ae4424519e3852cb7eadcdad6804647e06d4b989c94b",
+    "hoori-validation-api-0.1.0.jar": "5b9da87d5ef2df12aca331aeaa6d38beecd26a777131d72a59a729837addabdd",
+    "hoori-rest-validation-api-0.1.0.jar": "3df89d4a7441a6d28063768ddaa6af090dc20549a8da6f8e7a8dd28708daa58e",
+    "hoori-rest-mvc-api-0.1.0.jar": "f2917fec09a035b857f12f39f22eec0011eebebc502777534dc999520f212b5c",
+    "hoori-validation-avaje-0.1.0.jar": "fda2e1a5e708c3117a4df1f6634157f1aacde192a913cc8620a0c9783127e233",
+    "avaje-applog-1.2.jar": "d1aa0ba97c77ee4428e3feb23d62231cfd00e2771b3fe4b79e7393f854273353",
+    "avaje-validator-2.18.jar": "5e98fe4b6a9e1dff77eed90f95b0282645153b39f6a3b8b0a01b198f42143283",
+    "avaje-validator-http-plugin-2.18.jar": "e2daf73352bae03820eebcf6bbbda8203f6ccab00d7985d3ec2059ab0427c457",
+    "avaje-validator-inject-plugin-2.18.jar": "5e980fb0781981c6b64d06a028d5651728570b94e4def4326ecee71542571ab2",
+    "jakarta.validation-api-3.1.1.jar": "63ce00156388c365f3ac1be71fcfaf114682fc0c452020b5df6e7ec236e142ab",
+    "jspecify-1.0.1.jar": "070d75f261fe4c5b8202508366715f7f2d4660f88c8ef7e6d3575e48c9683b66"
+  },
+  "application_jars_sha256": {
+    "framework/target/hoori-micro-0.1.0-SNAPSHOT.jar": "9e984e64b35bc1f915756bafc8cb4b76c953de8990feb244c9d7b222a8cbc75b",
+    "processor/target/hoori-micro-processor-0.1.0-SNAPSHOT.jar": "d9530f3c0f8fbe54673e663633edcd224d8812cbcdb923c5f0e02991127bb1c3",
+    "examples/demo-contracts/target/hoori-micro-demo-contracts-0.1.0-SNAPSHOT.jar": "0fb07f64058079a2867df53416a5047126f2df6e1e5d0d4f26f3ea7e85f8c99d",
+    "examples/local-data/target/local-data-0.1.0-SNAPSHOT.jar": "cc51e86aa349a9298b2eceb392566f9d4fc1f6b3e2f22ca1de9c44c5795cea5e",
+    "examples/mvc-crud/target/mvc-crud-0.1.0-SNAPSHOT.jar": "e5821ff660f5341321251fe3eb6ea665f32a38e0913c1786e355d792030c0df5",
+    "examples/pantry-service/target/pantry-service-0.1.0-SNAPSHOT.jar": "14fdc87819f91ff1296870467dd5327ce1644de0e1378e4b2e4b6e2bba69bdd5",
+    "examples/recipes-service/target/recipes-service-0.1.0-SNAPSHOT.jar": "b31e1e4e7991022336cf96265429b75ad8275924e9f2f61a2904fccfff6b66a1",
+    "examples/shopping-service/target/shopping-service-0.1.0-SNAPSHOT.jar": "98f8b38f586e7478c6a947b515ccab18a1c2745af3ad966e188d8f6ee5735f90",
+    "examples/task-facade/target/task-facade-0.1.0-SNAPSHOT.jar": "db0a615bad740cac5e5dbce6d4b4aca2b380e28769aac631b9561ce31dc898f9"
+  },
+  "contracts": {
+    "local-data": {
+      "source": "examples/local-data/src/main/resources/openapi.json",
+      "canonical_sha256": "26649b4585cf53d59471ca06dcf4f8dcddd07d2ec005c332f13f96200823f4e0",
+      "operations": 1
+    },
+    "mvc-crud": {
+      "source": "examples/mvc-crud/src/main/resources/openapi.json",
+      "canonical_sha256": "4e9a0fe27926a18df52b156ac900d4b192b268d7087fa58a7e8da5fad17554df",
+      "operations": 4
+    },
+    "pantry-service": {
+      "source": "examples/pantry-service/src/main/resources/openapi.json",
+      "canonical_sha256": "d6eb91f44bd60e4f571df0d33335e78ad3a63a45a42622e51e5834d895b4d5ed",
+      "operations": 1
+    },
+    "recipes-service": {
+      "source": "examples/recipes-service/src/main/resources/openapi.json",
+      "canonical_sha256": "a0152f9aba14bba920c4ddc46199a6c2cbd7ba0460d760eb01d5133bc21d6ca3",
+      "operations": 4
+    },
+    "shopping-service": {
+      "source": "examples/shopping-service/src/main/resources/openapi.json",
+      "canonical_sha256": "ec10de7c91a21f5ffc31540afa9e5e62f02e7462243d03da51d0d29f79d395e1",
+      "operations": 10
+    },
+    "task-facade": {
+      "source": "examples/task-facade/src/main/resources/openapi.json",
+      "canonical_sha256": "01a9ae9d50199d3d7a922001be459a10d5f8668c399edd3212dd48b8b795be54",
+      "operations": 1
+    }
+  },
+  "portable": {
+    "core_assertions": 117,
+    "formatter_fixtures": 5,
+    "python_tests": 24,
+    "maven_junit": {
+      "tests": 38,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "spotless": "passed"
+  },
+  "native_commands_with_HOORI_ENGINE": [
+    "scripts/test-hoori-core.sh",
+    "python3 scripts/test_http.py",
+    "python3 scripts/test_mvc.py --gc-stress",
+    "python3 scripts/test_composition.py --facade",
+    "python3 scripts/test_data.py --hoori-checkout <clean-pinned-checkout>",
+    "python3 scripts/smoke.py"
+  ],
+  "native": {
+    "mixed": {
+      "status": "passed",
+      "http": {
+        "complete": true,
+        "checks": [
+          "OpenAPI canonical artifact hashes, exact gateway publication, local references, hidden internal endpoints and local docs",
+          "direct/client/gateway CRUD: exact path/query UTF-8, 201/relative Location, typed result, void/204, public 404",
+          "bounded validation and media errors, unpublished route, 405/Allow, endpoint/version mismatch, external internal headers ignored",
+          "singleton clients use current request identity, no credentials, overview/dashboard and ordered batch/bulk",
+          "all generated applications and gateway drain cleanly on SIGTERM"
+        ]
+      },
+      "core_openapi_assertions": 23,
+      "mvc_gc_stress": "passed",
+      "composition_facade": "passed",
+      "postgres_recovery_cycles": 3,
+      "postgres_image": "postgres:18.6-alpine3.23@sha256:697c180dbf244d3ce4a8f4cbc0156cde840af055c1bf8b76aebe422a4822086f",
+      "docker": {
+        "complete": true,
+        "publication_operation_counts": [
+          15,
+          15,
+          16,
+          16,
+          11,
+          15,
+          16
+        ],
+        "checks": [
+          "missing real artifact: docs 503 while business and readiness stay available",
+          "rolling add/remove matches publication manifest",
+          "catalog expiry rejects stale docs; epoch recovery republishes",
+          "saturation, discovery and SIGTERM drain"
+        ]
+      }
+    },
+    "interpreter": {
+      "status": "passed",
+      "http": {
+        "complete": true,
+        "checks": [
+          "OpenAPI canonical artifact hashes, exact gateway publication, local references, hidden internal endpoints and local docs",
+          "direct/client/gateway CRUD: exact path/query UTF-8, 201/relative Location, typed result, void/204, public 404",
+          "bounded validation and media errors, unpublished route, 405/Allow, endpoint/version mismatch, external internal headers ignored",
+          "singleton clients use current request identity, no credentials, overview/dashboard and ordered batch/bulk",
+          "all generated applications and gateway drain cleanly on SIGTERM"
+        ]
+      },
+      "core_openapi_assertions": 23,
+      "mvc_gc_stress": "passed",
+      "composition_facade": "passed",
+      "postgres_recovery_cycles": 3,
+      "postgres_image": "postgres:18.6-alpine3.23@sha256:697c180dbf244d3ce4a8f4cbc0156cde840af055c1bf8b76aebe422a4822086f",
+      "docker": {
+        "complete": true,
+        "publication_operation_counts": [
+          15,
+          15,
+          16,
+          16,
+          11,
+          15,
+          16
+        ],
+        "checks": [
+          "missing real artifact: docs 503 while business and readiness stay available",
+          "rolling add/remove matches publication manifest",
+          "catalog expiry rejects stale docs; epoch recovery republishes",
+          "saturation, discovery and SIGTERM drain"
+        ]
+      }
+    }
+  },
+  "independent_build": {
+    "command": "python3 scripts/test_application_build.py",
+    "engines": [
+      "interpreter",
+      "mixed"
+    ],
+    "sources_removed": true,
+    "module_without_build_jdk": true
+  },
+  "qualification_notes": [
+    "Final Registry change only derives the rejection diagnostic from protocol 4 instead of the old literal 3.",
+    "After that diagnostic change, clean build, native core and real HTTP were rerun on the final framework JAR.",
+    "Docker, GC stress, composition, data and independent-build evidence precede that diagnostic-only change; their framework SHA256 was 22690dd397b4a6724ae655145dfe6ae1868e4a0b25e8f7a9703df3f7c313cb3a.",
+    "HTML reference verified over HTTP, without visual browser QA.",
+    "Finite OpenAPI JSON profile; no general JSON Schema, production, CI or performance acceptance."
+  ],
+  "not_rerun": [
+    "scripts/test_clients.py",
+    "scripts/test_admission.py",
+    "scripts/test_budgets.py",
+    "scripts/test_tasks.py",
+    "scripts/test_control.py",
+    "scripts/test-task-runtime.sh",
+    "historical performance matrices",
+    "CI"
+  ],
+  "evidence_sha256": {
+    ".cache/composition-facade-interpreter.json": "8ec0c603daa3e583cdfb533a2218e6cb372c02a23a7ada33e41898e19f22f3d6",
+    ".cache/composition-facade-mixed.json": "b072dcdcaac62c6a27a48bd21da948d2c84489aec492cb3b753751f50cb5e4f5",
+    ".cache/data-interpreter/results.json": "8261ebd223efb322af5c5718b4e388807b68a6867d3926dabea500715d3cd3ef",
+    ".cache/data-mixed/results.json": "963af74de12b00a932b0bda47c133e03077ecf259d47e0c7cfa0c3537f8afd20",
+    ".cache/hoori-micro-check-1022815.json": "05511040ca62aa25efbd32d2dd8908acf4c342c08b0924647427da35874d57f0",
+    ".cache/hoori-micro-check-987724.json": "848cc28ce684e3656733299fc184fb4011b8e692cc91818aa28195893510db03",
+    ".cache/http-interpreter.json": "819d5d650b6161630fef01d52ade17e1edf1f5c19040315d769dc4108dcd4a40",
+    ".cache/http-mixed.json": "41977cb1e65162a058b1f75b1fb9007ea4beef30a4bdae9cb29e34ee4f2cba47",
+    ".cache/mvc-independent-build.json": "bc3d5eea5a59ac73da72cc65f6fbf100dfa731c76a9928252fdf34e457d21201",
+    ".cache/mvc-interpreter-gc-1046156.json": "b2a17ee5caa6db7f16164b0e0000cefa55d9a4322906818e9e56cd18b39576c5",
+    ".cache/mvc-mixed-gc-1046154.json": "7c3be99e94045db343f1b970bd410d94566ac8e3b8a17cf7cfae8da4aaf2730b",
+    ".cache/openapi-build-final.log": "02ed91c7db85a6c3af8f93bbdb3a73a9894643fe720300893d93778bca735ef4",
+    ".cache/openapi-composition-interpreter.log": "12b6cfea4084dc20decf4781b8242f97aec322e553e6926e0c277f11bb81e4f6",
+    ".cache/openapi-composition-mixed.log": "2b5a78f375edd100275a71d4b44b320d0a7232017f8c3981fdf7a2dde73e9e98",
+    ".cache/openapi-core-final.log": "0d196b6ad6e4ffba4f37869220986c0b5b8836dfdb96e3c24cf37e07b0b76017",
+    ".cache/openapi-data-build.log": "aeb7611bdac14db6853f67e8d807bf41e165c62a20e0e0276c4f630948da66cd",
+    ".cache/openapi-data-interpreter.log": "7902cfad69b71e98f7906354d3e2e706691e84416efc57af74c003edc478f891",
+    ".cache/openapi-data-mixed.log": "7c2e1694e07b5fb48fbd8d5a0a8ad1b7233190a3b90ebdf7dd7a09a2890f2e72",
+    ".cache/openapi-facade-build.log": "0a0b690cfe5add428be10d43e26530584c61e548a8942682c0254ce4aa80364d",
+    ".cache/openapi-final-message-build.log": "d6695b391df47e91592ef451f3cc67ece478930c22eb54ff74a1550b7310a918",
+    ".cache/openapi-guest-interpreter.log": "3e1ea247178726452557c7c5fb58dc33c484716f1e0c88a7d738d0f4f5d5db9f",
+    ".cache/openapi-guest-mixed.log": "3e1ea247178726452557c7c5fb58dc33c484716f1e0c88a7d738d0f4f5d5db9f",
+    ".cache/openapi-http-interpreter.log": "486395a16e55becf15bd45928783a9ea1209f7df6ddd567e680122ee5a564222",
+    ".cache/openapi-http-mixed.log": "77bdead90f00f2ac8de323cfc554903ff6de49508b5a9c89e5f99882b98eb9c1",
+    ".cache/openapi-independent.log": "d0d0799a8fd2982ff59a4af901dc775c43e95ac94a39535df839554656cc0edc",
+    ".cache/openapi-mvc-interpreter.log": "b2a17ee5caa6db7f16164b0e0000cefa55d9a4322906818e9e56cd18b39576c5",
+    ".cache/openapi-mvc-mixed.log": "7c3be99e94045db343f1b970bd410d94566ac8e3b8a17cf7cfae8da4aaf2730b",
+    ".cache/openapi-python-final.log": "173fdf6f5dd1c888b67d7601bad26b9e30e03e16af1c4e2f8e7b3aa92c4c8cc2",
+    ".cache/openapi-smoke-interpreter.log": "3a98c3a9dece00079c8b8eab6d379c2e060fd6dbb33d2908c5c4f06aee39916d",
+    ".cache/openapi-smoke-mixed.log": "f2d5af8ec2ac0debb691ac91275d86d2c425c44f97b1e867d6ac25e8eb5e3967"
+  }
+}

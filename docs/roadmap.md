@@ -12,6 +12,11 @@ Die konkrete lokale Abnahme und ihre Grenzen stehen in [validation.md](validatio
 
 ## Offene Betriebsarbeit
 
+Die [OpenAPI-Grundlage](openapi.md) ergänzt serviceeigene Verträge, Build-/Baseline-
+Prüfung, hashgebundene Artefakte und konsistente Gateway-Publikationen. Die nächsten
+Schritte sind dort mit Abnahmekriterien beschrieben: YAML beim Build, feinere
+Kompatibilitätsregeln, weitere echte SDK-HTTP-Features und angebundene Security-Schemes.
+
 - [#8](https://github.com/TrautmannP/hoori-micro/issues/8): minimales Runtime-Image
   und qualifizierter Upgrade-Prozess.
 - [#10](https://github.com/TrautmannP/hoori-micro/issues/10): eigene Last-/Rolling-

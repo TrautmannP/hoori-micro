@@ -44,6 +44,8 @@ curl -fsS http://127.0.0.1:8084/drafts -H 'Content-Type: application/json' -d '{
 ```
 
 Für Gatewayzugriff zusätzlich `drafts:write` in dessen Demo-Permissions aufnehmen.
+Der öffentliche Vertrag liegt in `src/main/resources/openapi.json`; der normale
+Build prüft ihn und verpackt das hashgebundene Artefakt wie bei den HTTP-Beispielen.
 Das ist keine produktive Schreibautorisierung. Keine Dahemm-Datenmigration,
 Outbox-Zustellung oder Exactly-once-Zusage.
 

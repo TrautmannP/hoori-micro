@@ -24,8 +24,15 @@ konkreten Implementierung und Selbstaufrufe bleiben normale Java-Aufrufe.
 Es gibt keinen allgemeinen AOP-Container. Rückkehr wartet auf lokalen
 Child-/Ressourcenabschluss; ein Remote-Provider kann unabhängig weiterlaufen.
 
-Dieses Modul wird separat gebaut. Die Task-Processor bleiben auf dem Buildpfad,
-DB-Abhängigkeiten sind nicht enthalten. `test_composition.py --facade` prüft beide
+Dieses Modul wird separat gebaut. Die Task-Processor bleiben auf dem Buildpfad;
+DB-Abhängigkeiten sind nicht enthalten.
+
+`src/main/resources/openapi.json` beschreibt den öffentlichen Controller und wird
+gegen MVC geprüft. Für Gatewayzugriff `facade:read` freigeben. Die Route
+`/overview/{id}` kollidiert mit dem Shopping-Beispiel; beide Varianten deshalb
+in getrennten Demos betreiben. Der Gateway hält eine solche Kollision zurück.
+
+`test_composition.py --facade` prüft beide
 normalen App-Einstiege und zusätzliche kontrollierte Fälle für Lazy-Ausführung,
 Kontext, überlappende Reads, Checked Exceptions, Deadline, Recovery und Shutdown.
 Den Check auch mit `HOORI_ENGINE=interpreter` ausführen.

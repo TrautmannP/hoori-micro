@@ -59,7 +59,8 @@ Interne Restbudgets und die relative Wire-Grenze stehen in
 | Variable | Bedeutung |
 |---|---|
 | `HOORI_MAIN_CLASS` | Erforderlich für Entrypoint; Main-Klasse in Slash-Notation (`hoori/micro/Registry`, `hoori/micro/Gateway` oder Anwendung) |
-| `HOORI_GATEWAY_PERMISSIONS` | Nur `Gateway.main`: kommagetrennte Permissions, die jedem Aufrufer gewährt werden; leer = nichts veröffentlicht. Keine Authentifizierung |
+| `HOORI_GATEWAY_PERMISSIONS` | Nur `Gateway.main`: kommagetrennte Permissions, die jedem Aufrufer gewährt werden; leer = alle Fachzugriffe abgewiesen. Die strukturellen Routen bleiben sichtbar. Keine Authentifizierung |
+| `HOORI_OPENAPI_ENABLED` | Nur `Gateway.main`: `true` aktiviert die lokale OpenAPI-Aggregation und API-Referenz. Framework-Default aus; Compose und run-local aktivieren sie. Ein zusätzlicher HTTP-Pool mit einer Verbindung |
 | `HOORI_ENGINE` | `mixed` als Default; zum Qualifizieren auch `interpreter` verwenden |
 | `HOORI_OUTBOUND` | `none` oder `http`; letztere erteilt Connect- und Hostresolution-Capabilities, auch für HTTPS |
 | `HOORI_TLS_CA_FILE` | Optionales lesbares PEM-CA-Bundle für den Hoori-Client; kein Abschalten der Verifikation |

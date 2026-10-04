@@ -15,7 +15,7 @@ Der Maven-Parent `dev.hoori:hoori-micro-starter:0.1.0-SNAPSHOT` konfiguriert den
 Build. Die normalen Quellen enthalten Application, Controller und Fachklassen:
 
 ```java
-@MicroApplication(name = "recipes")
+@MicroApplication(name = "recipes", openApi = "openapi.json")
 public final class RecipesApplication {
     public static void main(String[] args) throws Exception {
         Micro.run(RecipesApplication.class, args);
@@ -110,6 +110,19 @@ Die Registry liegt außerhalb des Request-Pfads. Das Gateway veröffentlicht nur
 Neue Anbieter oder zusätzliche Endpunkte brauchen keinen Neubau bestehender
 Clients. Inkompatible Änderungen eines verwendeten Vertrags benötigen eine neue
 Version bzw. eine bewusste Consumer-Anpassung.
+
+## OpenAPI
+
+`@MicroApplication(openApi = "openapi.json")` bindet eine Vertragsdatei aus
+`src/main/resources` an die öffentlichen Controller. Der Build prüft Routen,
+DTOs, Parameter, Status und Constraints; eine optionale Release-Baseline verhindert
+Änderungen bestehender Verträge innerhalb derselben Service-Major-Version.
+
+Die Demo veröffentlicht unter `http://127.0.0.1:8080/openapi.json` den aktuellen
+Gateway-Vertrag und unter `http://127.0.0.1:8080/_hoori/docs` eine lokale API-Referenz.
+Dokumente stammen aus demselben Routing-Snapshot; ihre Publikations-ID macht
+Wechsel sichtbar. Profil, Grenzen und weitere Ausbauschritte stehen in
+[docs/openapi.md](docs/openapi.md). Die Registry verwendet jetzt Protokoll 4.
 
 ## Bauen und starten
 

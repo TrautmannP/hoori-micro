@@ -84,16 +84,17 @@ nicht beliebig präemptiert werden.
 
 Der Katalog enthält Service, Major-Version, Instanz-ID, geprüften Origin und
 höchstens 128 HTTP-Endpunkte pro Instanz. Jeder Endpunkt besteht aus Methode,
-Template, consumes/produces und optionaler Permission. Sein stabiler Schlüssel
-ist der HTTP-Vertrag, unabhängig von Java-Methodennamen und Requestdaten.
+Template, consumes/produces und optionaler Permission. OpenAPI-Anwendungen ergänzen
+Operationshashes sowie Vertrags-Hash und API-Gruppe pro Instanz; Schemas bleiben
+beim Service. Der HTTP-Schlüssel bleibt unabhängig von Java-Methodennamen und Requestdaten.
 
-Registry-Protokoll **3** unter `/v2/instances/{id}`, `/v2/instances/{id}/lease`
-und `/v2/catalog`; Katalog-/Instanzaufrufe benötigen `X-Hoori-Catalog-Protocol: 3`.
+Registry-Protokoll **4** unter `/v2/instances/{id}`, `/v2/instances/{id}/lease`
+und `/v2/catalog`; Katalog-/Instanzaufrufe benötigen `X-Hoori-Catalog-Protocol: 4`.
 Alte Protokolle werden zurückgewiesen. TTL, Epochen, Revisionen und die
 `complete`-Markierung begrenzen Wiederanmeldung und Neustart. Bei unveränderter
 Epoche/Revision/Sicht bestätigen Lease und Katalogabruf mit 204. Filter sind
 `none`, `public` oder `services=name:version,...` mit höchstens 32 Dependencies.
-Consumer erhalten nur ihre Services und keine Gateway-Permissions. Der Registry-
+Consumer erhalten nur ihre Services und keine Gateway-/OpenAPI-Metadaten. Der Registry-
 Gesamtkatalog und seine Antworten bleiben begrenzt, auch vor gefilterter Ausgabe.
 
 Auf dem Request-Pfad wird ausschließlich ein lokales unveränderliches Snapshot
@@ -121,6 +122,14 @@ Der Registrar bereitet Routing und Katalog gemeinsam vor: maximal 256 verschiede
 überlaufende Updates verlängern die alte Sicht nicht. Unveränderte Bestätigungen
 verwenden das eingefrorene Routing weiter. Zusätzliche Provider-Endpunkte können
 dynamisch erscheinen, ohne Gateway oder unbeteiligte Clients neu zu bauen.
+
+OpenAPI-Routen müssen zusätzlich bei Permission, API-Gruppe und Operationshash
+übereinstimmen. Das [Publikationsmanifest](openapi.md) entsteht aus demselben
+Snapshot; undokumentierte und zurückgehaltene Routen sind ausdrücklich sichtbar.
+Der optionale Dokumentationsprozess holt passende, hashgebundene Artefakte über
+einen eigenen Client außerhalb von Requests und Registry-Heartbeat. Erst nach
+vollständigem Abgleich und erneutem Snapshotvergleich wird die aggregierte Doku
+ersetzt. Ein Wechsel oder Frischeablauf liefert bis dahin 503.
 
 ## Parallele Fachlogik und optionale Daten
 
