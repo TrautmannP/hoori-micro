@@ -1,361 +1,156 @@
-# Architektur und Entscheidungen
+# Architektur
 
-## 1. Ein dünnes Framework oberhalb der Runtime
+Hoori Micro ist ein eigenständiger Consumer der originalen Hoori-SDKs. Die
+öffentliche Anwendungsschicht verwendet MVC-Controller, Fachservices, Repositories
+und typisierte HTTP-Clients. Ein endlicher, beim Build erzeugter Konstruktorgraph
+ersetzt technische Registrierung im Anwendungscode.
 
-```text
-Dahemm-Actions / explizite Anwendungsdienste
-                    ↓
-hoori-micro: Service-Definition, Broker, Registry, Gateway, Lifecycle
-                    ↓
-hoori-concurrent-api / concurrent-http: Tasks, RequestScopes, HttpTasks
-                    ↓
-hoori-rest-api: Router, Middleware, explizite JSON-Codecs
-                    ↓
-hoori-http-api: HTTP, Pooling, Bounds, Kontext, Metriken, Drain
-                    ↓
-Hoori Guest Base / resumierbare Tasks / Host-Netzwerk
-```
+## Build und Bootstrap
 
-Abhängigkeiten zeigen nur nach unten. Server und Client sind die echten Hoori-
-Implementierungen. Keine Annotationssuche, Laufzeit-Proxies oder automatische DI:
-Actions sind Lambdas an einer expliziten `Service`-Definition.
+`@MicroApplication(name, version)` definiert genau eine App pro Maven-Modul.
+Komponenten unter ihrem Basispaket tragen `@RestController`,
+`@RestControllerAdvice`, `@Service`, `@Repository`, `@Configuration` oder
+`@ServiceClient`. Öffentliche konkrete Komponenten besitzen genau einen
+öffentlichen Konstruktor. `@Bean`-Methoden einer Configuration liefern
+Infrastruktur. Factory-Parameter werden wie Konstruktorparameter aufgelöst.
+`Environment`, `Microservice` und die Startargumente stehen als Infrastruktur bereit.
 
-Das optionale [Fassadenbeispiel](../examples/task-facade/README.md) verwendet den
-upstream Buildzeit-Processor. Generierte Task-/Scoped-Delegates sind normale
-Anwendungsklassen und werden ausdrücklich konstruiert. JSON-Codecs und DTO-Validatoren
-werden ebenfalls beim Build generiert. Kein Processor und keine Hoori-Codegen-
-Annotation liegt im Laufzeit-Classpath; die originalen Avaje-/Jakarta-APIs sind
-Runtime-Abhängigkeiten der expliziten Validierungsgrenze.
+Der Graph prüft fehlende/mehrdeutige Abhängigkeiten, Zyklen, Sichtbarkeit und
+Doppeldeklarationen. Maximal 128 Komponenten/Beans und 16 eigene schließbare Ressourcen; keine Scans zur Laufzeit,
+Scopesprache, reflektiven Feldinjektionen oder allgemeinen Proxies. Ein Bibliotheks-
+modul exportiert Komponenten mit `@MicroModule`; die App benennt es in
+`@MicroApplication(imports = {...})`. Metadaten bleiben im JAR, Quellen sind zur
+Laufzeit unnötig. Imports sind ausdrücklich; fremde JARs werden nicht durchsucht.
 
-Der optionale [Daten-Consumer](../examples/local-data/README.md) bezieht Transaction,
-JDBC und Jdbi ebenfalls als originale SDKs. Ein beim Start konstruierter Manager
-besitzt pro lokaler REQUIRED-Operation einen exklusiven Handle. Remote-Vorbereitung
-liegt vor dieser kurzen Datensatz-/Outbox-Transaktion; der physische Commit liegt
-vor der Antwort. Kinder teilen keine Handles, bestätigte Child-Commits sind unabhängig.
-UNKNOWN wird nicht wiederholt oder als Rollback dargestellt. Der HTTP-Kern erhält
-keine Datenbankabhängigkeit und keinen automatischen Request-Transaktionsrahmen.
+`Micro.run(App.class, args)` lädt genau den erzeugten Einstieg und führt direkte
+Konstruktoraufrufe aus. Controller/Advice und DTO-/Validation-Adapter stammen aus
+Hooris MVC-Processor, Clients nutzen dessen gemeinsames HTTP-/DTO-Modell. Avaje
+ist der Provider des Starters; der HTTP-Core hängt nur von der neutralen SPI ab.
+Die ursprünglichen Processor laufen ausschließlich beim Build.
 
-## 2. Actions, Registry und Broker
+Singleton-Ressourcen mit `AutoCloseable` gehören standardmäßig der App. Alias-
+Instanzen werden identisch nur einmal geschlossen, in umgekehrter Erzeugungsfolge.
+`@Bean(owned = false)` überträgt keinen Besitz. Ein Bootstrapfehler räumt bereits
+erzeugte Ressourcen auf, bevor Listener, Readiness oder Registrierung beginnen.
 
-Aufrufer adressieren eine **fachliche Action** (`recipes.get`) mit der per
-`dependsOn("recipes", 1)` deklarierten Hauptversion, nie eine Route oder Adresse.
+## HTTP und DTOs
 
-- **Service-Definition:** Aus `Service.named(..).action(..)` entstehen der lokale
-  Dispatcher hinter `POST /_hoori/invoke` und der veröffentlichte Katalogeintrag.
-  Eine neue Action braucht keine neue Route; der Router bleibt nach `freeze()` fix.
-- **Registry** (`hoori.micro.Registry`): In-Memory-Map Instanz-ID → {Service,
-  Hauptversion, Advertise-URL, Actions}, begrenzt auf 256 Instanzen, jeder Eintrag mit
-  TTL. `PUT /v1/instances/{id}` registriert Metadaten, ein leerer
-  `POST /v1/instances/{id}/lease` verlängert die Lease; `DELETE` deregistriert;
-  `GET /v1/catalog` liest. Eine unbekannte Lease (404) erlaubt eine volle Neuanmeldung.
-- **Heartbeat:** Nach Live und solange Ready erfolgt einmal die volle Registrierung,
-  danach die kleine Lease-Erneuerung (Default 2 s mit ±10 % Jitter, TTL 6 s).
-  Die erfolgreiche Periode wird auf höchstens die halbe konfigurierte TTL vor Jitter
-  begrenzt; Netzwerk- und Scheduling-Zeit brauchen zusätzlich Spielraum. Fehler
-  führen zu begrenztem Backoff (höchstens 66 s einschließlich Jitter). Reine Aufrufer
-  holen nur den Katalog. Actions/Metadaten sind während eines Service-Laufs eingefroren;
-  ein neuer Provider-Prozess registriert seinen neuen Stand.
-- **Broker** (pro Service, Bibliothek): hält den zuletzt gültigen Katalog lokal,
-  wählt **pro Action und Hauptversion** eine anbietende Instanz (Round Robin) und
-  ruft sie direkt über den Hoori-Pool auf. Die Registry liegt nie im Request-Pfad.
+Mappings unter `hoori.rest.mvc` definieren Methode/Template. `@PathVariable`,
+`@RequestParam`, `@RequestHeader` und `@RequestBody` binden getrennte Eingaben.
+Der SDK-Router besitzt allein Template-Grammatik, UTF-8-Decoding, Konfliktprüfung
+und 404/405-Verhalten. Controller delegieren an Fachservices; diese kennen keine
+Transport-Registrierung. DTOs sind öffentliche Records. Unterstützt sind die
+begrenzten SDK-Typen, verschachtelte Records und Listen; keine beliebigen JDK-Typen.
 
-Während eines Rolling Updates landet eine neue Action daher nur bei Instanzen, die
-sie anbieten. Eine Instanz, die eine Action nicht (mehr) anbietet oder eine andere
-Hauptversion hat, antwortet mit 421; der Broker wiederholt nicht automatisch.
+`@Valid` und Jakarta-Constraints erzeugen begrenzte Validation vor der Fachmethode.
+Fehlende Pflichtfelder, falsche Typen, doppelte JSON-Felder, nachfolgende Tokens
+und Größenüberschreitungen werden abgewiesen. Null und fachliche Constraints
+bleiben getrennte Regeln. Unterstützt sind `@NotNull`, `@NotBlank`, `@Size`,
+`@Positive`, `@Min`, `@Max`, verschachteltes `@Valid` und Listenelemente.
+Nicht unterstützte Profile scheitern beim Build. `new Dto(...)` validiert nicht.
 
-**Definiertes Ausfallverhalten:**
+DTO-/Listenantworten liefern JSON, `void` liefert 204. `@ResponseStatus` bzw.
+`HttpResult<T>` setzen Status und erlaubte Metadaten. `@RestControllerAdvice`
+bindet erwartete Fachfehler an einen begrenzten öffentlichen `Problem`-Code.
+Unbekannte Fehler bleiben 500; öffentliche Antworten enthalten keine Exceptions,
+Provider-Meldungen oder Eingabewerte.
 
-| Situation | Verhalten |
-|---|---|
-| Registry nicht erreichbar | Broker nutzen ihren letzten Katalog weiter, höchstens `HOORI_CATALOG_MAX_AGE_MS` (30 s) nach der letzten erfolgreichen Aktualisierung; danach scheitern Aufrufe mit „no instance“ |
-| Registry neu gestartet | Katalog ist eine TTL lang `complete=false`; Broker mit gültigem Katalog behalten ihren bis dahin |
-| Instanz stoppt geordnet | Deregistrierung beim Stop; andere Broker sehen das beim nächsten Heartbeat |
-| Instanz stürzt ab | Eintrag läuft nach der TTL aus; bis dahin liefert der Aufruf einen Transportfehler (502) |
+## Request-Grenze, Kontext und Ressourcen
 
-Heartbeats garantieren keine Erreichbarkeit zwischen zwei Meldungen. Die Registry
-ist ein einzelner Prozess ohne Persistenz oder Hochverfügbarkeit.
+Jede Fachanfrage läuft durch dieselbe Incoming-Admission und
+`RequestScopes`-/`Executions`-Grenze. Der HTTP-SDK hat den begrenzten Raw-Body
+bereits gelesen; DTO-Binding, Validation und Facharbeit beginnen erst nach Admission.
+Health, Metrics und feste Control-Routen liegen außerhalb dieser Fachgrenze.
+Keine zweite Request-Root im MVC-Adapter und kein ThreadLocal-Kontext.
 
-**Discovery-Protokoll 2:** Broker senden `X-Hoori-Catalog-Protocol: 2` und, sobald ein
-Snapshot bekannt ist, `X-Hoori-Catalog-Epoch` plus `X-Hoori-Catalog-Revision`.
-Jeder volle JSON-Katalog trägt dieselben `epoch`/`revision`-Werte und `complete`.
-Nur Metadaten, Entfernung/Ablauf und der einmalige Vollständigkeitswechsel erhöhen
-die Revision; pure Leases verändern sie nicht. Bei exakt passender Epoche/Revision
-kommt 204 ohne Body, sonst der volle 200-Katalog. Beide Antworten bestätigen ihre
-Identität in denselben Headern. Nur eine zum gesendeten und noch aktuellen Snapshot
-passende 204-Antwort erneuert dessen Frische. Eine neue, noch unvollständige Epoche
-verlängert den alten vollständigen Snapshot nicht; kleinere Revisionen derselben
-Epoche, unvollständige Rückschritte und Antworten der zuletzt verlassenen Epoche
-werden verworfen. Ein einziger Registrar verarbeitet Antworten seriell; keine
-Delta-Historie oder unbegrenzte Epochenliste.
+`TaskContext` hält Korrelation, Ursprung und Restbudget. Der mutable Raw-Request
+bleibt beim HTTP-Owner. Ein wiederverwendeter Client liest den aktuellen Kontext
+bei jedem Aufruf; Aufrufe außerhalb einer Micro-Grenze scheitern vor Encoding und
+Netzwerk. Explizite Startup-/Wartungsarbeit verwendet `app.runTask(...)`.
 
-Upgrade-Reihenfolge: **Registry zuerst, dann Broker/Services/Gateway.** Anfragen ohne
-Protokollheader bleiben kompatibel: volle PUT-/GET-Antworten mit additiven JSON-Feldern;
-alte Decoder überspringen diese. Andere explizite Protokollversionen und Leases ohne
-Version 2 erhalten 426. Neue Broker akzeptieren keine unversionierten alten Registry-
-Antworten; ein Registry-Downgrade lässt ihren bisherigen Katalog daher ausaltern.
-Die Registry hält genau einen Snapshot plus dessen Bytes. Vor Metadatenannahme muss
-der Gesamtkatalog einschließlich Reserve für Revisionsziffern in `HOORI_BODY_BYTES`
-passen; sonst 413 ohne Metadaten-/Lease-Änderung. 256 belegte Einträge liefern 429.
-Ein bei dieser Gelegenheit fälliger TTL-Purge bleibt wirksam.
+Outgoing-Admission umfasst Encoding, tatsächlichen Exchange und Decoding. Ein
+Datenpool je App, eine gesonderte Control-Verbindung ohne zusätzliche Warteschlange.
+Keine Clients pro Request, automatischen Write-Replays, Redirects oder
+Credential-Weitergabe. `X-Hoori-Budget-Ms` entsteht im originalen Before-Write-Hook,
+also nach Pool-/DNS-/Connect-/TLS-Wartezeit. Es ist ein relatives Restbudget,
+keine globale Echtzeitfrist und kein Remote-Cancellation-Protokoll.
 
-**Feste Consumer-Sichten:** `X-Hoori-Catalog-View` wird einmal aus `dependsOn()`
-gebildet, z. B. `services=recipes:1`. Die Registry überträgt nur passende Instanzen
-und deren Action-Namen, keine HTTP-Publikationsfelder. Anbieter ohne Abhängigkeiten
-fordern `none` an. Das Gateway wählt ausdrücklich `public`: nur Actions mit Route
-und Permission. Ein Gateway mit eigenen Abhängigkeiten nutzt
-`public;services=recipes:1` und erhält zusätzlich deren interne Actions.
-Ohne Header bleibt die Legacy-Sicht `all` erhalten. Filter sind keine Autorisierung.
+Fehlerpriorität: Admission, Cancellation, Deadline und verpflichtendes Cleanup
+haben Vorrang vor Fach-Advice. Die Antwort wird erst nach lokalem Child-/Ressourcen-
+Drain freigegeben. Hoori arbeitet kooperativ; nicht kooperierende CPU-Arbeit kann
+nicht beliebig präemptiert werden.
 
-Die Antwort bestätigt die Sicht im selben Header; bedingte Anfragen tragen die
-bisherige Sicht in `X-Hoori-Catalog-Known-View`. Erst Epoche, Revision **und Sicht**
-erlauben 204. Neue Broker verlangen den Sicht-Header, daher weiterhin Registry
-zuerst aktualisieren. Die globale Revision gilt auch für gefilterte Antworten;
-eine fremde Metadatenänderung kann einen kleinen vollen Abruf auslösen. Die Registry
-legt keine Caches pro Consumer an, sondern filtert vor Encoding und Übertragung.
+## Discovery und Gateway
 
-Grenzen bleiben 256 Instanzen, je 128 Actions und der Gesamt-Byte-Bound; ein Filter
-enthält höchstens 32 Abhängigkeiten und 2300 Header-Zeichen. Beim Snapshotwechsel
-können alter und neuer Katalog plus ein begrenzter Antwortbody kurz gleichzeitig
-leben. Broker halten keine Raw-Bodies; abgelaufene Zeilen werden beim nächsten
-Heartbeat/Zugriff durch kleine Versionstoken ersetzt, danach ist ein voller Abruf
-nötig. Das Gateway bekommt vorbereitete Routen gemeinsam mit dem Katalog; deren
-Aufbau liegt im Registrar, außerhalb des Request-Pfads.
-Ziel-URIs und typisierte Action-Namen werden einmal vorbereitet. Die Auswahl bleibt
-ein begrenzter linearer Scan; ein Action-Index braucht einen belegten CPU-Nutzen.
+Der Katalog enthält Service, Major-Version, Instanz-ID, geprüften Origin und
+höchstens 128 HTTP-Endpunkte pro Instanz. Jeder Endpunkt besteht aus Methode,
+Template, consumes/produces und optionaler Permission. Sein stabiler Schlüssel
+ist der HTTP-Vertrag, unabhängig von Java-Methodennamen und Requestdaten.
 
-## 3. Wire-Protokoll, Gateway und Verträge
+Registry-Protokoll **3** unter `/v2/instances/{id}`, `/v2/instances/{id}/lease`
+und `/v2/catalog`; Katalog-/Instanzaufrufe benötigen `X-Hoori-Catalog-Protocol: 3`.
+Alte Protokolle werden zurückgewiesen. TTL, Epochen, Revisionen und die
+`complete`-Markierung begrenzen Wiederanmeldung und Neustart. Bei unveränderter
+Epoche/Revision/Sicht bestätigen Lease und Katalogabruf mit 204. Filter sind
+`none`, `public` oder `services=name:version,...` mit höchstens 32 Dependencies.
+Consumer erhalten nur ihre Services und keine Gateway-Permissions. Der Registry-
+Gesamtkatalog und seine Antworten bleiben begrenzt, auch vor gefilterter Ausgabe.
 
-Interner Aufruf: `POST /_hoori/invoke`, Header `X-Hoori-Action: recipes.get` und
-`X-Hoori-Version: 1`, Body = JSON-Parameter der Action. Name und Version stehen in
-Headern statt in einem JSON-Umschlag, damit der Eingabe-Codec den Body direkt und
-ohne zweites Parsen liest. Antwort: 200 mit JSON-Ergebnis oder ein Fehlerstatus.
-Fachliche Fehler wirft eine Action als `RequestException(status, meldung)`.
+Auf dem Request-Pfad wird ausschließlich ein lokales unveränderliches Snapshot
+verwendet. Clientauswahl erfolgt nach Service, Version und exaktem Endpunktvertrag.
+Interne `X-Hoori-Endpoint`-/`X-Hoori-Version`-Header werden am Provider geprüft;
+Mismatch führt zu 421 ohne Retry. Externe Gateway-Aufrufer dürfen diese Header
+nicht bestimmen. Leere/abgelaufene Sichten bieten keine falsche Ersatzinstanz an.
 
-Typisierte Verträge (`Action<I, O>`) enthalten Name, Codecs und optional einen
-wiederverwendbaren `DtoValidator<I>`. Generische Aufrufe
-verwenden `Map` und `JsonTree` (Map, List, String, Long, Double, Boolean, null).
-Provider registrieren denselben Vertrag mit `action(contract, handler)`; fremde
-Service-Namen werden beim Start abgewiesen. `http(actionName, method, path)` und
-`requirePermission(actionName, permission)` binden Metadaten ausdrücklich an die
-Action. Das optionale Buildzeit-Fassadenbeispiel verwendet den upstream Processor;
-der Framework-Build benötigt keinen Processor. DTO-Consumer konfigurieren die
-JSON-/Validation-Processor ausdrücklich.
-Ergebnisse müssen 2xx mit `application/json` (optional `charset=utf-8`) sein; sonst
-`ServiceCallException` mit Status, aber ohne rohen Upstream-Body. Der Anbieter führt
-`ValidatedBody` nach Admission/Decoding vor dem Handler in derselben Request-Operation
-aus. Bekannte Feldfehler ergeben HTTP 400 mit `validation_failed` und ausschließlich
-`path`/`code`. Der Broker akzeptiert nur dieses Schema: maximal 12288 Bytes, 32 Fehler,
-256 ASCII-Pfadzeichen und 32 Codezeichen. Unbekannte Felder oder malformed Bodies
-werden verworfen. `action()` bezeichnet das direkte Ziel; `violations()` ist unveränderlich.
-Ein Validierungsfehler aus einem inneren Call bleibt am äußeren Service eine 502.
-Unerwartete Validator-Ausnahmen sowie Cancellation/Deadline behalten ihre Zuordnung.
+`@GatewayRoute(permission="service:scope")` veröffentlicht eine gemappte Methode.
+Fehlende Annotation bedeutet keine Gateway-Publikation; leere/fremde Permissions
+und Annotationen ohne Controller-Mapping sind Buildfehler. Die Policy wird pro
+Request geprüft. Die Demo-Policy gewährt konfigurierte Permissions jedem Aufrufer.
 
-**Gateway** (`hoori.micro.Gateway`): Eine Middleware, die für sonst unbekannte Pfade
-den vorbereiteten Routing-Snapshot anwendet. Veröffentlicht wird nur, was der Anbieter mit
-`http(method, template)` **und** `requirePermission("<service>:<scope>")` markiert
-und was die Gateway-Policy gewährt. Die Permission ist auf den eigenen Service-Namen
-begrenzt. Konflikte (gleiche Methode, überlappende Templates gleicher Spezifität,
-verschiedene Actions) werden im Service beim Start abgewiesen und im Gateway für alle
-Beteiligten zurückgehalten. Pfadparameter werden als JSON-Strings übergeben und mit
-einem optionalen JSON-Objekt-Body zusammengeführt; Query-Parameter nicht.
-Client-Fehler des Anbieters behalten ihren Status; ausschließlich geprüfte
-Validierungsfehler werden als neues begrenztes JSON ausgegeben. Abweichende
-Route/Permission derselben Action und Hauptversion während eines Rolling Updates
-werden ebenfalls zurückgehalten.
+Gateway und Provider verwenden denselben SDK-Router. Methode, Raw-Pfad/Query und
+begrenzter Body bleiben getrennt und unverändert. Das Gateway reicht nur `Accept`
+und `Content-Type` als Requestheader weiter; weitere gebundene Header sind für
+interne Controller/Clients möglich, aber nicht für publizierte Methoden.
+Erfolgsstatus und sichere Metadaten bleiben erhalten; absolute/unsichere Location,
+Credentials und Hop-by-hop-Header gelangen nicht nach außen. Bekannte begrenzte
+Validation-/Problem-Fehler werden geprüft und neu serialisiert. Ein Fehler eines
+inneren Remote-Aufrufs wird nicht als Validation des äußeren Inputs dargestellt.
 
-Katalog, Revision und Routing-Tabelle werden als ein unveränderlicher Snapshot
-veröffentlicht. Ein Gateway-Request nutzt ihn auch zur Instanzauswahl. Maximal
-256 distinct Routendefinitionen und 64 KiB ihrer ASCII-Metadaten sind erlaubt.
-Überlauf verwirft das ganze Update, ohne den alten Snapshot aufzufrischen; nach
-dessen Frischegrenze verschwindet auch die Veröffentlichung. Der begrenzte
-quadratische Aufbau gibt alle 64 Vergleiche kooperativ ab. Es gibt keine Historie;
-laufende Requests können ältere Snapshots innerhalb der Admission-Grenze halten.
-Parameter bleiben explizit validiertes JSON; Copy-Optimierung und Indizes brauchen
-einen belegten Profilnutzen.
+Der Registrar bereitet Routing und Katalog gemeinsam vor: maximal 256 verschiedene
+öffentliche Routen und 64 KiB Metadaten. Konflikte halten beide Definitionen zurück;
+überlaufende Updates verlängern die alte Sicht nicht. Unveränderte Bestätigungen
+verwenden das eingefrorene Routing weiter. Zusätzliche Provider-Endpunkte können
+dynamisch erscheinen, ohne Gateway oder unbeteiligte Clients neu zu bauen.
 
-Die Demo-Policy (`HOORI_GATEWAY_PERMISSIONS`) gewährt feste Permissions an jeden
-Aufrufer. Sie ist keine Authentifizierung. Eine deklarierte Abhängigkeit ist keine
-Berechtigung. Eingehende Header werden nie weitergereicht; Hooris validierte
-Request-ID läuft über alle Hops, der interne Budgetwert wird vom SDK neu erzeugt.
+## Parallele Fachlogik und optionale Daten
 
-## 4. Ressourcen und Ausfallverhalten
+Normale Clientmethoden sind synchron. `Tasks.task(() -> client.read(...))` erzeugt
+einen lazy `TaskSpec`; `parallel`/`map`/`settled` wählen ausdrücklich Parallelität,
+Fehlerpolicy und Reihenfolge. Der originale `@GenerateTasks`-Processor kann die
+Task-Fassade eines Client-Interfaces erzeugen; der App-Graph injiziert sie.
 
-Ein `Microservice` besitzt einen Hoori-Datenpool für Actions und einen Control-Pool
-für Registrierung/Katalog/Deregistrierung. Control hat höchstens eine Verbindung,
-null Wartende und einen eigenen kurzen Timeout. Der Datenpool begrenzt auch Pending-
-Acquires ausdrücklich; `/metrics` zeigt beide Pools mit festen Labels. Ohne Actions,
-Abhängigkeiten oder öffentliche Gateway-Sicht startet kein Registrar; der inaktive
-Control-Client erzeugt keine Sockets/Reaper. Keine Pools pro Request oder Action.
-Limits werden beim Start geprüft. Katalog (256 Instanzen × 128 Actions), Abhängigkeiten (32)
-und Gateway-Routen wachsen nie durch Request-Werte. Der Katalog muss in
-`HOORI_BODY_BYTES` passen; größere Installationen müssen das Limit anheben.
+`@TaskScoped`-/`@Transactional`-Dekoration gilt ausschließlich für unterstützte
+öffentliche Interfaces und deren injizierte Delegates. Es muss genau eine
+Implementierung geben; Transaktionen benötigen genau einen stabilen Manager.
+Konkrete/self-invoked Methoden erhalten keine automatische Interception. Die
+originalen SDK-Processor prüfen den Annotationsvertrag.
 
-Alle Fachrequests – normale Route, Invoke und Gateway – laufen in einer service-
-eigenen `RequestScopes`-Grenze innerhalb der Router-Fehlerbehandlung:
+Im optionalen Datenbeispiel bereitet der Fachservice Remote-Reads **vor** der
+lokalen Transaktion vor. Ein dekorierter Writer schreibt Daten und Outbox gemeinsam;
+das Repository enthält nur SQL. Handles sind ownergebunden, Kinder erhalten keine
+geerbten Handles. Physischer Commit liegt vor Response-Encoding. `UNKNOWN` und
+`COMMITTED` bleiben erhalten und werden weder als Rollback noch als Retry behandelt.
+DB-/Treiber-/Jdbi-JARs gehören allein zum optionalen Runtime-Klassenpfad.
 
-1. Vertrauenswürdige Routenzuordnung und relative Invoke-Budgetprüfung.
-2. Request-Root, begrenzte eingehende Admission, DTO/Handler/Antwortaufbau.
-3. Tatsächlicher Kind-/Ressourcenabschluss und Wiederherstellung von Kontext/Timer.
-4. Öffentliche Fehlerabbildung, danach HTTP-Antworttransport.
+## Shutdown und Grenzen
 
-Der SDK-Raw-Body ist davor bereits begrenzt eingelesen; das ist keine Streaming-
-Admission. Genau ein eingehendes Permit bleibt bis zum verwalteten Abschluss
-belegt. Root-Slots zählen auch Wartende: Incoming-Calls plus Incoming-Pending,
-höchstens das Serververbindungslimit (maximal 512). Das ist keine Reservierung
-beliebig vieler VM-Kinder; Task-/Timer-Kapazitätsablehnung bleibt möglich und
-muss bereits gestartete Arbeit drainieren. Fachlich erwartete 4xx-Responses sind
-keine Exceptions und lösen keine erfundene Rollback-Policy aus.
+Stop setzt Unready und schließt Admission; Deregistrierung läuft unabhängig.
+Admittierte Requests dürfen vorhandene Slots weiter nutzen. Wartende/neue Arbeit
+wird abgewiesen, nach Grace wird Cancellation ausgelöst. Erst nach tatsächlichem
+Request-/Child-/HTTP-Drain schließen App-Ressourcen und beide Clients.
+`HttpServer.run()` allein beweist keinen Drain; erzwungener Prozesskill ebenso wenig.
 
-Health/live, Health/ready, Metriken und feste Registry-Routen sind anhand der
-registrierten Methode/Route von Root und Fach-Admission ausgenommen. Ein Header
-oder roher Pfad erzeugt keinen Bypass. Gemeinsame Verbindungs- und Carrier-Grenzen
-können diese Endpunkte weiterhin beeinträchtigen.
-
-Ausgehend hält jeder typisierte, generische oder Gateway-Call genau ein Permit
-vor JSON-Arbeit bis nach Ergebnis-Decoding. Cancellation weckt Admission-Waiter;
-`HttpTasks.exchange` bricht gezielt Pool-Wait bzw. Transport ab. Der gemeinsame
-Client bleibt offen. Callback-Registrierungen, Waiter und Permits werden auf allen
-Ausgängen freigegeben. Standardmäßig wartet nur die Framework-Queue, der SDK-Pool
-hat null Pending-Slots. Eigene unbegrenzte Fork-Schleifen sind keine unterstützte
-Kapazitätsstrategie; `Tasks.map/forEach(...).maxConcurrency(n)` begrenzt Batch-Arbeit.
-
-`Context` hält nur den Broker. Die unveränderliche `Invocation` enthält Request-ID,
-Ursprung REQUEST/SERVICE und eine ausschließlich lokale Deadline; keine Request-,
-Body-, Header-, Scope- oder Ressourcenreferenz. Zwei explizite SDK-TaskContext-
-Bindings: vererbte Metadaten und owner-lokaler Raw-Request. Kinder sehen Letzteren
-nicht; `ownerRequest()` scheitert dort. Es gibt keinen eigenen ThreadLocal-Kontext.
-Die SDK-Grenzen für Bindings gelten auch für Anwendungsbindungen.
-
-`ctx.call` läuft direkt im aktuellen logischen Task; `ctx.task` erzeugt nur einen
-wiederverwendbaren `TaskSpec`, ohne Admission, Encoding oder Netzwerk. Eingaben
-werden per Referenz erfasst, nicht kopiert. Erst beim Start wird der dann aktive
-Kontext verwendet; ein Parallel-Plan selbst bleibt nach SDK-Vertrag single-use.
-Calls benötigen eine aktive lokale Micro-Grenze. `app.runTask(spec)` erstellt
-explizite service-eigene Startup-/Wartungsarbeit und wartet auf deren Abschluss;
-kein Fire-and-forget, keine Requestdaten. Innerhalb einer Request-Operation sind
-normale Task-Kompositionen oder kürzere `TaskScope.named(...).within(...)`-Grenzen
-zu verwenden.
-
-Das Arbeitsbudget ist das Minimum der bereits laufenden HTTP-Frist und
-`HOORI_WORK_TIMEOUT_MS`. Jeder Call bildet vor seiner ersten Phase einmal das
-Minimum aus Invocation-Deadline, `Budget.current()` und `HOORI_CLIENT_TIMEOUT_MS`.
-Admission, Codecs, Pool und I/O verbrauchen diesen selben Wert; serielle Calls und
-Nested-Scopes können die Parent-Frist nicht verlängern.
-
-Nur `/_hoori/invoke` akzeptiert `X-Hoori-Budget-Ms`: genau ein kanonischer
-Dezimalwert von 0 bis 600000. Doppelte, malformed, negative, führend genullte oder
-größere Werte ergeben 400; Budget 0 ergibt 504 vor DTO-Decoding. Fehlt das Feld,
-gilt die lokale Policy. Das Gateway ignoriert externe Budget- und interne
-Action-/Versionsheader und startet seine eigene Policy. Jeder Empfänger begrenzt
-erneut durch seine SDK-Frist und lokale Policy.
-
-`withRemainingMillisHeader()` schreibt ganze abgerundete Restmillisekunden erst
-nach Pool-Warten, DNS, Connect und TLS, unmittelbar vor dem ersten Request-Oktett.
-Sub-ms-Rest/Ablauf startet keinen Request. Die Wire-Werte sind relative Dauern,
-keine vergleichbaren monotonen Zeitstempel verschiedener Prozesse. Sende-,
-Transit- und Empfänger-Parsing-Zeit nach dem Messpunkt lassen sich daraus nicht
-exakt abziehen; die ursprüngliche Caller-Frist bleibt lokal wirksam. Das ist kein
-globales Echtzeitversprechen und kein Remote-Cancellation-RPC. CPU-Code muss
-weiterhin kooperieren. Interne Deadline-Klassifikation entspricht 504,
-Cancellation/Überlast/Stop 503;
-entfernte 503/504 bleiben erhalten, andere Upstream-Ausfälle liefern 502.
-Ein bereits abgelaufenes Transportbudget kann das Senden der Fehlerantwort
-verhindern. Früher Peer-Disconnect ist während des Handlers kein verlässliches
-sofortiges Cancel-Signal: Der Server liest dann nicht parallel aus dem Socket.
-Abbruch schließt nur den betroffenen Exchange, nie den gemeinsamen Client.
-
-**Keine automatischen Retries, auch nicht für POST.** Nach einem Verbindungsfehler
-kann die Gegenseite bereits geschrieben haben. Ein erneuter Schreibaufruf wäre ohne
-Idempotenzvertrag potentiell ein doppelter Geschäftsprozess. Redirects werden
-ebenfalls nicht automatisch verfolgt. Ausgehende Fehler werden sicher nach außen
-übersetzt; fachliche 404 können Controller explizit abbilden.
-
-Der Bootstrap ist kein Circuit-Breaker-Framework. Retry-Budgets,
-Idempotency Keys benötigen einen konkreten fachlichen Vertrag. Insbesondere begrenzt ein Pool nicht
-jede denkbare, vom Anwendungscode selbst erzeugte Menge wartender Hintergrundtasks.
-
-Control-Timeouts (`SocketTimeoutException`) und Transportfehler führen zum bestehenden
-begrenzten Backoff/Jitter, dann Lease bzw. nach 404 voller Neuregistrierung. Nur SDK-
-Cancellation oder Client-Close beendet den Registrar. Timeouts löschen keinen Interrupt;
-ein gleichzeitig gesetzter Interrupt bleibt ein Stop-Signal. Übergänge werden ohne
-Peer-Body/Stacktrace geloggt. Zwei Pools schaffen keine CPU-Präemption.
-
-## 5. Lifecycle und Nebenläufigkeit
-
-1. Service-Definition/Konfiguration prüfen, gemeinsame Clients erzeugen, Routen
-   und optionale service-eigene Ressourcen mit `app.own(resource)` registrieren.
-2. Router einfrieren, Listener starten, bei Ready registrieren/Leases erneuern.
-3. SIGTERM oder `stop()` stoppt Aufnahme, neue Roots/Waiter und Heartbeats sofort;
-   eine einzige Grace-Deadline beginnt hier. Der Registrar deregistriert unabhängig.
-4. Aktive Requests dürfen innerhalb der Grace weitere unmittelbare Calls machen,
-   falls ein Permit frei ist. Diese Ausnahme verlangt echte lokale Request-
-   Ownership; Service-Roots und einschleusbare Header erhalten sie nicht.
-5. Nach Grace aktive Roots canceln und ihren tatsächlichen Kind-/Finally-/Ressourcen-
-   sowie Kontext-/Timer-Abschluss abwarten. Nicht kooperierende Arbeit bleibt aktiv.
-6. HTTP-Shutdown bekommt die Restzeit derselben Grace: Response-I/O liegt nach der
-   Root-Completion und darf nicht mit deren Abschluss gleichgesetzt werden.
-7. Registrar begrenzt abschließen, gemeinsame Daten-/Control-Clients und dann
-   registrierte Service-Ressourcen in umgekehrter Reihenfolge schließen.
-
-`HttpServer.run()`-Rückkehr oder Null-HTTP-Zähler beweisen keinen Scope-Drain.
-`close()` eines externen Owners fordert Stop an und wartet auf den tatsächlichen
-Abschluss; es ist idempotent. Ein aktiver Handler darf `stop()`, nicht das eigene
-`close()` aufrufen. Startfehler führen ebenfalls in denselben Cleanup-Pfad.
-Eine langsame Registry verlängert die fachliche Grace nicht; ihr Abschluss kann
-nach dem Daten-Drain bis zu drei Control-Timeouts zusätzlich benötigen.
-
-**Fehler und Diagnose:** Bekannte Scope-/Subtask-/Bulk-/Operation-Wrapper werden
-begrenzt nach ihrer semantischen Hauptursache klassifiziert. Fachfehler behalten
-ihren bewusst öffentlichen Status/Text, Kapazität/Shutdown liefern 503, Deadline
-und lokale I/O-Timeouts 504, Upstream-Fehler 502 (503/504 bleiben erhalten),
-unerwartete Fehler 500. Ursprüngliche Ursachen/suppressed-Fehler bleiben unverändert;
-ein späterer Sibling-Abbruch überschreibt keinen primären Fachfehler. Operation-
-Transaktionsstatus bleibt intern erhalten, ohne DB-Pflichtabhängigkeit.
-
-Feste Metriken erfassen aktive/überfällige Roots, Completion, Zeit nach Body-Ende
-bis zum vollständigen Abschluss und neun feste Fehlergründe. Keine Requestwerte
-als Labels. `app.taskDiagnostics()` erstellt nur auf Anforderung Snapshots von
-höchstens acht bekannten Roots mit je 32 Einträgen und Tiefe vier. Die Snapshots
-enthalten kopierte skalare Zustände; aktive Scope-Referenzen liegen ausschließlich
-in begrenzten Slots und werden bei Completion entfernt. Die Abfrage kostet eine
-begrenzte Scope-/VM-Abtastung; kein kostenloses Dauer-Sampling, kein HTTP-Debug-Endpunkt.
-
-`ready(false)` verändert den Bereitschaftszustand, ist aber kein eigenständiges
-Autorisierungs- oder Request-Abweisungssystem. Docker `depends_on: service_healthy`
-koordiniert den Start, nicht den gesamten späteren Betrieb. Es gibt absichtlich
-keine rekursiven Abhängigkeitsprobes, die bei einem einzelnen Ausfall die ganze
-Service-Kette „unready“ machen.
-
-Hooris Server führt resumierbare Guest-Tasks auf einem kooperativen Carrier aus.
-Dieses Framework behauptet keine CPU-Parallelität oder Präemption. CPU-intensive
-Arbeit muss kooperieren oder später über ausdrücklich geplante Worker ausgelagert
-werden. Auch eine Shutdown-Grace ist keine Garantie gegen unkooperativen CPU-Code;
-der Container-Stop-Timeout bleibt die äußere Grenze.
-
-## 6. Sicherheitsgrenze der Demo
-
-Nur das Gateway veröffentlicht einen Loopback-Host-Port. Registry, Recipes, Pantry und
-Shopping hängen am internen Backend-Netz. Container laufen ohne Root, ohne Linux-
-Capabilities, mit Read-only-Root-Dateisystem und ohne Docker-Socket. Die Registry
-erhält keine Connect-/DNS-Capability; alle anderen brauchen sie für Heartbeats.
-
-**Registry und `/_hoori/invoke` sind unauthentifiziert.** Wer das Backend-Netz
-erreicht, kann Actions aufrufen, Instanzen registrieren oder fremde Registrierungen
-überschreiben und damit auch Gateway-Routen umlenken. Die Vertrauensgrenze ist das
-private Netz. Der geplante Ablauf (Firebase, interne Tokens, mTLS) steht in
-[security.md](security.md). Vor echter Dahemm-Nutzung fehlen ausdrücklich: Service-Identität
-(z. B. mTLS) für Registry und Invoke, TLS am externen Rand, verifizierte Benutzer-
-identität, Mandantenautorisierung beim Datenbesitzer und Secret-Management.
-Demo-Actions wie `/demo/context` und `/demo/slow` dürfen nicht produktiv
-veröffentlicht werden.
-
-## 7. Messbasis und Performance-Ziel
-
-Die A–D-Ausgangsmessung gegen den gepinnten Release-Stand steht mit Rohdaten und
-Messgrenzen unter [benchmarks.md](benchmarks.md). Warmup, Engines, feste CPU-/RAM-
-Budgets, erfolgreiche Arbeit und Abweisungen bleiben getrennt. Die Ausgangsbasis
-ist keine Performancefreigabe: insbesondere das Gateway verfehlt die gesetzte
-p99-Grenze. Jede Optimierung benötigt denselben Vergleich und einen Nutzen oberhalb
-der beobachteten Streuung. SDK-Upgrades werden als eigene Variable gemessen.
-
-Quellgrundlagen: [Baseline und Quellen](source-baseline.md).
+Registry und interne Endpunkte sind in dieser Demo unauthentifiziert. Keine
+allgemeine Proxy-Engine, ORM, Runtime-DI/AOP, Eventbroker, Spring-Kompatibilität oder
+Dahemm-Migration. Sicherheits- und Betriebsfolgen stehen in [security.md](security.md)
+und [roadmap.md](roadmap.md).

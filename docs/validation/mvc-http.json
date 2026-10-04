@@ -1,0 +1,316 @@
+{
+  "schema": 1,
+  "date": "2026-10-04",
+  "scope": "Local functional acceptance of Hoori Micro WebMVC #35, #36-42 and regression #44",
+  "application_code_commit": "676a72fd60091df91b2ea7793508bcc2b0321d8c",
+  "runtime": {
+    "source": {
+      "dirty": false,
+      "revision": "83d2b8fc83ffee6ed7c748409ff7b4802d8a341b"
+    },
+    "build": {
+      "features": [],
+      "profile": "release",
+      "revision": "83d2b8fc83ffee6ed7c748409ff7b4802d8a341b",
+      "target": "x86_64-unknown-linux-gnu",
+      "version": "0.1.0"
+    },
+    "toolchain": {
+      "javac": "javac 21.0.12.1",
+      "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+    },
+    "distribution_sha256": "22bf09efdf15a85ddadac94325e402668070bb7be9a9452cb5521f7bff75cada",
+    "binary_sha256": "6e5ff53f1941b61867f5583d5cb123e1f44da0bce216a6eacec9c47bab7e4604"
+  },
+  "http_runtime_classpath_sha256": {
+    "hoori-guest-base-0.4.0.jar": "ce843f845da7d12d321353ebea270815781d3b9fa964ca5f6e0ce3c34c232b28",
+    "hoori-http-api-0.1.0.jar": "d019b6cafbbc94eea0eca6d6b314aae1fb9a2697062f0e87510a00ea69ece660",
+    "hoori-rest-api-0.1.0.jar": "9b744a80bbf8c76c74c0faf980d153cd9bc0a8a1c49f75ba971546e5e3e2e37d",
+    "hoori-concurrent-api-0.1.0.jar": "4ce30e3f77b9a6b5d893c06ff5c8e952f0e4b4b09bdd33be60741de84c95a30f",
+    "hoori-concurrent-http-api-0.1.0.jar": "09e91799117ec832c070ae4424519e3852cb7eadcdad6804647e06d4b989c94b",
+    "hoori-validation-api-0.1.0.jar": "5b9da87d5ef2df12aca331aeaa6d38beecd26a777131d72a59a729837addabdd",
+    "hoori-rest-validation-api-0.1.0.jar": "3df89d4a7441a6d28063768ddaa6af090dc20549a8da6f8e7a8dd28708daa58e",
+    "hoori-rest-mvc-api-0.1.0.jar": "f2917fec09a035b857f12f39f22eec0011eebebc502777534dc999520f212b5c",
+    "hoori-validation-avaje-0.1.0.jar": "fda2e1a5e708c3117a4df1f6634157f1aacde192a913cc8620a0c9783127e233",
+    "avaje-applog-1.2.jar": "d1aa0ba97c77ee4428e3feb23d62231cfd00e2771b3fe4b79e7393f854273353",
+    "avaje-validator-2.18.jar": "5e98fe4b6a9e1dff77eed90f95b0282645153b39f6a3b8b0a01b198f42143283",
+    "avaje-validator-http-plugin-2.18.jar": "e2daf73352bae03820eebcf6bbbda8203f6ccab00d7985d3ec2059ab0427c457",
+    "avaje-validator-inject-plugin-2.18.jar": "5e980fb0781981c6b64d06a028d5651728570b94e4def4326ecee71542571ab2",
+    "jakarta.validation-api-3.1.1.jar": "63ce00156388c365f3ac1be71fcfaf114682fc0c452020b5df6e7ec236e142ab",
+    "jspecify-1.0.1.jar": "070d75f261fe4c5b8202508366715f7f2d4660f88c8ef7e6d3575e48c9683b66"
+  },
+  "application_jars_sha256": {
+    "framework/target/hoori-micro-0.1.0-SNAPSHOT.jar": "79ff136a9103aa2f8c3727b1825b1128be5a009c3d2c4bc5333f74d70dd45540",
+    "processor/target/hoori-micro-processor-0.1.0-SNAPSHOT.jar": "d4e553069d8fdf5651f244fa347f4864d937d90318c3ca914000fe6ea0d5a6fe",
+    "examples/local-data/target/local-data-0.1.0-SNAPSHOT.jar": "a7be76c4e8fd87864b16c002c34af9b2411c47b52348bf9a0a933d9190f13077",
+    "examples/shopping-service/target/shopping-service-0.1.0-SNAPSHOT.jar": "c252f82ee19ddf3a42a9b759a643b0bde1a6ea8eddadeed93497c242dce7058f",
+    "examples/mvc-crud/target/mvc-crud-0.1.0-SNAPSHOT.jar": "963b8c04f8af4cd23088882efe3615632152efe8f956a74335c89d7ce4555d65",
+    "examples/recipes-service/target/recipes-service-0.1.0-SNAPSHOT.jar": "a574550004d4697629252cad5dac60e7dce1620096eca60d7532878e17602cf1",
+    "examples/task-facade/target/task-facade-0.1.0-SNAPSHOT.jar": "a921626dbd311b5285673369f449885dd3948ab3cc6b63d019e6b1575027fea1",
+    "examples/demo-contracts/target/hoori-micro-demo-contracts-0.1.0-SNAPSHOT.jar": "0fb07f64058079a2867df53416a5047126f2df6e1e5d0d4f26f3ea7e85f8c99d",
+    "examples/pantry-service/target/pantry-service-0.1.0-SNAPSHOT.jar": "79982d7dc2e62598b349e7d8dac5df7ec6a8c7ee5685b61e5be5d33199074323"
+  },
+  "build_sdk_sha256": {
+    "hoori-rest-annotations": "466b8c6725a775698254d2680a9ba54421e264ad7f689e51042b8754ee1255ad",
+    "hoori-rest-processor": "300242f1685683806554b22ea5eaaa43728ad135266176310d581e34cbf1b041",
+    "hoori-validation-processor": "bc8a32aab35522e4975a8912050c7ac399ab90ab2975913de95fcb755b6ec943",
+    "hoori-rest-mvc-processor": "a9e903816caf2618badf2e60e3b8ef8bfadec4cdf53ad908d7acfe8e9053989d",
+    "hoori-validation-avaje-processor": "70e270b89aa45caf7a1e97f5b7b72b9cb51c71738b742de602452271718228cb",
+    "hoori-task-annotations": "70c2fcf3464c7672ac13494a555218eb5728fc729d7437c2cd62cc6a08567340",
+    "hoori-task-processor": "39f21d88e6403c7819f4b65b54bdbaa717338b77694dd2663f6b6fe5d14e1cb0",
+    "hoori-transaction-api": "40b5ea82f9b5af6ba834a57ac76ebeba9564abfb4fe8f81d0628215bb7f0d42b"
+  },
+  "portable": {
+    "core_assertions": 117,
+    "formatter_fixtures": 5,
+    "python_tests": 24,
+    "maven_junit": {
+      "tests": 35,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "spotless": "passed"
+  },
+  "native": {
+    "commands_with_HOORI_ENGINE": [
+      "scripts/test-hoori-core.sh",
+      "python3 scripts/test_mvc.py --gc-stress",
+      "python3 scripts/test_http.py",
+      "python3 scripts/test_admission.py",
+      "python3 scripts/test_budgets.py",
+      "python3 scripts/test_tasks.py",
+      "python3 scripts/test_control.py",
+      "python3 scripts/test_composition.py --facade",
+      "python3 scripts/test_data.py --hoori-checkout <clean-pinned-checkout>",
+      "python3 scripts/smoke.py"
+    ],
+    "results": {
+      "mixed": {
+        "all_gates": "passed",
+        "transaction_status_log_counts": {
+          "COMMITTED": 1,
+          "UNKNOWN": 1,
+          "ROLLED_BACK": 9
+        },
+        "postgres_recovery_cycles": 3,
+        "docker": {
+          "complete": true,
+          "cycles": 3,
+          "snapshot_phases": [
+            "warm_idle",
+            "burst_idle_0",
+            "burst_idle_1",
+            "burst_idle_2",
+            "rolling_recovery_idle"
+          ],
+          "continuous_traffic_cases": [
+            "rolling",
+            "registry_timeout",
+            "registry_outage",
+            "provider_crash",
+            "catalog_cycles"
+          ]
+        }
+      },
+      "interpreter": {
+        "all_gates": "passed",
+        "transaction_status_log_counts": {
+          "COMMITTED": 1,
+          "UNKNOWN": 1,
+          "ROLLED_BACK": 10
+        },
+        "postgres_recovery_cycles": 3,
+        "docker": {
+          "complete": true,
+          "cycles": 3,
+          "snapshot_phases": [
+            "warm_idle",
+            "burst_idle_0",
+            "burst_idle_1",
+            "burst_idle_2",
+            "rolling_recovery_idle"
+          ],
+          "continuous_traffic_cases": [
+            "rolling",
+            "registry_timeout",
+            "registry_outage",
+            "provider_crash",
+            "catalog_cycles"
+          ]
+        }
+      }
+    },
+    "mvc_gc_stress_checks": [
+      "startup failure closes alias resource once before any listener/ready",
+      "generated CRUD: path/query/JSON, defaults, UTF-8, duplicates, validation, 201/Location, 204, advice, 404/405/406/415",
+      "singleton identity; admission before JSON; validation before work; child context, owner isolation, deadline/cleanup priority and recovery",
+      "SIGTERM drains the admitted child/response before exactly-once resource close"
+    ],
+    "http_checks": [
+      "direct/client/gateway CRUD: exact path/query UTF-8, 201/relative Location, typed result, void/204, public 404",
+      "bounded validation and media errors, unpublished route, 405/Allow, endpoint/version mismatch, external internal headers ignored",
+      "singleton clients use current request identity, no credentials, overview/dashboard and ordered batch/bulk",
+      "all generated applications and gateway drain cleanly on SIGTERM"
+    ],
+    "composition_checks": [
+      "normal FacadeApplication main constructs generated clients/task/scoped graph and drains",
+      "ordinary route and Gateway use two discovered HTTP providers with correct correlation",
+      "generated controller input and validation: direct HTTP/Gateway field errors, no invalid handler/fanout, safe internal/nested failures and recovery",
+      "generated facade lazy/reused with current context; checked errors, 800ms method/250ms parent bounds, cancellation/recovery; no build tools on runtime path",
+      "two real provider handlers entered before either response was released",
+      "fail-fast returns after local cancellation; optional unavailable differs from successful empty",
+      "batch bound/order/all-complete; bulk performs one HTTP request; malformed/oversized input rejected",
+      "settled does not turn global admission rejection into an optional result; recovery succeeds",
+      "SIGTERM drains local fanout against actual Hoori providers"
+    ]
+  },
+  "independent_consumers": {
+    "engines": [
+      "interpreter",
+      "mixed"
+    ],
+    "sources_removed": true,
+    "module_bootstrap_without_build_jdk": true,
+    "client_provider_jars_sha256": {
+      "provider-1.jar": "b552006dea43db85bdd7f61bb478fe6a323accd95b805134c585811334a5643d",
+      "consumer-1.jar": "8216f35918a056f94408bd874f5d31c4dd28dbde79a0397a0d83df875309825a"
+    },
+    "checks": [
+      "independent source-free provider and consumer",
+      "UTF-8 path and percent decoded once; repeated query order and empty value",
+      "explicit client header",
+      "credential headers and private Location filtered",
+      "no redirect follow",
+      "lost POST response: one write, no replay, pool recovery"
+    ]
+  },
+  "optional_data": {
+    "postgres_image": "postgres:18.6-alpine3.23@sha256:697c180dbf244d3ce4a8f4cbc0156cde840af055c1bf8b76aebe422a4822086f",
+    "classpath_sha256": {
+      "hoori-micro-0.1.0-SNAPSHOT.jar": "79ff136a9103aa2f8c3727b1825b1128be5a009c3d2c4bc5333f74d70dd45540",
+      "hoori-micro-demo-contracts-0.1.0-SNAPSHOT.jar": "0fb07f64058079a2867df53416a5047126f2df6e1e5d0d4f26f3ea7e85f8c99d",
+      "local-data-0.1.0-SNAPSHOT.jar": "a7be76c4e8fd87864b16c002c34af9b2411c47b52348bf9a0a933d9190f13077",
+      "hoori-guest-base-0.4.0.jar": "ce843f845da7d12d321353ebea270815781d3b9fa964ca5f6e0ce3c34c232b28",
+      "hoori-http-api-0.1.0.jar": "d019b6cafbbc94eea0eca6d6b314aae1fb9a2697062f0e87510a00ea69ece660",
+      "hoori-rest-api-0.1.0.jar": "9b744a80bbf8c76c74c0faf980d153cd9bc0a8a1c49f75ba971546e5e3e2e37d",
+      "hoori-concurrent-api-0.1.0.jar": "4ce30e3f77b9a6b5d893c06ff5c8e952f0e4b4b09bdd33be60741de84c95a30f",
+      "hoori-concurrent-http-api-0.1.0.jar": "09e91799117ec832c070ae4424519e3852cb7eadcdad6804647e06d4b989c94b",
+      "hoori-validation-api-0.1.0.jar": "5b9da87d5ef2df12aca331aeaa6d38beecd26a777131d72a59a729837addabdd",
+      "hoori-rest-validation-api-0.1.0.jar": "3df89d4a7441a6d28063768ddaa6af090dc20549a8da6f8e7a8dd28708daa58e",
+      "hoori-rest-mvc-api-0.1.0.jar": "f2917fec09a035b857f12f39f22eec0011eebebc502777534dc999520f212b5c",
+      "hoori-validation-avaje-0.1.0.jar": "fda2e1a5e708c3117a4df1f6634157f1aacde192a913cc8620a0c9783127e233",
+      "hoori-transaction-api-0.1.0.jar": "40b5ea82f9b5af6ba834a57ac76ebeba9564abfb4fe8f81d0628215bb7f0d42b",
+      "hoori-jdbc-api-0.1.0.jar": "e0f1c5024edf7ceacbcd4ffa897b472394b963a87f7c2cffedaae74e45861699",
+      "hoori-jdbi-api-0.1.0.jar": "717f499d637936d8d542186569ca356a7a012e9b77cab89a5c3e6a87435aaba6",
+      "avaje-applog-1.2.jar": "d1aa0ba97c77ee4428e3feb23d62231cfd00e2771b3fe4b79e7393f854273353",
+      "avaje-validator-2.18.jar": "5e98fe4b6a9e1dff77eed90f95b0282645153b39f6a3b8b0a01b198f42143283",
+      "avaje-validator-http-plugin-2.18.jar": "e2daf73352bae03820eebcf6bbbda8203f6ccab00d7985d3ec2059ab0427c457",
+      "avaje-validator-inject-plugin-2.18.jar": "5e980fb0781981c6b64d06a028d5651728570b94e4def4326ecee71542571ab2",
+      "jakarta.validation-api-3.1.1.jar": "63ce00156388c365f3ac1be71fcfaf114682fc0c452020b5df6e7ec236e142ab",
+      "jspecify-1.0.1.jar": "070d75f261fe4c5b8202508366715f7f2d4660f88c8ef7e6d3575e48c9683b66",
+      "checker-qual-3.55.1.jar": "857658c8bdcbff794949a8d9922f88d63ee3751c203c7cd7d21ea97f9e745288",
+      "geantyref-2.0.1.jar": "386b535c079be7d65ddbe0ad9c00955155b7862225aa92b4c6553ab2b1ea95f9",
+      "jdbi3-core-3.55.0.jar": "6101be0886145b60be2d773b935017ecc2b0ce8d657c981a43d5cf2c19ddddf3",
+      "postgresql-42.7.13.jar": "6e0e4cc2d8cae902084f8a2b18728b073a6fd9d1f87c9d8bff8f298c18185b93",
+      "slf4j-api-2.0.17.jar": "7b751d952061954d5abfed7181c1f645d336091b679891591d63329c622eb832"
+    },
+    "original_upstream_fixtures_sha256": {
+      "jdbc_test.py": "7ca6a59b6b296312afbd69d79b45b24bdd2a6adf7bbc843d1da181a63a296c31",
+      "jdbi_test.py": "700fde12bfe4e1ccfd6092c0b9e3817bc3849c4a62f2cc0afdbdc494e8722681",
+      "jdbc_peers.py": "fa0a955171389dfedd930479e034cb0d833ca2e2298400fe05ff830d762542fa",
+      "jdbc_tls.py": "918d0564f13f4dca130724e5b736391f9b1e9c535649cd549f1cb943077d7695"
+    },
+    "checks": [
+      "generated Draft validation rejects both IDs before remote reads and local DB acquisition",
+      "real MVC: automatically decorated local data/outbox commit; remote failure writes nothing",
+      "both discovered remote reads start before any local DB acquisition",
+      "body/required-child/deadline/caught REQUIRED errors roll back after child drain; foreign Handle fails before SQL; independent child commit survives parent rollback",
+      "separate overlapping handles; confirmed commit survives notification/encoding failure; lost acknowledgement is UNKNOWN, physically discarded and never replayed",
+      "three real Statement.cancel/SQLSTATE 57014 cycles drain before rollback/return; subsequent requests work, closed connections collect and task/handle counts recover",
+      "SIGTERM cancels blocked query, completes rollback and closes service resources with zero active connections",
+      "normal DataApplication main: generated manager/repository/transaction/client graph commits once, remote failure writes nothing and drains"
+    ],
+    "lost_commit_acknowledgement": "UNKNOWN; connection discarded; no replay"
+  },
+  "benchmark_consumer": {
+    "engine": "mixed",
+    "purpose": "Functional A/B/C/D check only; no performance acceptance or comparison",
+    "command": "python3 scripts/benchmark.py --variants ABCD --engine mixed --repeats 1 --seconds 0.5 --warmup 1 --idle 0 --rate 2 --burst-rate 2 --workers 2 --delay-ms 0 --catalog-instances 1 --public-routes 1 --output .cache/mvc-benchmark-functional.json",
+    "results": {
+      "A": {
+        "successful": 22,
+        "failed": 0,
+        "not_started": 0
+      },
+      "B": {
+        "successful": 16,
+        "failed": 0,
+        "not_started": 0
+      },
+      "C": {
+        "successful": 14,
+        "failed": 0,
+        "not_started": 0
+      },
+      "D": {
+        "successful": 11,
+        "failed": 0,
+        "not_started": 0
+      }
+    }
+  },
+  "raw_evidence_sha256": {
+    ".cache/mvc-core-final.log": "0d196b6ad6e4ffba4f37869220986c0b5b8836dfdb96e3c24cf37e07b0b76017",
+    ".cache/mvc-python-final.log": "e020ff0aca5bfd92f8f8a3de4f920f9213a0c35ddc6d21b0760308527f47c5f4",
+    ".cache/mvc-build-final.log": "d8b84ff730008c2e502c8bfdb793172de123261e53745d72f2b26c1935c68359",
+    ".cache/mvc-facade-build-final.log": "5972e249e176933bff2864431adbc1859a84bd895b579991a6abf9a46580030c",
+    ".cache/mvc-data-build-final.log": "d0e502bdae2f5a77922400f998b3ebe4d36539cc33d283709d2378c628a4ee6c",
+    ".cache/mvc-independent-final.log": "3c98f8adcc89a9423f5d64e419bbf5f49b7efa32c485919203e2bbee015c3cd2",
+    ".cache/mvc-clients-final.log": "7716e7f5ff52b57af3325aae5a089156642babbc09c0f8f32381a85935a83bdf",
+    ".cache/mvc-benchmark-functional.log": "40f643aad5f794dfc5b88c7bddb02957e88ef5660ad1cf3ceacf1109e6268979",
+    ".cache/mvc-guest-mixed-final.log": "b173f23d599bd1806378b79dacc2f6269ca41b08b022d2944216a468cea7274e",
+    ".cache/mvc-gc-mixed-final.log": "681c151f9b2a57e081d47e13ea30533501e1902bac3db91937ffb53f723855f8",
+    ".cache/mvc-http-mixed-final.log": "a17b97943ee11d92b477419993cde3c89d472e3d079eb4286b5a94b3f5399fc4",
+    ".cache/mvc-admission-mixed-final.log": "e21daee627513c42c13b99a2b33a942d74fcba314a6430e90e3d422176a7bbf1",
+    ".cache/mvc-budgets-mixed-final.log": "b568339620d5f9470c84b119be39153b5900c5d3eb46870126330a594a7e4364",
+    ".cache/mvc-tasks-mixed-final.log": "6be5305bf4d7e6f2356b9e7324076693f56fbbacbd3bf2e467c6bcfa89d6dfc1",
+    ".cache/mvc-control-mixed-final.log": "a6cc306ce4cb69190036f23222420b67060a3f0e6c200cd00c7efdfa3eea6813",
+    ".cache/mvc-composition-mixed-final.log": "0e6aa411fd855e36506882cca39ea80010a6543af83882b60ae4c2a35776fdc7",
+    ".cache/mvc-data-mixed-final.log": "01c3997bdcbeafd897c05c5c24bc1677920b76169753fcce117d82e6637f8ee8",
+    ".cache/mvc-smoke-mixed-final.log": "9b56f0ba4ca1f05746bde7c2e3090b993c0bb6ffa60207314c1903a7d837dc84",
+    ".cache/data-mixed/results.json": "4f4e329dd909b6b91341f8d14016a09eb924547cc7bc71db64eafe3afdacc329",
+    ".cache/data-mixed/data.log": "d14c144fb873426d7ad4f617ea92118d85c9892bad4204a3712b745500d2e2e1",
+    ".cache/data-mixed/application.log": "ed881404f62f5ccc9a53b91583f4c168e2dfb6322e3295b71ca470b85338522b",
+    ".cache/composition-facade-mixed.json": "22d9a3eb8151d233039c0f02a7a25e087ca8bea7a5cb5848fffe833567da4035",
+    ".cache/hoori-micro-check-841268.json": "fa646c27509e737e021e6b9b2521cb931ff7862b9d6f3f5f9eec25cf653b633b",
+    ".cache/mvc-guest-interpreter-final.log": "b173f23d599bd1806378b79dacc2f6269ca41b08b022d2944216a468cea7274e",
+    ".cache/mvc-gc-interpreter-final.log": "e06249ade66e48f7cc7ffde8c04736df64511787ec08aed972c49c5967282b46",
+    ".cache/mvc-http-interpreter-final.log": "8ab3df9b20bc4df058676d5d8f8fccbc16d5bed401aa1e42c34fc37a8a02b324",
+    ".cache/mvc-admission-interpreter-final.log": "dd72c4a89e7975a177007f44abc9bcdc6d2ab8a1ba5254561142d1819d606265",
+    ".cache/mvc-budgets-interpreter-final.log": "7f6e3ae2e1bf9b8e071a0a4c442ad63c8b924df8926956d8f0d12cc16d13739d",
+    ".cache/mvc-tasks-interpreter-final.log": "16a2b1448fa6fe74545d9f9760a72952dd5ab15b529a6e559b73413d5857297d",
+    ".cache/mvc-control-interpreter-final.log": "ec07f3233b4b95a258a27a4f60cfbb1ff3bb8b4e155fccefbec2aa2431bbd08a",
+    ".cache/mvc-composition-interpreter-final.log": "e0443640070b86e80be946dfaaacc408be1d1611b6bc58c64e862f5d0426d449",
+    ".cache/mvc-data-interpreter-final.log": "ffdb08f561ced005acdfc7f96da0580e00ec1789e837d3d019fba0428125acfe",
+    ".cache/mvc-smoke-interpreter-final.log": "052ec415ace71d80c15e9392bd5d20032dcee130427fd8aebe61d3f0c7759d67",
+    ".cache/data-interpreter/results.json": "ad8b4ba923d294f45e71142055962e2c34369ef1fa63ed6400a8f8a1497e94f8",
+    ".cache/data-interpreter/data.log": "3379f7bc60b52ad31c5ee47772f4d284cbfaf2a6016ca0925bf1df67994d1065",
+    ".cache/data-interpreter/application.log": "bf9a441720a993a6a0895d464cc841b06a8fda1ad293d9b6f44378d47a8a68de",
+    ".cache/composition-facade-interpreter.json": "3774df8e2910dcc4f1feec7029ba8c4a63c60776c530b9a6c9fab198869605f2",
+    ".cache/hoori-micro-check-866655.json": "a23bbe0ab0a3bf0c1dbba3f855020ea3ee810e395de726c56e8cd639009ba171",
+    ".cache/mvc-independent-build.json": "3b547f6ff00c4444449293b255f8c3f70bda78792936b983f42c006095181fe4",
+    ".cache/mvc-independent-clients.json": "8e4030c30a49c0db2fa32dd15203b92e3991525ee4a1161cd177325d6fe2a451",
+    ".cache/mvc-benchmark-functional.json": "aabd9a99b6a94173447a6cd2982f9dfbc59153d9d5faf6598353234f2b37a08d"
+  },
+  "not_run": [
+    "Unchanged isolated SDK script scripts/test-task-runtime.sh",
+    "Historical load/performance matrices",
+    "CI and production qualification"
+  ],
+  "limitations": [
+    "Functional and host-local evidence only; #8/#10/#11 remain open",
+    "No complete Spring/Jakarta/JDK compatibility or Dahemm migration claim",
+    "Raw .cache evidence is local; this compact receipt preserves hashes and results"
+  ]
+}

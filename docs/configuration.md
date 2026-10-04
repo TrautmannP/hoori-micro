@@ -2,14 +2,13 @@
 
 ## Namen
 
-Service-, Action- und Instanznamen: 1–63 Zeichen, erster Buchstabe `a-z`, danach
-`a-z`, Ziffern oder Bindestrich, kein Bindestrich am Ende. Aufrufe verwenden
-`<service>.<action>`, Permissions `<service>:<scope>`. Hauptversionen 1–9999.
-Höchstens 128 Actions und 32 Abhängigkeiten pro Service.
+Service- und Instanznamen: 1–63 Zeichen, erster Buchstabe `a-z`, danach
+`a-z`, Ziffern oder Bindestrich, kein Bindestrich am Ende. Clients deklarieren Service/Version und HTTP-Mappings; Permissions verwenden `<service>:<scope>`. Hauptversionen 1–9999.
+Höchstens 128 Endpunkte und 32 Abhängigkeiten pro Service.
 
 Registry- und Advertise-URLs sind `http`/`https`-Origins mit Host und optional Port;
 kein Benutzer/Passwort, Query, Fragment oder Basispfad. Gateway-Templates beginnen mit
-`/`, nicht mit `/_hoori`, und bestehen aus unreservierten Literalen oder `{name}`.
+`/`, nicht mit `/_hoori`, und bestehen aus Literalen oder `{name}` nach der originalen SDK-Router-Grammatik.
 
 ## Java-Service-Konfiguration
 
@@ -28,7 +27,7 @@ damit lassen sich Konfigurationen ohne Prozess-Environment testen.
 | `HOORI_CLIENT_PENDING_ACQUIRES` | 0 | 0–4096 SDK-Wartende im Datenpool; normalerweise bei null lassen, um keine zweite Queue zu bilden. Control hat immer null Wartende |
 | `HOORI_INCOMING_CALLS` | min(16, Serververbindungen) | 1 bis Serverlimit; alle Fachrequests vor DTO-Decoding/Handler |
 | `HOORI_INCOMING_PENDING_CALLS` | 0 | 0 bis Serverlimit minus Incoming-Calls; wartende Fachrequests; zählen als aktive Roots |
-| `HOORI_OUTGOING_CALLS` | Client-Per-Origin-Limit | 1 bis Datenverbindungen; ein globales Permit für Encoding, RPC und Ergebnis-Decoding |
+| `HOORI_OUTGOING_CALLS` | Client-Per-Origin-Limit | 1 bis Datenverbindungen; ein globales Permit für Encoding, HTTP und Ergebnis-Decoding |
 | `HOORI_OUTGOING_PENDING_CALLS` | Outgoing-Calls | 0–512 Wartende vor Encoding; null bedeutet Fail-fast |
 | `HOORI_REQUEST_TIMEOUT_MS` | 10000 | 1–600000; Deadline eines eingehenden HTTP-Exchanges |
 | `HOORI_CLIENT_TIMEOUT_MS` | 2000 | 1–600000; Call-Grenze vor Admission/Encoding, zusätzlich vom laufenden Parent-Budget begrenzt |
@@ -70,7 +69,6 @@ Interne Restbudgets und die relative Wire-Grenze stehen in
 | `HOORI_DEMO_PORT` | Loopback-Hostport der Demo; 8080 normal, 18080 im Smoke-Test |
 | `HOORI_DEMO_CLIENT_TIMEOUT_MS` | Nur Compose-Demo: 30000, um Cold-Compilation getrennt zu qualifizieren |
 | `HOORI_DEMO_REQUEST_TIMEOUT_MS` | Nur Compose-Demo: 60000; ersetzt nicht den Framework-Default |
-| `HOORI_DEMO_RECOMMEND` | Nur Demo: `1` simuliert einen Recipes-Release mit zusätzlicher Action `recommend` |
 
 Die Compose-Datei leitet bewusst nur ihre deklarierten Variablen in Container.
 Ein `export HOORI_PORT=...` auf dem Host landet nicht automatisch im Container.
@@ -97,7 +95,7 @@ Das separat gebaute [Datenbeispiel](../examples/local-data/README.md) benötigt
 ist nur für die lokale Wegwerf-Datenbank vorgesehen. Der Beispiel-Launcher setzt
 Loopback, Port 8084, passende Advertise-URL und die lokale Registry auf 8090,
 sofern diese Werte nicht ausdrücklich gesetzt sind. Connect-/I/O-/Cancel-Bounds
-stehen zentral in `Database`, nicht an jedem Fachaufruf. Die normale Compose-
+stehen zentral in `DatabaseConfiguration`, nicht an jedem Fachaufruf. Die normale Compose-
 Datei startet keinen Datenbankdienst und erhält diese Variablen nicht.
 
 Pro Prozess ein `Microservice` besitzen und schließen; keine neuen Clients je
@@ -108,7 +106,7 @@ Registry-Katalog, nie aus Request-Werten. HTTPS-Origins erfordern passende CA-Ko
 Ein DNS-Name allein ist kein Service-Zertifikat oder Berechtigungsnachweis.
 
 Die Admission-Metriken `hoori_micro_calls_{active,pending,rejected_total,expired_total}`
-haben nur `direction="incoming"`/`"outgoing"`. Normale lokale Routen, Invoke und
+haben nur `direction="incoming"`/`"outgoing"`. Controller, lokale Routen und
 Gateway teilen die eingehende Fachgrenze. Health und feste Control-Routen liegen
 außerhalb, teilen aber weiter HTTP-/Carrier-Kapazität. Das SDK hat den begrenzten Raw-Body vor Admission bereits
 gelesen. Sättigung und Stop weisen Wartende sicher mit 503 ab; es gibt keine Retries.
@@ -128,3 +126,6 @@ kann bei abgelaufenem Transportbudget keine HTTP-Antwort mehr senden.
 
 Für lokale Entwicklung `run-local.sh` nutzen: es setzt Loopback und startet trotzdem
 die echte HooriVM. `java -jar ...` ist kein unterstützter Networking-Modus.
+
+Der Rolling-Smoke-Test baut mit `scripts/build_rolling.py` eine separate Provider-Version mit
+einem zusätzlichen Controller; produktive Anwendungen benötigen keinen Testschalter.

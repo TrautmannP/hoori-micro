@@ -1,122 +1,33 @@
-# Roadmap: Framework zuerst, Dahemm schrittweise
+# Roadmap
 
-Die Hoori-MS0–MS5-Runtime-Roadmap bleibt abgeschlossen und unabhängig. Dieses
-Repository führt eine eigene kleine Roadmap. Die Dahemm-Migration ist weder MS6
-noch bereits mit diesen Demos umgesetzt.
+Dieses Consumer-Repository bleibt unabhängig von Hooris abgeschlossener
+MS0–MS5-Runtime-Roadmap. Die Beispiele sind keine migrierten Dahemm-Fachdienste.
 
-## F0 — Dieser Bootstrap: implementiert, Basisabnahme gelaufen
+## MVC-Grundlage (#35–#42)
 
-Vorhanden: eigenständige Maven-Bibliothek, expliziter Service-Lifecycle,
-Action-Definitionen mit Registry, Broker und Gateway, Konfigurationsvalidierung,
-HTTP-/Runtime-Metriken, Request-ID/Restbudget-Kontext, Pool-Ownership, vorbereitete
-Gateway-Snapshots, verwaltete Request-Roots mit Kontext, Cancellation und echtem
-Scope-Drain, typisierter Fan-out und Batch/Bulk, Deregistrierung, Demo-Services,
-Runtime-Provenienzprüfung und Prüf-Scripte. Annotierte Records liefern generierte
-JSON-Codecs und explizite Validierung mit begrenzten RPC-/Gateway-Feldfehlern.
-Optionale separate Beispiele zeigen
-Buildzeit-Fassaden und lokale Transaktionen mit atomarem Daten-/Outbox-Commit.
-Build, Guest-Checks und Smoke-Test sind gelaufen (siehe `validation.md`).
+Das Standardmodell ist Application → Controller → Fachservice → Repository/Client.
+Bootstrap, MVC-Binding, typisierte Clients, HTTP-Endpunktkatalog und Gateway nutzen
+die originalen SDKs. Optionale Task-/Datenbeispiele folgen derselben Struktur.
+Die konkrete lokale Abnahme und ihre Grenzen stehen in [validation.md](validation.md).
 
-**Exit-Kriterium:** alle folgenden F1-Checks grün. Bis dahin als experimentellen
-Bootstrap behandeln, nicht als produktionsreifes Framework.
+## Offene Betriebsarbeit
 
-## F1 — Echte Runtime- und Betriebsabnahme
+- [#8](https://github.com/TrautmannP/hoori-micro/issues/8): minimales Runtime-Image
+  und qualifizierter Upgrade-Prozess.
+- [#10](https://github.com/TrautmannP/hoori-micro/issues/10): eigene Last-/Rolling-
+  und Ressourcenabnahme; funktionale Smoke-Checks ersetzen sie nicht.
+- [#11](https://github.com/TrautmannP/hoori-micro/issues/11): wiederholte Release-
+  Baseline gegen nacktes REST. Alte Messwerte qualifizieren die MVC-API nicht.
+- Produktionsidentität, Registry-Autorisierung, TLS-/Capability-Negativfälle und
+  eine autorisierte CI-Pipeline benötigen eigene Umsetzung und Nachweise.
 
-- Passende, saubere Hoori-Distribution bauen; `scripts/build.sh` mit echten SDK-JARs
-  ausführen. JUnit-Berichte und Runtime-/Toolchain-Identität aufbewahren.
-- `test-hoori-core.sh` und `smoke.py` in Interpreter und Mixed ausführen. Fehler
-  an der passenden Schicht beheben, nicht auf HotSpot-Netzwerk umschalten.
-- Mehrere Replikate, Rolling/Katalogwechsel unter Last, Überlast, Registry-Timeout/
-  -Ablauf und wiederholte Recovery sind gelaufen. Offen bleiben verweigerte DNS-/
-  Connect-Capabilities und verifiziertes HTTPS/ungültige Zertifikate. Grace-Ablauf,
-  Kind-/Ressourcen-Drain und der nicht kooperierende Negativfall sind für Tasks v2 geprüft.
-- Service-Identität für Registry und `/_hoori/invoke` festlegen, bevor irgendetwas
-  außerhalb eines vertrauenswürdigen privaten Netzes läuft.
-- Release-Baseline mit nacktem REST-Service vergleichen: Warmup, Latenzen, Durchsatz,
-  RSS/Heap, Idle-/Last-/Recovery-Verhalten. Keine ungemessenen Optimierungen behaupten.
+## Vor einer Dahemm-Migration
 
-Im aktuellen Git-Baum liegt keine CI-Konfiguration. Eine Integration-Pipeline
-benötigt autorisierten Zugriff auf die private, gepinnte Hoori-Quelle oder auf eine
-vertrauenswürdige Runtime-Distribution. Keine Tokens in Docker-Layers, keine Secrets
-an nicht vertrauenswürdige Pull-Request-Jobs durchreichen.
+Aktuelle App-API, Fachgrenzen, Datenhoheit, Haushaltsberechtigungen und
+Transaktionsanforderungen separat aufnehmen. Erst daraus einen kleinen
+rückschaltbaren Use-Case wählen. Die HTTP-Demo hat einen In-Memory-Speicher; das
+Datenbeispiel besitzt nur sein eigenes Schema und demonstriert keine Datenmigration.
 
-## F2 — Dahemm-Verträge und Sicherheitsgrundlage
-
-**Vor der ersten echten Fachmigration** das aktuelle Dahemm-Backend separat prüfen:
-Endpunkte, Datenmodell, Authentifizierung, Haushalts-/Mandantenberechtigungen,
-Transaktionen und bestehende Client-Verträge inventarisieren. Diese Bestandsaufnahme
-ist in diesem Bootstrap ausdrücklich nicht erfolgt.
-
-Eine kleine sinnvolle erste Grenzziehung muss aus tatsächlicher Fachlogik entstehen,
-nicht aus „eine Tabelle = ein Microservice“. Rezepte und Einkaufen in der Demo sind
-Kommunikationsbeispiele, keine freigegebene Zielarchitektur für sämtliche Dahemm-Daten.
-
-Festzulegen und zu testen:
-
-- Versionierte APIs, Status-/Fehlerverträge und getrennte Wire-DTOs. Bestehende
-  Android-API anfangs am bisherigen Backend/Rand stabil halten.
-- Service-Identität, Benutzer-/Haushaltskontext und Autorisierung beim tatsächlichen
-  Datenbesitzer nach [security.md](security.md); keine ungeprüften `X-User`-/
-  `X-Household`-Header als Vertrauensbasis.
-- PostgreSQL-/JDBC-Laufzeitabnahme auf dem benötigten Hoori-Stand: Treiber,
-  Migrationen, Timeouts, Transaktionen, Pooling und Ressourcen unter Fehlern.
-  Das optionale Datenbeispiel belegt bereits kurze lokale Transaktionen, Query-Cancel
-  und UNKNOWN ohne Replay; Dahemm-Migrationen und Pooling sind davon nicht abgedeckt.
-
-Die VM-/JDBC-Unterstützung darf nicht allein aus „Java-kompatibel“ oder einem grünen
-HTTP-Test abgeleitet werden. Datenbank-Pools und Client-Pools sind unterschiedliche
-Ressourcen. Keine eigene ORM- oder allgemeine Repository-Abstraktion ohne Bedarf.
-
-## F3 — Erster rückschaltbarer vertikaler Schnitt
-
-Empfehlung: zuerst einen **lesenden Rezept-Use-Case**, sofern die Bestandsaufnahme
-diese Grenze bestätigt. Das bisherige Dahemm-Backend kann zunächst seine externe
-API behalten und diesen einzelnen Aufruf an den neuen Service delegieren. Dazu
-keinen generischen Gateway-Proxy entwickeln; ein konkreter Adapter reicht.
-
-Akzeptanz: gleiche fachliche Ergebnisse und Berechtigungen, Contract-Tests zwischen
-altem Rand und neuem Service, nachvollziehbare Request-Korrelation, definierte
-Ausfallantwort und ein schneller Rückschaltpfad. Ein rein lesender Schattenvergleich
-ist möglich, solange Datenzugriff und Datenschutz passend abgesichert sind.
-Keine unkontrollierten Schreib-Doppelaufrufe zum „Vergleichen“.
-
-Erst nach erfolgreicher Abnahme einen schreibenden Use-Case verschieben. Für jeden
-Datensatz muss zu jedem Zeitpunkt klar sein, welcher Service Schreibhoheit besitzt.
-Eine bestehende PostgreSQL-Instanz kann organisatorisch mehrere Dienste bedienen;
-getrennte Datenhoheit/Zugriffsrechte und keine serviceübergreifenden Tabellenzugriffe
-bleiben trotzdem notwendig. Separate physische Datenbanken sind nicht automatisch
-für den allerersten Schritt erforderlich.
-
-## F4 — Zuverlässige asynchrone Prozesse, nur bei Bedarf
-
-Wenn beispielsweise ein Wochenplan Zutaten für Einkaufslisten auslöst, zuerst die
-Konsistenzanforderung festlegen. Ein transparenter synchroner Aufruf kann reichen.
-Soll ein Vorgang einen Service-Ausfall überstehen, sind persistente Nachrichten oder
-Jobs nötig, nicht ein In-Memory-EventEmitter.
-
-Das Datenbeispiel speichert bereits eine Outbox atomar mit seinen Daten.
-Bei tatsächlichem Zustellbedarf separat entwerfen und testen: dauerhafter Broker/Transport,
-versionierte Events, idempotente Consumer, Wiederholungsgrenzen und Umgang mit
-nicht verarbeitbaren Nachrichten. Keine „exactly once“-Behauptung und keine
-verteilte ACID-Transaktion als implizites Framework-Versprechen.
-
-## F5 — Skalierung erst mit Betriebsdaten
-
-Hochverfügbare Registry, gesundheitsbewusste statt reiner Round-Robin-Verteilung,
-Multi-Host-Betrieb, Circuit Breaker und verteiltes
-Tracing sind mögliche Folgeschritte. Sie benötigen eigene Nachweise. Zwei
-unkoordiniert gestartete Registry-Container sind keine Hochverfügbarkeit.
-
-Die aktuelle Request-ID hilft bei Korrelation, ersetzt aber keine Trace-Spans.
-Relative Restbudgets laufen bereits über alle Service-Hops; sie ersetzen keine
-globale Echtzeitfrist oder Remote-Cancellation.
-Bestehende HTTP-Metriken bleiben begrenzt; neue Labelwerte dürfen nicht aus
-Benutzer-IDs, URLs oder beliebigen Request-Parametern entstehen.
-
-## Bewusste Nicht-Ziele
-
-Keine Service-Mesh-Implementierung, universelle Gateway-Engine (Rewrites, Query-
-Mapping, Transformationen), Reflection-DI, automatische Controller-Erkennung, ORM,
-Eventbus und Build-Tool-Neuentwicklung im Bootstrap. Registry, Broker und Gateway
-bleiben auf das Action-Modell in `architecture.md` begrenzt. Eine Erweiterung benötigt einen konkreten
-Dahemm-Use-Case oder ein gemessenes Defizit sowie einen kleinen reproduzierbaren Test.
+Persistente Outbox-Zustellung, idempotente Consumer, hochverfügbare Registry,
+Circuit Breaker oder Tracing erst bei einem konkreten Bedarf entwerfen.
+Keine verteilte ACID-/Exactly-once-Zusage aus lokalen Transaktionschecks ableiten.

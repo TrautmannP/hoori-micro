@@ -2,7 +2,7 @@
 
 Inspektion: 4. Oktober 2026 per `gh` und gegen den sauberen lokalen Checkout.
 Repository: `TrautmannP/hoori` (privat).
-Gepinnter Commit: `6f581305baa31f75b6ffdf8214f527b966ac66d1`.
+Gepinnter Commit: `83d2b8fc83ffee6ed7c748409ff7b4802d8a341b`.
 
 Wesentliche Quellen (HTTP-/REST-Grundlagen aus der bisherigen Baseline,
 Tasks-, DTO-, optionale Daten- und Distributionsverträge direkt geprüft):
@@ -16,7 +16,11 @@ Tasks-, DTO-, optionale Daten- und Distributionsverträge direkt geprüft):
 - `sdk/hoori-rest-{annotations,processor}`, `sdk/hoori-validation-{api,processor}`,
   `sdk/hoori-rest-validation-api`, `examples/hello-rest-validation` und
   `scripts/validation_test.py`: originale Record-Codecs, Avaje 2.18/Jakarta 3.1.1,
-  explizite Adapter, unterstütztes Profil, Fehlerformat und Provider-JAR-Prüfsummen.
+  generierte Adapter, unterstütztes Profil, Fehlerformat und Provider-JAR-Prüfsummen.
+- `sdk/hoori-rest-mvc-{api,processor}`, `HttpContract`, `JsonCodecs`, `ControllerRoutes`,
+  `MvcErrors` und `HttpResult`: gemeinsames Binding-/DTO-Modell und endliche Responseverträge.
+- `sdk/hoori-validation-avaje{,-processor}`: neutrale Validation-SPI und originale
+  Avaje-Factories; kein Avaje-Provider im Micro-Core.
 - `examples/hello-rest/README.md`: unabhängige Consumer, CLI-Argumente,
   operative Lifecycle-Nutzung und Cold-Compilation-Hinweise.
 - `scripts/build-distribution.sh`, `scripts/build-bundle.sh`:
@@ -34,7 +38,7 @@ Tasks-, DTO-, optionale Daten- und Distributionsverträge direkt geprüft):
 - `crates/hoori-cli/src/main.rs`: `build-info`, insbesondere Feature-Liste als JSON-Array.
 
 Pfadpräfix für die Repository-Quellen:
-`https://github.com/TrautmannP/hoori/blob/6f581305baa31f75b6ffdf8214f527b966ac66d1/`
+`https://github.com/TrautmannP/hoori/blob/83d2b8fc83ffee6ed7c748409ff7b4802d8a341b/`
 
 Öffentliche Primärquellen:
 
