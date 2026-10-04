@@ -3,6 +3,7 @@ package dev.hoori.micro.crud.controller;
 import dev.hoori.micro.crud.dto.CreateRecipe;
 import dev.hoori.micro.crud.dto.Recipe;
 import dev.hoori.micro.crud.service.RecipeService;
+import hoori.micro.app.GatewayRoute;
 import hoori.rest.mvc.*;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;
@@ -18,16 +19,19 @@ public final class RecipeController {
     }
 
     @GetMapping("/{id}")
+    @GatewayRoute(permission = "crud:read")
     public Recipe get(@PathVariable("id") @Positive long id) {
         return recipes.get(id);
     }
 
     @GetMapping
+    @GatewayRoute(permission = "crud:read")
     public List<Recipe> list(@RequestParam(value = "prefix", defaultValue = "") String prefix) {
         return recipes.list(prefix);
     }
 
     @PostMapping
+    @GatewayRoute(permission = "crud:write")
     public HttpResult<Recipe> create(@RequestBody @Valid CreateRecipe input) {
         Recipe recipe = recipes.create(input);
 
@@ -35,6 +39,7 @@ public final class RecipeController {
     }
 
     @DeleteMapping("/{id}")
+    @GatewayRoute(permission = "crud:write")
     @ResponseStatus(204)
     public void delete(@PathVariable("id") @Positive long id) {
         recipes.delete(id);

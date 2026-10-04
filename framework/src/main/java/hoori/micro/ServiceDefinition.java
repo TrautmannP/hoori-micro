@@ -10,6 +10,7 @@ final class ServiceDefinition {
     final LinkedHashMap<String, Catalog.Entry> endpoints = new LinkedHashMap<>();
     final LinkedHashMap<String, Integer> dependencies = new LinkedHashMap<>();
     boolean frozen;
+    String contractHash, apiGroup;
 
     ServiceDefinition(String name, int version) {
         this.name = ServiceName.require(name);

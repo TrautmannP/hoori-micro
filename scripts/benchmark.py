@@ -125,7 +125,7 @@ def http(port: int, path: str, method: str = "GET", payload=None):
     connection = HTTPConnection("127.0.0.1", port, timeout=10)
     try:
         body = None if payload is None else json.dumps(payload).encode()
-        connection.request(method, path, body, {"Content-Type": "application/json", "X-Hoori-Catalog-Protocol": "3"})
+        connection.request(method, path, body, {"Content-Type": "application/json", "X-Hoori-Catalog-Protocol": "4"})
         response = connection.getresponse()
         data = response.read()
         if response.status >= 400:

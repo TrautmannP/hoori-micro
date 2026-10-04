@@ -43,7 +43,7 @@ def main():
     pom = pom.replace("</project>", """<dependencies><dependency><groupId>independent</groupId><artifactId>shared-components</artifactId><version>1</version></dependency></dependencies></project>""")
     (app / "pom.xml").write_text(pom)
     main_source = app / "src/main/java/dev/hoori/micro/crud/CrudApplication.java"
-    code = main_source.read_text().replace('@MicroApplication(name = "crud")', '@MicroApplication(name = "crud", imports = {shared.Shared.class})')
+    code = main_source.read_text().replace('name = "crud"', 'name = "crud", imports = {shared.Shared.class}')
     # The independent native consumer exercises bootstrap/resource close without opening a listener.
     code = code.replace('Micro.run(CrudApplication.class, args);', 'try (var app = Micro.create(CrudApplication.class, hoori.micro.Environment.system(), args)) { System.out.println("independent_app_ready"); }')
     main_source.write_text(code)

@@ -1,0 +1,266 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "recipes demo API",
+    "version": "1.0.0",
+    "description": "In-memory development demonstration; no production authentication."
+  },
+  "x-hoori-service-version": 1,
+  "x-hoori-api-group": "public",
+  "paths": {
+    "/recipes/{id}": {
+      "get": {
+        "operationId": "recipesGetRecipe",
+        "summary": "GetRecipe",
+        "x-hoori-permission": "recipes:read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Recipe"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Public error; raw HTTP parser errors may be plain text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "exclusiveMinimum": 0
+            }
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "recipesDeleteRecipe",
+        "summary": "DeleteRecipe",
+        "x-hoori-permission": "recipes:write",
+        "responses": {
+          "204": {
+            "description": "Success"
+          },
+          "default": {
+            "description": "Public error; raw HTTP parser errors may be plain text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "exclusiveMinimum": 0
+            }
+          }
+        ]
+      }
+    },
+    "/recipes": {
+      "get": {
+        "operationId": "recipesListRecipes",
+        "summary": "ListRecipes",
+        "x-hoori-permission": "recipes:read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "$ref": "#/components/schemas/Recipe"
+                  },
+                  "maxItems": 256
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Public error; raw HTTP parser errors may be plain text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "prefix",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": ""
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "recipesCreateRecipe",
+        "summary": "CreateRecipe",
+        "x-hoori-permission": "recipes:write",
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Recipe"
+                }
+              }
+            },
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Created resource path"
+              }
+            }
+          },
+          "default": {
+            "description": "Public error; raw HTTP parser errors may be plain text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRecipe"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CreateRecipe": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "x-hoori-not-blank": true,
+            "x-hoori-max-utf16-length": 200
+          }
+        },
+        "required": [
+          "title"
+        ]
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "violations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "code"
+              ]
+            },
+            "maxItems": 256
+          }
+        },
+        "required": [
+          "code"
+        ]
+      },
+      "Recipe": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ]
+      }
+    }
+  }
+}

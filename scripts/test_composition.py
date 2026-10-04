@@ -111,13 +111,14 @@ def main():
             until(lambda: request(role, "/health/ready")[0] == 200, role + " ready")
 
         expected = {"recipe": {"id": 1, "title": "Kartoffelsuppe"}, "available": ["Kartoffeln", "Möhren"]}
-        until(lambda: request("gateway", "/overview/1")[0] == 200, "discovered overview")
         if args.facade:
             until(lambda: request("facade-app", "/overview/1")[0] == 200, "normal generated facade application")
             assert result("facade-app", "/overview/1") == expected
             assert request("facade-app", "/overview/0")[0] == 400
             stop("facade-app")
             evidence["checks"].append("normal FacadeApplication main constructs generated clients/task/scoped graph and drains")
+        # The standalone facade now publishes its contract. Stop it before the other /overview provider.
+        until(lambda: request("gateway", "/overview/1")[0] == 200, "discovered overview")
         assert result("shopping", "/local") == expected
         assert result("gateway", "/overview/1", headers={"X-Request-ID": "two-providers", "Authorization": "SECRET"}) == expected
         assert all(probe(role)["requestId"] == "two-providers" and not probe(role)["credentials"] for role in ("recipes", "pantry"))

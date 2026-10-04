@@ -1,0 +1,131 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "drafts demo API",
+    "version": "1.0.0",
+    "description": "In-memory development demonstration; no production authentication."
+  },
+  "x-hoori-service-version": 1,
+  "x-hoori-api-group": "public",
+  "paths": {
+    "/drafts": {
+      "post": {
+        "operationId": "draftsSaveDraft",
+        "summary": "SaveDraft",
+        "x-hoori-permission": "drafts:write",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedDraft"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Public error; raw HTTP parser errors may be plain text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Draft"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Draft": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "exclusiveMinimum": 0
+          },
+          "recipeId": {
+            "type": "integer",
+            "format": "int64",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "id",
+          "recipeId"
+        ]
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "violations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "code"
+              ]
+            },
+            "maxItems": 256
+          }
+        },
+        "required": [
+          "code"
+        ]
+      },
+      "SavedDraft": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "status"
+        ]
+      }
+    }
+  }
+}

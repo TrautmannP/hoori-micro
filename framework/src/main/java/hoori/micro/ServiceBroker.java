@@ -72,7 +72,9 @@ final class ServiceBroker {
                         service.name,
                         service.version,
                         config.advertiseUrl,
-                        service.endpoints.values().toArray(new Catalog.Entry[0])),
+                        service.endpoints.values().toArray(new Catalog.Entry[0]),
+                        service.contractHash,
+                        service.apiGroup),
                 Catalog.INSTANCE,
                 limits);
         filter = Catalog.Filter.consumer(service.dependencies, publicCatalog);
@@ -179,9 +181,24 @@ final class ServiceBroker {
             byte[] body,
             View source)
             throws IOException {
+        return invoke(permit, invocation, service, version, endpoint, pathAndQuery, explicit, body, source, null);
+    }
+
+    Response invoke(
+            Admission.Permit permit,
+            Invocation invocation,
+            String service,
+            int version,
+            HttpEndpoint endpoint,
+            String pathAndQuery,
+            Headers explicit,
+            byte[] body,
+            View source,
+            Gateway.Route published)
+            throws IOException {
         permit.check(outgoing);
         Catalog.Instance target = (fresh(source) ? source.catalog : Catalog.EMPTY)
-                .select(service, version, endpoint.key(), turn.getAndIncrement());
+                .select(service, version, endpoint.key(), turn.getAndIncrement(), published);
 
         if (target == null) throw new ServiceCallException(service, 0, "no instance offers endpoint", null);
 
@@ -265,6 +282,10 @@ final class ServiceBroker {
     void followPublicCatalog() {
         filter = Catalog.Filter.consumer(service.dependencies, true);
         publicCatalog = true;
+    }
+
+    boolean followsPublicCatalog() {
+        return publicCatalog;
     }
 
     boolean needsDiscovery() {
@@ -390,8 +411,12 @@ final class ServiceBroker {
 
         if (!sameEpoch && old != Catalog.EMPTY) retiredEpoch = old.epoch;
 
+        GatewayPublication publication = accepted == old
+                ? current.publication
+                : publicCatalog ? GatewayPublication.build(accepted, routes) : null;
+
         synchronized (this) {
-            view = new View(accepted, fetchedNanos, scope, true, routes, routing);
+            view = new View(accepted, fetchedNanos, scope, true, routes, routing, publication);
         }
     }
 
@@ -417,7 +442,8 @@ final class ServiceBroker {
             synchronized (this) {
                 if (view != sent) throw new IOException("Expired catalog confirmation");
 
-                view = new View(sent.catalog, System.nanoTime(), sent.scope, true, sent.routes, sent.routing);
+                view = new View(
+                        sent.catalog, System.nanoTime(), sent.scope, true, sent.routes, sent.routing, sent.publication);
             }
 
             return;
@@ -442,6 +468,7 @@ final class ServiceBroker {
         final boolean live;
         final Gateway.Route[] routes;
         final hoori.rest.Router routing;
+        final GatewayPublication publication;
 
         View(
                 Catalog catalog,
@@ -450,12 +477,24 @@ final class ServiceBroker {
                 boolean live,
                 Gateway.Route[] routes,
                 hoori.rest.Router routing) {
+            this(catalog, fetchedNanos, scope, live, routes, routing, null);
+        }
+
+        View(
+                Catalog catalog,
+                long fetchedNanos,
+                String scope,
+                boolean live,
+                Gateway.Route[] routes,
+                hoori.rest.Router routing,
+                GatewayPublication publication) {
             this.catalog = catalog;
             this.fetchedNanos = fetchedNanos;
             this.scope = scope;
             this.live = live;
             this.routes = routes;
             this.routing = routing;
+            this.publication = publication;
         }
     }
 

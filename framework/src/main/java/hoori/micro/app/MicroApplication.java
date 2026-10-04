@@ -13,4 +13,10 @@ public @interface MicroApplication {
     int version() default 1;
 
     Class<?>[] imports() default {};
+
+    /** Classpath resource containing the authoritative public OpenAPI 3.1 JSON contract. */
+    String openApi() default "";
+
+    /** Optional previous release contract; existing operations are checked within the same major. */
+    String openApiBaseline() default "";
 }

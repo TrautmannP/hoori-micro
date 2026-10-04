@@ -34,6 +34,19 @@ public final class Gateway implements Middleware {
 
     public static void mount(Microservice app, BiPredicate<Request, String> policy) {
         app.routes().use(new Gateway(app, policy));
+        app.controlRoute("GET", "/_hoori/publication", request -> {
+            GatewayPublication publication = app.broker().snapshot().publication;
+
+            if (publication == null) return Response.text(503, "Publication unavailable");
+
+            return new Response(
+                    200,
+                    new Headers()
+                            .add("Content-Type", "application/json")
+                            .add("Cache-Control", "no-store")
+                            .add("X-Hoori-Publication", publication.id),
+                    publication.bytes);
+        });
     }
 
     /** Demo permissions are granted to every caller; this is not authentication. */
@@ -51,6 +64,9 @@ public final class Gateway implements Middleware {
 
         try (Microservice app = Microservice.create("gateway")) {
             mount(app, (request, permission) -> granted.contains(permission));
+
+            if ("true".equals(Environment.system().get("HOORI_OPENAPI_ENABLED"))) OpenApi.mount(app);
+
             app.run();
         }
     }
@@ -94,7 +110,8 @@ public final class Gateway implements Middleware {
                     request.raw().target,
                     headers,
                     request.raw().body,
-                    snapshot);
+                    snapshot,
+                    selected);
 
             if (response.status < 200 || response.status >= 300) {
                 ServiceCallException failure = broker.failure(selected.service, selected.contract, response);
@@ -212,7 +229,7 @@ public final class Gateway implements Middleware {
     }
 
     static final class Route {
-        final String service, path, permission;
+        final String service, path, permission, operationHash, apiGroup;
         final HttpEndpoint contract;
         final int version;
 
@@ -222,6 +239,8 @@ public final class Gateway implements Middleware {
             contract = entry.contract;
             path = contract.path();
             permission = entry.permission;
+            operationHash = entry.operationHash;
+            apiGroup = instance.apiGroup;
         }
 
         boolean sameTarget(Route other) {
@@ -232,7 +251,20 @@ public final class Gateway implements Middleware {
         }
 
         boolean sameDefinition(Route other) {
-            return sameTarget(other) && contract.equals(other.contract) && permission.equals(other.permission);
+            return sameTarget(other)
+                    && contract.equals(other.contract)
+                    && permission.equals(other.permission)
+                    && java.util.Objects.equals(operationHash, other.operationHash)
+                    && java.util.Objects.equals(apiGroup, other.apiGroup);
+        }
+
+        boolean matches(Catalog.Instance instance, Catalog.Entry entry) {
+            return version == instance.version
+                    && service.equals(instance.service)
+                    && contract.equals(entry.contract)
+                    && permission.equals(entry.permission)
+                    && java.util.Objects.equals(operationHash, entry.operationHash)
+                    && java.util.Objects.equals(apiGroup, instance.apiGroup);
         }
     }
 }

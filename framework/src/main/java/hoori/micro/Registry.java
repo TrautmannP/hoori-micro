@@ -169,10 +169,11 @@ public final class Registry {
     private static Catalog.Filter protocol(Headers headers, boolean required) {
         String version = headers.get(Catalog.PROTOCOL_HEADER);
 
-        if (!Catalog.PROTOCOL.equals(version)) throw new RequestException(426, "Catalog protocol 3 required");
+        if (!Catalog.PROTOCOL.equals(version))
+            throw new RequestException(426, "Catalog protocol " + Catalog.PROTOCOL + " required");
 
         if (version == null && headers.get(Catalog.VIEW_HEADER) != null)
-            throw new RequestException(426, "Catalog protocol 3 required");
+            throw new RequestException(426, "Catalog protocol " + Catalog.PROTOCOL + " required");
 
         int views = 0;
         for (int i = 0; i < headers.size(); i++)

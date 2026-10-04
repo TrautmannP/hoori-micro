@@ -61,7 +61,7 @@ def main():
                                "instances": selected}).encode() if status != 204 else b""
             self.send_response(status)
             for name, value in {"Content-Type": "application/json", "Content-Length": str(len(body)),
-                "X-Hoori-Catalog-Protocol": "3", "X-Hoori-Catalog-Epoch": "budget-test",
+                "X-Hoori-Catalog-Protocol": "4", "X-Hoori-Catalog-Epoch": "budget-test",
                 "X-Hoori-Catalog-Revision": str(current), "X-Hoori-Catalog-View": view}.items():
                 self.send_header(name, value)
             self.end_headers()

@@ -62,7 +62,7 @@ def main():
                 body = json.dumps({"epoch": "tasks-test", "revision": 1, "complete": True,
                                    "instances": instances}).encode()
                 self.send_response(200)
-                for k, v in {"X-Hoori-Catalog-Protocol": "3", "X-Hoori-Catalog-Epoch": "tasks-test",
+                for k, v in {"X-Hoori-Catalog-Protocol": "4", "X-Hoori-Catalog-Epoch": "tasks-test",
                              "X-Hoori-Catalog-Revision": "1", "X-Hoori-Catalog-View": view}.items():
                     self.send_header(k, str(v))
             else:

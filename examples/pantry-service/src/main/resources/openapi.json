@@ -1,0 +1,102 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "pantry demo API",
+    "version": "1.0.0",
+    "description": "In-memory development demonstration; no production authentication."
+  },
+  "x-hoori-service-version": 1,
+  "x-hoori-api-group": "public",
+  "paths": {
+    "/pantry/{id}": {
+      "get": {
+        "operationId": "pantryItems",
+        "summary": "Items",
+        "x-hoori-permission": "pantry:read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "maxItems": 256
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Public error; raw HTTP parser errors may be plain text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "exclusiveMinimum": 0
+            }
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "violations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "code"
+              ]
+            },
+            "maxItems": 256
+          }
+        },
+        "required": [
+          "code"
+        ]
+      }
+    }
+  }
+}

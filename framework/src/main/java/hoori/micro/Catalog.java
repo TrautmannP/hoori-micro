@@ -1,5 +1,7 @@
 package hoori.micro;
 
+import hoori.micro.openapi.ContractJson;
+import hoori.micro.openapi.OpenApiDocument;
 import hoori.rest.json.JsonCodec;
 import hoori.rest.json.JsonException;
 import hoori.rest.json.JsonReader;
@@ -15,7 +17,7 @@ import java.util.Objects;
  */
 final class Catalog {
     static final int MAX_INSTANCES = 256;
-    static final String PROTOCOL = "3";
+    static final String PROTOCOL = "4";
     static final String PROTOCOL_HEADER = "X-Hoori-Catalog-Protocol";
     static final String EPOCH_HEADER = "X-Hoori-Catalog-Epoch", REVISION_HEADER = "X-Hoori-Catalog-Revision";
     static final String VIEW_HEADER = "X-Hoori-Catalog-View", KNOWN_VIEW_HEADER = "X-Hoori-Catalog-Known-View";
@@ -35,46 +37,75 @@ final class Catalog {
 
     /** Round-robin over instances of this major version that offer this endpoint, never per service. */
     Instance select(String service, int version, String endpoint, int turn) {
+        return select(service, version, endpoint, turn, null);
+    }
+
+    Instance select(String service, int version, String endpoint, int turn, Gateway.Route published) {
         // ponytail: linear scan over at most 256 instances; index by endpoint if it shows up in profiles.
         int count = 0;
-        for (Instance instance : instances) if (instance.offers(service, version, endpoint)) count++;
+        for (Instance instance : instances) if (instance.offers(service, version, endpoint, published)) count++;
 
         if (count == 0) return null;
 
         int pick = (turn & Integer.MAX_VALUE) % count;
         for (Instance instance : instances)
-            if (instance.offers(service, version, endpoint) && pick-- == 0) return instance;
+            if (instance.offers(service, version, endpoint, published) && pick-- == 0) return instance;
         throw new IllegalStateException();
     }
 
     static final class Entry {
         final HttpEndpoint contract;
-        final String key, permission;
+        final String key, permission, operationHash;
 
         Entry(HttpEndpoint contract, String permission) {
+            this(contract, permission, null);
+        }
+
+        Entry(HttpEndpoint contract, String permission, String operationHash) {
             this.contract = Objects.requireNonNull(contract);
             this.key = contract.key();
             this.permission = permission;
+            this.operationHash = operationHash;
         }
     }
 
     static final class Instance {
-        final String id, service, url;
+        final String id, service, url, contractHash, apiGroup;
         final int version;
         final Entry[] endpoints;
 
         Instance(String id, String service, int version, String url, Entry[] endpoints) {
+            this(id, service, version, url, endpoints, null, null);
+        }
+
+        Instance(
+                String id,
+                String service,
+                int version,
+                String url,
+                Entry[] endpoints,
+                String contractHash,
+                String apiGroup) {
             this.id = id;
             this.service = service;
             this.version = version;
             this.url = url;
             this.endpoints = endpoints;
+            this.contractHash = contractHash;
+            this.apiGroup = apiGroup;
         }
 
         boolean offers(String service, int version, String key) {
+            return offers(service, version, key, null);
+        }
+
+        boolean offers(String service, int version, String key, Gateway.Route published) {
             if (this.version != version || !this.service.equals(service)) return false;
 
-            for (Entry entry : endpoints) if (entry.key.equals(key)) return true;
+            for (Entry entry : endpoints)
+                if (entry.key.equals(key)
+                        && (published == null || entry.permission != null && published.matches(this, entry)))
+                    return true;
 
             return false;
         }
@@ -84,12 +115,16 @@ final class Catalog {
                     || !service.equals(other.service)
                     || version != other.version
                     || !url.equals(other.url)
+                    || !Objects.equals(contractHash, other.contractHash)
+                    || !Objects.equals(apiGroup, other.apiGroup)
                     || endpoints.length != other.endpoints.length) return false;
 
             for (int i = 0; i < endpoints.length; i++) {
                 Entry a = endpoints[i], b = other.endpoints[i];
 
-                if (!a.key.equals(b.key) || !Objects.equals(a.permission, b.permission)) return false;
+                if (!a.key.equals(b.key)
+                        || !Objects.equals(a.permission, b.permission)
+                        || !Objects.equals(a.operationHash, b.operationHash)) return false;
             }
 
             return true;
@@ -188,7 +223,9 @@ final class Catalog {
                             instance.service,
                             instance.version,
                             instance.url,
-                            endpoints.toArray(new Entry[0])));
+                            endpoints.toArray(new Entry[0]),
+                            published ? instance.contractHash : null,
+                            published ? instance.apiGroup : null));
             }
 
             return new Catalog(source.epoch, source.revision, source.complete, selected.toArray(new Instance[0]));
@@ -198,7 +235,7 @@ final class Catalog {
     static final JsonCodec<Instance> INSTANCE = new JsonCodec<>() {
         @Override
         public Instance read(JsonReader input) {
-            String id = null, service = null, url = null;
+            String id = null, service = null, url = null, contractHash = null, apiGroup = null;
             long version = 0;
             boolean declared = false;
             ArrayList<Entry> endpoints = new ArrayList<>();
@@ -209,6 +246,8 @@ final class Catalog {
                     case "service" -> service = input.nextString();
                     case "version" -> version = input.nextLong();
                     case "url" -> url = input.nextString();
+                    case "contractHash" -> contractHash = input.nextString();
+                    case "apiGroup" -> apiGroup = input.nextString();
                     case "endpoints" -> {
                         declared = true;
                         input.beginArray();
@@ -232,10 +271,23 @@ final class Catalog {
                     throw new IllegalArgumentException();
 
                 url = ServiceConfig.origin(url, "registration");
+
+                if ((contractHash == null) != (apiGroup == null)
+                        || contractHash != null
+                                && (!ContractJson.isHash(contractHash) || !OpenApiDocument.name(apiGroup)))
+                    throw new IllegalArgumentException();
+
                 for (int i = 0; i < endpoints.size(); i++) {
                     Entry entry = endpoints.get(i);
 
                     if (entry.permission != null) Gateway.permission(service, entry.permission);
+
+                    if (entry.operationHash != null
+                                    && (entry.permission == null
+                                            || contractHash == null
+                                            || !ContractJson.isHash(entry.operationHash))
+                            || contractHash != null && entry.permission != null && entry.operationHash == null)
+                        throw new IllegalArgumentException();
 
                     for (int j = 0; j < i; j++)
                         if (endpoints.get(j).key.equals(entry.key)) throw new IllegalArgumentException();
@@ -244,11 +296,17 @@ final class Catalog {
                 throw new JsonException("Invalid registration");
             }
 
-            return new Instance(id, service, (int) version, url, endpoints.toArray(new Entry[0]));
+            return new Instance(
+                    id, service, (int) version, url, endpoints.toArray(new Entry[0]), contractHash, apiGroup);
         }
 
         private Entry entry(JsonReader input) {
-            String method = null, path = null, consumes = null, produces = null, permission = null;
+            String method = null,
+                    path = null,
+                    consumes = null,
+                    produces = null,
+                    permission = null,
+                    operationHash = null;
             input.beginObject();
             while (input.hasNext()) {
                 switch (input.nextName()) {
@@ -257,12 +315,13 @@ final class Catalog {
                     case "consumes" -> consumes = input.nextString();
                     case "produces" -> produces = input.nextString();
                     case "permission" -> permission = input.nextString();
+                    case "operationHash" -> operationHash = input.nextString();
                     default -> input.skipValue();
                 }
             }
             input.endObject();
             try {
-                return new Entry(new HttpEndpoint(method, path, consumes, produces), permission);
+                return new Entry(new HttpEndpoint(method, path, consumes, produces), permission, operationHash);
             } catch (IllegalArgumentException invalid) {
                 throw new JsonException("Invalid HTTP endpoint");
             }
@@ -294,9 +353,19 @@ final class Catalog {
 
                 if (entry.permission != null) output.name("permission").value(entry.permission);
 
+                if (entry.operationHash != null) output.name("operationHash").value(entry.operationHash);
+
                 output.endObject();
             }
-            output.endArray().endObject();
+            output.endArray();
+
+            if (value.contractHash != null)
+                output.name("contractHash")
+                        .value(value.contractHash)
+                        .name("apiGroup")
+                        .value(value.apiGroup);
+
+            output.endObject();
         }
     };
 

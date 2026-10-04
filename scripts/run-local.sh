@@ -8,6 +8,7 @@ case "${1:-}" in
   pantry) export HOORI_MAIN_CLASS=dev/hoori/micro/pantry/PantryApplication HOORI_OUTBOUND=http port=8083 ;;
   shopping) export HOORI_MAIN_CLASS=dev/hoori/micro/shopping/ShoppingApplication HOORI_OUTBOUND=http port=8082 ;;
   gateway) export HOORI_MAIN_CLASS=hoori/micro/Gateway HOORI_OUTBOUND=http port=8080
+    export HOORI_OPENAPI_ENABLED=${HOORI_OPENAPI_ENABLED:-true}
     export HOORI_GATEWAY_PERMISSIONS=${HOORI_GATEWAY_PERMISSIONS:-recipes:read,recipes:write,pantry:read,shopping:read,shopping:write,shopping:demo} ;;
   *) echo 'usage: scripts/run-local.sh registry|recipes|pantry|shopping|gateway (after scripts/build.sh)' >&2; exit 2 ;;
 esac

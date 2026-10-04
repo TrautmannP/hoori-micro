@@ -66,7 +66,7 @@ def main():
         try:
             connection.request("GET" if body is None else "POST", path,
                 None if body is None else json.dumps(body).encode(),
-                {"Content-Type": "application/json", "X-Hoori-Catalog-Protocol": "3", **(headers or {})})
+                {"Content-Type": "application/json", "X-Hoori-Catalog-Protocol": "4", **(headers or {})})
             response = connection.getresponse()
             return response.status, response.read()
         finally:

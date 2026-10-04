@@ -70,6 +70,7 @@ def main():
                 "HOORI_HEARTBEAT_MS": "500", "HOORI_REGISTRY_TTL_MS": "6000", "HOORI_CATALOG_MAX_AGE_MS": "15000",
                 "HOORI_CONTROL_TIMEOUT_MS": "3000", "HOORI_CLIENT_TIMEOUT_MS": "10000", "HOORI_WORK_TIMEOUT_MS": "12000",
                 "HOORI_REQUEST_TIMEOUT_MS": "15000", "HOORI_SHUTDOWN_GRACE_MS": "1500",
+                "HOORI_OPENAPI_ENABLED": "true",
                 "HOORI_GATEWAY_PERMISSIONS": "recipes:read,recipes:write,pantry:read,shopping:read,shopping:write,shopping:demo"}
             log = (ROOT / f".cache/http-{engine}-{role}.log").open("w")
             logs[role] = log
@@ -80,6 +81,33 @@ def main():
             until(lambda: request(role, "GET", "/health/ready")[0] == 200)
 
         until(lambda: request("gateway", "GET", "/meals/1")[0] == 200)
+        publication = []
+        def same_publication():
+            status, headers, raw = request("gateway", "GET", "/openapi.json")
+            manifest_status, _, manifest_raw = request("gateway", "GET", "/_hoori/publication")
+            if status != 200 or manifest_status != 200:
+                return False
+            manifest = json.loads(manifest_raw)
+            if headers["X-Hoori-Publication"] != manifest["publicationId"] or len(manifest["operations"]) != 15:
+                return False
+            publication[:] = [manifest, json.loads(raw), raw]
+            return True
+        until(same_publication)
+        manifest, public_api, raw = publication
+        offered = {(row["method"].lower(), row["path"]) for row in manifest["operations"]}
+        documented = {(method, path) for path, methods in public_api["paths"].items() for method in methods}
+        assert offered == documented and len(documented) == 15, (offered, documented)
+        assert manifest["complete"] and not manifest["undocumented"] and not manifest["withheld"]
+        assert "/recipes/bulk" not in public_api["paths"] and b"$ref" not in raw
+        assert request("gateway", "GET", "/_hoori/docs")[0] == 200
+        assert request("gateway", "GET", "/_hoori/openapi/groups/missing")[0] == 404
+        for row in manifest["operations"]:
+            status, headers, body = request(row["service"], "GET", "/_hoori/openapi/" + row["contractHash"])
+            assert status == 200 and hashlib.sha256(body).hexdigest() == row["contractHash"]
+            assert headers["ETag"] == '"' + row["contractHash"] + '"'
+            assert request(row["service"], "GET", "/_hoori/openapi/" + "0" * 64)[0] == 404
+        evidence["checks"].append("OpenAPI canonical artifact hashes, exact gateway publication, local references, hidden internal endpoints and local docs")
+        print("PASS: OpenAPI publication and service artifacts", flush=True)
         expected = {"id": 1, "title": "Kartoffelsuppe"}
         assert value("recipes", "/recipes/1") == value("shopping", "/meals/1") == value("gateway", "/meals/1") == expected
         for role, path in (("recipes", "/recipes"), ("shopping", "/meals"), ("gateway", "/recipes"), ("gateway", "/meals")):

@@ -160,6 +160,50 @@ public final class Microservice implements AutoCloseable {
         service.frozen = true;
     }
 
+    /** Generated graph hook: binds the checked, immutable artifact to this instance's public routes. */
+    public void openApi(Class<?> owner, String resource, String expectedHash) throws IOException {
+        service.mutable();
+
+        if (service.contractHash != null) throw new IllegalStateException("OpenAPI already bound");
+
+        hoori.micro.openapi.OpenApiDocument document;
+        try (var input = owner.getResourceAsStream(resource)) {
+            if (input == null) throw new IOException("Missing OpenAPI resource");
+
+            document = new hoori.micro.openapi.OpenApiDocument(hoori.micro.openapi.ContractJson.source(input));
+        }
+
+        if (!document.hash().equals(expectedHash) || document.serviceVersion() != service.version)
+            throw new IOException("OpenAPI artifact identity mismatch");
+
+        int published = 0;
+        for (Catalog.Entry entry : service.endpoints.values()) if (entry.permission != null) published++;
+
+        if (published != document.operations().size()) throw new IOException("OpenAPI publication mismatch");
+
+        for (var operation : document.operations()) {
+            Catalog.Entry entry = service.endpoint(operation.method(), operation.path());
+
+            if (entry == null || !operation.permission().equals(entry.permission))
+                throw new IOException("OpenAPI route mismatch");
+
+            service.endpoints.put(entry.key, new Catalog.Entry(entry.contract, entry.permission, operation.hash()));
+        }
+        service.contractHash = document.hash();
+        service.apiGroup = document.group();
+        byte[] content = document.bytes();
+        controlRoute(
+                "GET",
+                "/_hoori/openapi/" + document.hash(),
+                request -> new Response(
+                        200,
+                        new Headers()
+                                .add("Content-Type", "application/json")
+                                .add("ETag", "\"" + document.hash() + "\"")
+                                .add("Cache-Control", "public, max-age=31536000, immutable"),
+                        content));
+    }
+
     private static String uniqueHeader(Headers headers, String name) {
         String result = null;
         for (int i = 0; i < headers.size(); i++)

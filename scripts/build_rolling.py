@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build a separate provider release with one added controller for native rolling checks."""
 from pathlib import Path
+import json
 import shutil
 import subprocess
 import tempfile
@@ -36,6 +37,13 @@ import jakarta.validation.constraints.Positive;
  }
 }
 ''')
+        contract = work / "src/main/resources/openapi.json"
+        document = json.loads(contract.read_text())
+        operation = json.loads(json.dumps(document["paths"]["/recipes/{id}"]["get"]))
+        operation["operationId"] = "recipesRecommendation"
+        operation["summary"] = "Recommend a recipe"
+        document["paths"]["/recipes/{id}/recommendation"] = {"get": operation}
+        contract.write_text(json.dumps(document, indent=2) + "\n")
         subprocess.run(mvn + ["package"], cwd=work, check=True)
         target = ROOT / ".docker-context/apps/recipes-next/lib"
         if target.exists():

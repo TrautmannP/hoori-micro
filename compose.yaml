@@ -79,6 +79,7 @@ services:
       args: {SERVICE: gateway, RUNTIME_BASE: '${HOORI_RUNTIME_BASE:-debian:trixie-slim@sha256:7792b1f7702a86946cd518db72b6a407302c3e9bc1635634368b878189e8221c}'}
     environment:
       <<: *env
+      HOORI_OPENAPI_ENABLED: "true"
       HOORI_MAIN_CLASS: hoori/micro/Gateway
       HOORI_OUTBOUND: http
       # Demo policy: grants these permissions to every caller. No authentication.

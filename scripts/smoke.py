@@ -68,13 +68,60 @@ def ready_meal() -> None:
     eventually("/meals/1", {"id": 1, "title": "Kartoffelsuppe"}, "HTTP call did not recover")
 
 
+def openapi_publication(recommendation=False, recipes=True) -> None:
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        status, headers, raw = request("/openapi.json")
+        manifest_status, _, manifest_raw = request("/_hoori/publication")
+        if status == manifest_status == 200:
+            document, manifest = json.loads(raw), json.loads(manifest_raw)
+            fields = {name.lower(): value for name, value in headers.items()}
+            documented = {(method.upper(), path) for path, methods in document["paths"].items() for method in methods}
+            offered = {(row["method"], row["path"]) for row in manifest["operations"]}
+            expected = 11 + (4 if recipes else 0) + (1 if recommendation else 0)
+            if (fields.get("x-hoori-publication") == manifest["publicationId"] == document["x-hoori-publication-id"]
+                    and manifest["complete"] and documented == offered and len(documented) == expected
+                    and (("GET", "/recipes/{id}/recommendation") in documented) == recommendation):
+                require(not manifest["undocumented"] and not manifest["withheld"], "unexpected OpenAPI omissions")
+                require("/recipes/bulk" not in document["paths"] and b'"$ref"' not in raw, "internal route or unresolved reference")
+                RESULT.setdefault("openapi", []).append({"publicationId": manifest["publicationId"], "operations": len(documented)})
+                return
+        time.sleep(.2)
+    raise AssertionError("OpenAPI never matched the gateway publication")
+
+
+def unavailable_contract() -> None:
+    # A real provider serves no artifact at this advertised hash. The original HTTP client must reject it.
+    status, _, body = registry_request("GET", "/v2/catalog")
+    origin = next(i["url"] for i in json.loads(body)["instances"] if i["service"] == "recipes")
+    probe = {"id": "openapi-probe", "service": "docprobe", "version": 1, "url": origin,
+             "contractHash": "0" * 64, "apiGroup": "public", "endpoints": [{"method": "GET", "path": "/docprobe",
+             "consumes": "", "produces": "application/json", "permission": "docprobe:read", "operationHash": "0" * 64}]}
+    require(registry_request("PUT", "/v2/instances/openapi-probe", payload=probe)[0] == 200, "contract probe registration")
+    try:
+        deadline = time.monotonic() + 15
+        while True:
+            status, _, raw = request("/_hoori/publication")
+            if status == 200 and any(row["path"] == "/docprobe" for row in json.loads(raw)["operations"]):
+                break
+            require(time.monotonic() < deadline, "contract probe was not published")
+            time.sleep(.1)
+        require(request("/openapi.json")[0] == 503, "missing artifact was published or old docs mislabeled as current")
+        require(request("/meals/1")[0] == 200, "contract fetch blocked business calls")
+        require(request("/health/ready")[0] == 200, "contract failure changed gateway readiness")
+    finally:
+        registry_request("DELETE", "/v2/instances/openapi-probe")
+    openapi_publication()
+    print("PASS: missing OpenAPI artifact fails publication while business calls and readiness continue")
+
+
 def registered(expected=None) -> dict:
     """Services with their HTTP endpoints, once the registry reports a complete catalog."""
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         try:
             catalog = json.loads(compose("exec", "-T", "registry", "curl", "-fsS", "--max-time", "2",
-                                         "-H", "X-Hoori-Catalog-Protocol: 3", "http://127.0.0.1:8080/v2/catalog", capture=True))
+                                         "-H", "X-Hoori-Catalog-Protocol: 4", "http://127.0.0.1:8080/v2/catalog", capture=True))
             if catalog["complete"]:
                 services = {i["service"]: sorted(a["method"] + " " + a["path"] for a in i["endpoints"]) for i in catalog["instances"]}
                 if expected is None or services == expected:
@@ -92,7 +139,7 @@ def container(service: str) -> str:
 def registry_request(method: str, path: str, headers=None, payload=None):
     args = ["exec", "-T", "registry", "curl", "-sS", "--max-time", "10", "--dump-header", "-",
             "--write-out", "\nEND", "-X", method]
-    for name, value in ({"X-Hoori-Catalog-Protocol": "3"} | (headers or {})).items():
+    for name, value in ({"X-Hoori-Catalog-Protocol": "4"} | (headers or {})).items():
         args += ["-H", name + ": " + value]
     if payload is not None:
         args += ["-H", "Content-Type: application/json", "--data-binary", json.dumps(payload)]
@@ -106,12 +153,12 @@ def discovery_protocol() -> None:
     path = "/v2/instances/protocol-probe"
     small = {"id": "protocol-probe", "service": "probe", "version": 1,
              "url": "http://recipes:8080", "endpoints": [{"method": "GET", "path": "/ping", "consumes": "", "produces": "application/json"}]}
-    status, _, body = registry_request("PUT", path, {"X-Hoori-Catalog-Protocol": "2"}, small)
-    require(status == 426, "previous protocol must be rejected")
     status, _, body = registry_request("PUT", path, {"X-Hoori-Catalog-Protocol": "3"}, small)
+    require(status == 426, "previous protocol must be rejected")
+    status, _, body = registry_request("PUT", path, {"X-Hoori-Catalog-Protocol": "4"}, small)
     require(status == 200, "current endpoint protocol registration")
     catalog = json.loads(body)
-    known = {"X-Hoori-Catalog-Protocol": "3", "X-Hoori-Catalog-Epoch": catalog["epoch"],
+    known = {"X-Hoori-Catalog-Protocol": "4", "X-Hoori-Catalog-Epoch": catalog["epoch"],
              "X-Hoori-Catalog-Revision": str(catalog["revision"])}
     for _ in range(3):
         status, fields, body = registry_request("POST", path + "/lease", known)
@@ -289,9 +336,12 @@ def main() -> int:
             "pantry": ["GET /pantry/{id}"],
             "shopping": ["DELETE /meals/{id}", "GET /dashboard/{id}", "GET /demo/context", "GET /demo/slow/{id}", "GET /meals", "GET /meals/{id}", "GET /overview/{id}", "POST /meals", "POST /meals/batch", "POST /meals/bulk"]}
         require(registered() == expected, "catalog lists exactly the HTTP contracts")
+        openapi_publication()
+        require(request("/_hoori/docs")[0] == 200, "local API reference")
         print("PASS: gateway publication, endpoint calls, domain errors, health, metrics and context")
 
         discovery_protocol()
+        unavailable_contract()
         # Warm compilation before making the cooperative waiting/saturation assertion.
         require(request("/demo/slow/1", "saturation-warmup")[0] == 200, "warm saturation route")
         health_cost()
@@ -348,6 +398,7 @@ def main() -> int:
             status, _, body = request("/recipes/1/recommendation")
             require(status == 200 and json.loads(body) == {"id": 2, "title": "Apfelstrudel"},
                     "new endpoint was routed to an old provider")
+        openapi_publication(recommendation=True)
         subprocess.run(["docker", "stop", "--timeout", "15", old_replica], check=True, timeout=30)
         subprocess.run(["docker", "rm", old_replica], check=True, timeout=30)
         old_replica = None
@@ -382,11 +433,14 @@ def main() -> int:
             require(time.monotonic() < deadline, "gateway kept an expired routing snapshot")
             time.sleep(.2)
         require(request("/health/ready")[0] == 200, "snapshot expiry changed local readiness")
+        require(request("/openapi.json")[0] == 503 and request("/_hoori/publication")[0] == 503,
+                "expired routing retained a current documentation publication")
         compose("up", "--detach", "--wait", "--wait-timeout", "180", "registry")
         expected["recipes"] = sorted(expected["recipes"] + ["GET /recipes/{id}/recommendation"])
         registered(expected)
         ready_meal()
         print("PASS: control timeout under business load, bounded snapshot expiry and epoch recovery")
+        openapi_publication(recommendation=True)
 
         traffic_phase[0] = "provider_crash"
         old_provider = identity("recipes")
@@ -405,6 +459,7 @@ def main() -> int:
                 break
             require(time.monotonic() < deadline, "crashed provider did not expire by TTL")
             time.sleep(.2)
+        openapi_publication(recipes=False)
         settings["recipes"]["cpus"] = .5
         override.write_text(json.dumps({"services": settings}))
         compose("up", "--build", "--detach", "--force-recreate", "--wait", "--wait-timeout", "180", "recipes")
@@ -423,6 +478,7 @@ def main() -> int:
                     require(time.monotonic() < deadline, "removed route stayed published")
                     time.sleep(.2)
             ready_meal()
+            openapi_publication(recommendation=enabled == "1")
         require({name: identity(name) for name in stable} == stable, "recovery restarted consumer/gateway")
         traffic_stop.set()
         traffic_thread.join(timeout=10)

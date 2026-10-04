@@ -31,6 +31,7 @@ import javax.tools.Diagnostic;
 /** Finite source-module constructor graph. HTTP analysis and DTO generation belong to Hoori. */
 @SupportedAnnotationTypes("hoori.micro.app.*")
 @SupportedSourceVersion(SourceVersion.RELEASE_21)
+@javax.annotation.processing.SupportedOptions("hoori.openapi.baseline")
 public final class ApplicationProcessor extends AbstractProcessor {
     private static final String API = "hoori.micro.app.";
     private static final Set<String> COMPONENTS = Set.of(
@@ -397,6 +398,20 @@ public final class ApplicationProcessor extends AbstractProcessor {
                 }
                 code.append("});\n");
             }
+        String contract = (String) value(declaration, "openApi");
+        require(
+                !contract.isEmpty() || ((String) value(declaration, "openApiBaseline")).isEmpty(),
+                app,
+                "OpenAPI baseline requires openApi");
+
+        if (!contract.isEmpty()) {
+            try {
+                code.append(new OpenApiBinding(processingEnv, clients, app, contract).bind(components));
+            } catch (IllegalArgumentException | hoori.rest.json.JsonException invalid) {
+                throw new HttpContract.Invalid(app, "Invalid OpenAPI: " + invalid.getMessage());
+            }
+        }
+
         code.append("      app.prepare();\n      return app;\n"
                 + "    } catch (Exception | Error failure) {\n"
                 + "      try { app.close(); } catch (Exception cleanup) { failure.addSuppressed(cleanup); }\n"

@@ -1,0 +1,677 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "shopping demo API",
+    "version": "1.0.0",
+    "description": "In-memory development demonstration; no production authentication."
+  },
+  "x-hoori-service-version": 1,
+  "x-hoori-api-group": "public",
+  "paths": {
+    "/meals/{id}": {
+      "get": {
+        "operationId": "shoppingGetMeal",
+        "summary": "GetMeal",
+        "x-hoori-permission": "shopping:read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Recipe"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Public error; raw HTTP parser errors may be plain text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "exclusiveMinimum": 0
+            }
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "shoppingDeleteMeal",
+        "summary": "DeleteMeal",
+        "x-hoori-permission": "shopping:write",
+        "responses": {
+          "204": {
+            "description": "Success"
+          },
+          "default": {
+            "description": "Public error; raw HTTP parser errors may be plain text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "exclusiveMinimum": 0
+            }
+          }
+        ]
+      }
+    },
+    "/meals": {
+      "get": {
+        "operationId": "shoppingListMeals",
+        "summary": "ListMeals",
+        "x-hoori-permission": "shopping:read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "$ref": "#/components/schemas/Recipe"
+                  },
+                  "maxItems": 256
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Public error; raw HTTP parser errors may be plain text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "prefix",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": ""
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "shoppingCreateMeal",
+        "summary": "CreateMeal",
+        "x-hoori-permission": "shopping:write",
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Recipe"
+                }
+              }
+            },
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Created resource path"
+              }
+            }
+          },
+          "default": {
+            "description": "Public error; raw HTTP parser errors may be plain text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRecipe"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/overview/{id}": {
+      "get": {
+        "operationId": "shoppingOverview",
+        "summary": "Overview",
+        "x-hoori-permission": "shopping:read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Overview"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Public error; raw HTTP parser errors may be plain text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "exclusiveMinimum": 0
+            }
+          }
+        ]
+      }
+    },
+    "/dashboard/{id}": {
+      "get": {
+        "operationId": "shoppingDashboard",
+        "summary": "Dashboard",
+        "x-hoori-permission": "shopping:read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Dashboard"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Public error; raw HTTP parser errors may be plain text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "exclusiveMinimum": 0
+            }
+          }
+        ]
+      }
+    },
+    "/meals/batch": {
+      "post": {
+        "operationId": "shoppingBatch",
+        "summary": "Batch",
+        "x-hoori-permission": "shopping:read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "$ref": "#/components/schemas/Recipe"
+                  },
+                  "maxItems": 256
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Public error; raw HTTP parser errors may be plain text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecipeIds"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/meals/bulk": {
+      "post": {
+        "operationId": "shoppingBulk",
+        "summary": "Bulk",
+        "x-hoori-permission": "shopping:read",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "$ref": "#/components/schemas/Recipe"
+                  },
+                  "maxItems": 256
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Public error; raw HTTP parser errors may be plain text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecipeIds"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/demo/slow/{id}": {
+      "get": {
+        "operationId": "shoppingSlow",
+        "summary": "Slow",
+        "x-hoori-permission": "shopping:demo",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Recipe"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Public error; raw HTTP parser errors may be plain text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "exclusiveMinimum": 0
+            }
+          }
+        ]
+      }
+    },
+    "/demo/context": {
+      "get": {
+        "operationId": "shoppingContext",
+        "summary": "Context",
+        "x-hoori-permission": "shopping:demo",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Public error; raw HTTP parser errors may be plain text.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CreateRecipe": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "x-hoori-not-blank": true,
+            "x-hoori-max-utf16-length": 200
+          }
+        },
+        "required": [
+          "title"
+        ]
+      },
+      "Dashboard": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "recipe": {
+            "$ref": "#/components/schemas/RecipeSection"
+          },
+          "pantry": {
+            "$ref": "#/components/schemas/PantrySection"
+          }
+        },
+        "required": [
+          "recipe",
+          "pantry"
+        ]
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "violations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "code"
+              ]
+            },
+            "maxItems": 256
+          }
+        },
+        "required": [
+          "code"
+        ]
+      },
+      "Overview": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "recipe": {
+            "$ref": "#/components/schemas/Recipe"
+          },
+          "available": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "maxItems": 256
+          }
+        },
+        "required": [
+          "recipe",
+          "available"
+        ]
+      },
+      "PantrySection": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "data": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "maxItems": 256
+          }
+        },
+        "required": [
+          "status",
+          "data"
+        ]
+      },
+      "Recipe": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ]
+      },
+      "RecipeIds": {
+        "type": "object",
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64",
+              "exclusiveMinimum": 0
+            },
+            "maxItems": 16,
+            "minItems": 1
+          }
+        },
+        "required": [
+          "ids"
+        ]
+      },
+      "RecipeSection": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "data": {
+            "$ref": "#/components/schemas/Recipe"
+          }
+        },
+        "required": [
+          "status",
+          "data"
+        ]
+      },
+      "RequestInfo": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "requestId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "authorization": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "requestId",
+          "authorization"
+        ]
+      }
+    }
+  }
+}
