@@ -29,7 +29,7 @@ def main():
         def reply(self):
             body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
             status = 200
-            if not self.path.startswith("/v2/"):
+            if not self.path.startswith("/_hoori/"):
                 calls.append(self.headers.get("X-Hoori-Endpoint"))
                 if hold.is_set():
                     release.wait(5)
@@ -46,7 +46,7 @@ def main():
             try:
                 self.send_response(status)
                 for key, value in {"Content-Type": "application/json", "Content-Length": str(len(body)),
-                    "X-Hoori-Catalog-Protocol": "4", "X-Hoori-Catalog-Epoch": "admission-probe",
+                    "X-Hoori-Catalog-Epoch": "admission-probe",
                     "X-Hoori-Catalog-Revision": "1", "X-Hoori-Catalog-View": self.headers.get("X-Hoori-Catalog-View", "all")}.items():
                     self.send_header(key, value)
                 self.end_headers()

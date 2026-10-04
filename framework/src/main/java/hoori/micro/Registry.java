@@ -39,8 +39,8 @@ public final class Registry {
     }
 
     void mount(Microservice app) {
-        app.controlRoute("PUT", "/v2/instances/{id}", request -> {
-            Catalog.Filter filter = protocol(request.raw().headers, false);
+        app.controlRoute("PUT", "/_hoori/instances/{id}", request -> {
+            Catalog.Filter filter = filter(request.raw().headers);
             Catalog.Instance instance = request.body(Catalog.INSTANCE, limits);
 
             if (!instance.id.equals(request.pathParam("id"))) throw new RequestException(400, "Instance ID mismatch");
@@ -50,8 +50,8 @@ public final class Registry {
 
             return reply(request.raw().headers, now, filter);
         });
-        app.controlRoute("POST", "/v2/instances/{id}/lease", request -> {
-            Catalog.Filter filter = protocol(request.raw().headers, true);
+        app.controlRoute("POST", "/_hoori/instances/{id}/lease", request -> {
+            Catalog.Filter filter = filter(request.raw().headers);
 
             if (request.raw().body.length != 0) throw new RequestException(400, "Lease body must be empty");
 
@@ -61,14 +61,13 @@ public final class Registry {
 
             return reply(request.raw().headers, now, filter);
         });
-        app.controlRoute("DELETE", "/v2/instances/{id}", request -> {
-            protocol(request.raw().headers, false);
+        app.controlRoute("DELETE", "/_hoori/instances/{id}", request -> {
             remove(request.pathParam("id"));
 
             return Responses.empty(204);
         });
-        app.controlRoute("GET", "/v2/catalog", request -> {
-            Catalog.Filter filter = protocol(request.raw().headers, false);
+        app.controlRoute("GET", "/_hoori/catalog", request -> {
+            Catalog.Filter filter = filter(request.raw().headers);
 
             return reply(request.raw().headers, System.nanoTime(), filter);
         });
@@ -142,19 +141,17 @@ public final class Registry {
     }
 
     synchronized Response reply(Headers known, long now) {
-        return reply(known, now, protocol(known, false));
+        return reply(known, now, filter(known));
     }
 
     private synchronized Response reply(Headers known, long now, Catalog.Filter filter) {
         snapshot(now);
         Headers headers = new Headers()
-                .add(Catalog.PROTOCOL_HEADER, Catalog.PROTOCOL)
                 .add(Catalog.EPOCH_HEADER, epoch)
                 .add(Catalog.REVISION_HEADER, Long.toString(revision))
                 .add(Catalog.VIEW_HEADER, filter.key);
 
-        if (Catalog.PROTOCOL.equals(known.get(Catalog.PROTOCOL_HEADER))
-                && epoch.equals(known.get(Catalog.EPOCH_HEADER))
+        if (epoch.equals(known.get(Catalog.EPOCH_HEADER))
                 && Long.toString(revision).equals(known.get(Catalog.REVISION_HEADER))
                 && (filter.key.equals(known.get(Catalog.KNOWN_VIEW_HEADER))
                         || filter.key.equals("all") && known.get(Catalog.KNOWN_VIEW_HEADER) == null))
@@ -166,15 +163,7 @@ public final class Registry {
         return new Response(200, headers.add("Content-Type", "application/json"), body);
     }
 
-    private static Catalog.Filter protocol(Headers headers, boolean required) {
-        String version = headers.get(Catalog.PROTOCOL_HEADER);
-
-        if (!Catalog.PROTOCOL.equals(version))
-            throw new RequestException(426, "Catalog protocol " + Catalog.PROTOCOL + " required");
-
-        if (version == null && headers.get(Catalog.VIEW_HEADER) != null)
-            throw new RequestException(426, "Catalog protocol " + Catalog.PROTOCOL + " required");
-
+    private static Catalog.Filter filter(Headers headers) {
         int views = 0;
         for (int i = 0; i < headers.size(); i++)
             if (headers.name(i).equalsIgnoreCase(Catalog.VIEW_HEADER) && ++views > 1)

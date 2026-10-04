@@ -435,23 +435,16 @@ final class ServiceBrokerTest {
         long now = System.nanoTime();
         Catalog.Instance a = parse(instance("a", 1, "http://a:8080", "get"));
         Catalog first = registry.register(a, now);
-        Response body = registry.reply(new Headers().add(Catalog.PROTOCOL_HEADER, Catalog.PROTOCOL), now);
+        Response body = registry.reply(new Headers(), now);
         assertSame(first, registry.register(parse(instance("a", 1, "http://a:8080", "get")), now + 1));
         assertTrue(registry.renew("a", now + 2));
         assertSame(first, registry.snapshot(now + 2));
-        assertSame(
-                body.body, registry.reply(new Headers().add(Catalog.PROTOCOL_HEADER, Catalog.PROTOCOL), now + 2).body);
+        assertSame(body.body, registry.reply(new Headers(), now + 2).body);
         Headers known = version(first);
         assertEquals(204, registry.reply(known, now + 2).status);
         assertEquals(0, registry.reply(known, now + 2).body.length);
-        assertEquals(
-                200,
-                registry.reply(
-                                new Headers()
-                                        .add(Catalog.PROTOCOL_HEADER, Catalog.PROTOCOL)
-                                        .add(Catalog.EPOCH_HEADER, first.epoch),
-                                now)
-                        .status);
+        assertEquals(200, registry.reply(new Headers().add(Catalog.EPOCH_HEADER, first.epoch), now).status);
+
         assertEquals(
                 200, registry.reply(version(new Catalog("other", first.revision, true, first.instances)), now).status);
 
@@ -483,14 +476,12 @@ final class ServiceBrokerTest {
         long now = System.nanoTime();
         registry.register(parse(instance("a", 1, "http://a:8080", "get")), now);
         Catalog current = registry.register(parse(instance("b", 1, "http://b:8080", "get")), now);
-        byte[] before = registry.reply(new Headers().add(Catalog.PROTOCOL_HEADER, Catalog.PROTOCOL), now).body;
+        byte[] before = registry.reply(new Headers(), now).body;
         assertTrue(Json.encode(big, Catalog.INSTANCE, limits).length < limits.maxOutputBytes);
         assertEquals(
                 413, assertThrows(RequestException.class, () -> registry.register(big, now + 500_000_000L)).status);
         assertSame(current, registry.snapshot(now + 500_000_000L));
-        assertSame(
-                before,
-                registry.reply(new Headers().add(Catalog.PROTOCOL_HEADER, Catalog.PROTOCOL), now + 500_000_000L).body);
+        assertSame(before, registry.reply(new Headers(), now + 500_000_000L).body);
         assertFalse(registry.renew("b", now + 1_000_000_001L));
 
         Registry full = new Registry(60_000, JsonLimits.DEFAULT);
@@ -519,7 +510,6 @@ final class ServiceBrokerTest {
                 config,
                 (target, method, headers, body, budget) -> {
                     methods.add(method);
-                    assertEquals(Catalog.PROTOCOL, headers.get(Catalog.PROTOCOL_HEADER));
 
                     if (method.equals("PUT")) registry[0].register(Json.decode(body, Catalog.INSTANCE), now[0]);
                     else {
@@ -549,7 +539,7 @@ final class ServiceBrokerTest {
     }
 
     @Test
-    void staleVersionsAndUnmatchedConfirmationsCannotExtendFreshness() throws Exception {
+    void staleCatalogsAndUnmatchedConfirmationsCannotExtendFreshness() throws Exception {
         Response[] reply = {null};
         ServiceConfig config = ServiceConfig.from(
                 "shopping",
@@ -585,7 +575,7 @@ final class ServiceBrokerTest {
                 200,
                 new String(
                         Json.encode(original, Catalog.CODEC),
-                        StandardCharsets.UTF_8)); // Old registry lacks current protocol.
+                        StandardCharsets.UTF_8)); // Missing catalog metadata cannot confirm freshness.
         broker.beat(false);
         Thread.sleep(180);
         assertSame(Catalog.EMPTY, broker.catalog());
@@ -612,9 +602,8 @@ final class ServiceBrokerTest {
                     new Catalog.Instance(
                             "node-" + i, "other-" + i, 1, "http://other:8080", new Catalog.Entry[] {privateEndpoint}),
                     now);
-        Headers requested = new Headers()
-                .add(Catalog.PROTOCOL_HEADER, Catalog.PROTOCOL)
-                .add(Catalog.VIEW_HEADER, "services=recipes:1");
+        Headers requested = new Headers().add(Catalog.VIEW_HEADER, "services=recipes:1");
+
         Response response = registry.reply(requested, now);
         Catalog selected = Json.decode(response.body, Catalog.CODEC);
         assertEquals(2, selected.instances.length);
@@ -660,11 +649,7 @@ final class ServiceBrokerTest {
                     400,
                     assertThrows(
                                     RequestException.class,
-                                    () -> registry.reply(
-                                            new Headers()
-                                                    .add(Catalog.PROTOCOL_HEADER, Catalog.PROTOCOL)
-                                                    .add(Catalog.VIEW_HEADER, invalid),
-                                            now))
+                                    () -> registry.reply(new Headers().add(Catalog.VIEW_HEADER, invalid), now))
                             .status);
         assertThrows(IllegalArgumentException.class, () -> Catalog.Filter.parse(new String(new char[2301])));
         StringBuilder tooMany = new StringBuilder("services=");
@@ -945,7 +930,6 @@ final class ServiceBrokerTest {
 
     private static Headers version(Catalog catalog) {
         return new Headers()
-                .add(Catalog.PROTOCOL_HEADER, Catalog.PROTOCOL)
                 .add(Catalog.EPOCH_HEADER, catalog.epoch)
                 .add(Catalog.REVISION_HEADER, Long.toString(catalog.revision));
     }

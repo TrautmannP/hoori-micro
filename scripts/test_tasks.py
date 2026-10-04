@@ -50,7 +50,7 @@ def main():
                              "credentials": bool(self.headers.get("Authorization") or self.headers.get("Cookie")),
                              "path": self.path, "time": time.monotonic()})
             status = 200
-            if self.path.startswith("/v2/"):
+            if self.path.startswith("/_hoori/"):
                 if not registry.is_set():
                     with lock:
                         events.append("registry-wait")
@@ -62,7 +62,7 @@ def main():
                 body = json.dumps({"epoch": "tasks-test", "revision": 1, "complete": True,
                                    "instances": instances}).encode()
                 self.send_response(200)
-                for k, v in {"X-Hoori-Catalog-Protocol": "4", "X-Hoori-Catalog-Epoch": "tasks-test",
+                for k, v in {"X-Hoori-Catalog-Epoch": "tasks-test",
                              "X-Hoori-Catalog-Revision": "1", "X-Hoori-Catalog-View": view}.items():
                     self.send_header(k, str(v))
             else:

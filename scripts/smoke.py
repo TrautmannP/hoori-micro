@@ -92,12 +92,12 @@ def openapi_publication(recommendation=False, recipes=True) -> None:
 
 def unavailable_contract() -> None:
     # A real provider serves no artifact at this advertised hash. The original HTTP client must reject it.
-    status, _, body = registry_request("GET", "/v2/catalog")
+    status, _, body = registry_request("GET", "/_hoori/catalog")
     origin = next(i["url"] for i in json.loads(body)["instances"] if i["service"] == "recipes")
     probe = {"id": "openapi-probe", "service": "docprobe", "version": 1, "url": origin,
              "contractHash": "0" * 64, "apiGroup": "public", "endpoints": [{"method": "GET", "path": "/docprobe",
              "consumes": "", "produces": "application/json", "permission": "docprobe:read", "operationHash": "0" * 64}]}
-    require(registry_request("PUT", "/v2/instances/openapi-probe", payload=probe)[0] == 200, "contract probe registration")
+    require(registry_request("PUT", "/_hoori/instances/openapi-probe", payload=probe)[0] == 200, "contract probe registration")
     try:
         deadline = time.monotonic() + 15
         while True:
@@ -110,7 +110,7 @@ def unavailable_contract() -> None:
         require(request("/meals/1")[0] == 200, "contract fetch blocked business calls")
         require(request("/health/ready")[0] == 200, "contract failure changed gateway readiness")
     finally:
-        registry_request("DELETE", "/v2/instances/openapi-probe")
+        registry_request("DELETE", "/_hoori/instances/openapi-probe")
     openapi_publication()
     print("PASS: missing OpenAPI artifact fails publication while business calls and readiness continue")
 
@@ -121,7 +121,7 @@ def registered(expected=None) -> dict:
     while time.monotonic() < deadline:
         try:
             catalog = json.loads(compose("exec", "-T", "registry", "curl", "-fsS", "--max-time", "2",
-                                         "-H", "X-Hoori-Catalog-Protocol: 4", "http://127.0.0.1:8080/v2/catalog", capture=True))
+                                         "http://127.0.0.1:8080/_hoori/catalog", capture=True))
             if catalog["complete"]:
                 services = {i["service"]: sorted(a["method"] + " " + a["path"] for a in i["endpoints"]) for i in catalog["instances"]}
                 if expected is None or services == expected:
@@ -139,7 +139,7 @@ def container(service: str) -> str:
 def registry_request(method: str, path: str, headers=None, payload=None):
     args = ["exec", "-T", "registry", "curl", "-sS", "--max-time", "10", "--dump-header", "-",
             "--write-out", "\nEND", "-X", method]
-    for name, value in ({"X-Hoori-Catalog-Protocol": "4"} | (headers or {})).items():
+    for name, value in (headers or {}).items():
         args += ["-H", name + ": " + value]
     if payload is not None:
         args += ["-H", "Content-Type: application/json", "--data-binary", json.dumps(payload)]
@@ -149,25 +149,23 @@ def registry_request(method: str, path: str, headers=None, payload=None):
     return int(head.split()[1]), {name.lower(): value.strip() for name, value in fields.items()}, body
 
 
-def discovery_protocol() -> None:
-    path = "/v2/instances/protocol-probe"
-    small = {"id": "protocol-probe", "service": "probe", "version": 1,
+def registry_discovery() -> None:
+    path = "/_hoori/instances/lease-probe"
+    small = {"id": "lease-probe", "service": "probe", "version": 1,
              "url": "http://recipes:8080", "endpoints": [{"method": "GET", "path": "/ping", "consumes": "", "produces": "application/json"}]}
-    status, _, body = registry_request("PUT", path, {"X-Hoori-Catalog-Protocol": "3"}, small)
-    require(status == 426, "previous protocol must be rejected")
-    status, _, body = registry_request("PUT", path, {"X-Hoori-Catalog-Protocol": "4"}, small)
-    require(status == 200, "current endpoint protocol registration")
+    status, _, body = registry_request("PUT", path, payload=small)
+    require(status == 200, "HTTP registration without a version handshake")
     catalog = json.loads(body)
-    known = {"X-Hoori-Catalog-Protocol": "4", "X-Hoori-Catalog-Epoch": catalog["epoch"],
+    known = {"X-Hoori-Catalog-Epoch": catalog["epoch"],
              "X-Hoori-Catalog-Revision": str(catalog["revision"])}
     for _ in range(3):
         status, fields, body = registry_request("POST", path + "/lease", known)
         require(status == 204 and body == "", "unchanged lease must have no catalog body")
         require(fields["x-hoori-catalog-epoch"] == catalog["epoch"]
                 and fields["x-hoori-catalog-revision"] == str(catalog["revision"]), "lease changed the revision")
-    require(registry_request("GET", "/v2/catalog", known)[0] == 204, "conditional catalog")
+    require(registry_request("GET", "/_hoori/catalog", known)[0] == 204, "conditional catalog")
     filtered = dict(known, **{"X-Hoori-Catalog-View": "services=recipes:1"})
-    status, fields, body = registry_request("GET", "/v2/catalog", filtered)
+    status, fields, body = registry_request("GET", "/_hoori/catalog", filtered)
     consumer = json.loads(body)
     require(status == 200 and fields["x-hoori-catalog-view"] == "services=recipes:1",
             "a different view must receive its full snapshot")
@@ -175,10 +173,10 @@ def discovery_protocol() -> None:
             and all(set(a) == {"method", "path", "consumes", "produces"} for a in consumer["instances"][0]["endpoints"]),
             "consumer view includes unrelated services or publication metadata")
     filtered["X-Hoori-Catalog-Known-View"] = "services=recipes:1"
-    require(registry_request("GET", "/v2/catalog", filtered)[0] == 204, "filtered confirmation")
+    require(registry_request("GET", "/_hoori/catalog", filtered)[0] == 204, "filtered confirmation")
     for view in ("none", "public"):
         filtered["X-Hoori-Catalog-View"] = view
-        status, _, body = registry_request("GET", "/v2/catalog", filtered)
+        status, _, body = registry_request("GET", "/_hoori/catalog", filtered)
         require(status == 200, "changed filter received the previous view's confirmation")
         instances = json.loads(body)["instances"]
         require(not instances if view == "none" else
@@ -187,8 +185,6 @@ def discovery_protocol() -> None:
     require(registry_request("POST", path + "/lease",
                              dict(known, **{"X-Hoori-Catalog-View": "services=recipes:0"}))[0] == 400,
             "invalid filter must fail before lease renewal")
-    require(registry_request("PUT", path, {"X-Hoori-Catalog-Protocol": "1"}, small)[0] == 426,
-            "unsupported protocol must fail before changing state")
     # Each replacement fits the HTTP document limit; their aggregate cannot fit the catalog.
     big = dict(small)
     big["endpoints"] = [{"method": "GET", "consumes": "", "produces": "application/json", "path": "/probe/" + str(i) + "/" + "x" * 220,
@@ -198,14 +194,14 @@ def discovery_protocol() -> None:
     # This fits once, but another provider with equally sized metadata would overflow the full view.
     require(status == 200, "first bounded large registration")
     other = dict(big, id="overflow-probe")
-    require(registry_request("PUT", "/v2/instances/overflow-probe", known, other)[0] == 413,
+    require(registry_request("PUT", "/_hoori/instances/overflow-probe", known, other)[0] == 413,
             "aggregate overflow must be rejected")
-    status, _, body = registry_request("GET", "/v2/catalog")
+    status, _, body = registry_request("GET", "/_hoori/catalog")
     require(status == 200 and all(i["id"] != "overflow-probe" for i in json.loads(body)["instances"]),
             "rejected metadata was committed")
     require(registry_request("DELETE", path, known)[0] == 204, "deregistration")
     require(registry_request("POST", path + "/lease", known)[0] == 404, "deleted lease must require registration")
-    print("PASS: native leases, view-bound filtering, protocol transition and aggregate byte limit")
+    print("PASS: native HTTP registration, leases, view-bound filtering and aggregate byte limit")
 
 
 def runtime_stats(service: str) -> dict:
@@ -274,7 +270,7 @@ def saturated_pool() -> None:
             require(stats['hoori_micro_pool_pending_acquires{pool="control"}'] == 0
                     and stats['hoori_micro_pool_active_connections{pool="control"}'] <= 1,
                     "control pool exceeded bounds")
-            _, _, body = registry_request("GET", "/v2/catalog")
+            _, _, body = registry_request("GET", "/_hoori/catalog")
             require(any(i["service"] == "shopping" for i in json.loads(body)["instances"]),
                     "saturated data pool prevented lease renewal")
             require(time.monotonic() < deadline, "saturation calls exceeded native test deadline")
@@ -340,7 +336,7 @@ def main() -> int:
         require(request("/_hoori/docs")[0] == 200, "local API reference")
         print("PASS: gateway publication, endpoint calls, domain errors, health, metrics and context")
 
-        discovery_protocol()
+        registry_discovery()
         unavailable_contract()
         # Warm compilation before making the cooperative waiting/saturation assertion.
         require(request("/demo/slow/1", "saturation-warmup")[0] == 200, "warm saturation route")
@@ -380,7 +376,7 @@ def main() -> int:
         eventually("/recipes/1/recommendation", {"id": 2, "title": "Apfelstrudel"}, "new endpoint not published")
         deadline = time.monotonic() + 60
         while True:
-            _, _, body = registry_request("GET", "/v2/catalog")
+            _, _, body = registry_request("GET", "/_hoori/catalog")
             providers = [i for i in json.loads(body)["instances"] if i["service"] == "recipes"]
             if len(providers) == 2:
                 break
@@ -444,7 +440,7 @@ def main() -> int:
 
         traffic_phase[0] = "provider_crash"
         old_provider = identity("recipes")
-        _, _, body = registry_request("GET", "/v2/catalog")
+        _, _, body = registry_request("GET", "/_hoori/catalog")
         old_ids = {i["id"] for i in json.loads(body)["instances"] if i["service"] == "recipes"}
         compose("kill", "--signal", "SIGKILL", "recipes")
         status, _, body = request("/meals/1")
@@ -454,7 +450,7 @@ def main() -> int:
         require(request("/health/ready")[0] == 200, "no recursive readiness dependency by default")
         deadline = time.monotonic() + 15
         while True:
-            _, _, body = registry_request("GET", "/v2/catalog")
+            _, _, body = registry_request("GET", "/_hoori/catalog")
             if not old_ids.intersection(i["id"] for i in json.loads(body)["instances"]):
                 break
             require(time.monotonic() < deadline, "crashed provider did not expire by TTL")

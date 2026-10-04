@@ -70,7 +70,6 @@ final class GatewayPublication {
                 }
             }
         Map<String, Object> manifest = new LinkedHashMap<>();
-        manifest.put("profile", "hoori-publication-1");
         manifest.put("catalogEpoch", catalog.epoch);
         manifest.put("catalogRevision", catalog.revision);
         manifest.put("registryComplete", catalog.complete);

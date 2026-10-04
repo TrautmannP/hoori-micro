@@ -134,7 +134,7 @@ Snapshots und vollständige `hoori stats`-Ausgaben. Shopping zeigt dabei in den
 Lastproben bis zu 13 aktive Guest-Tasks, in der normalen Recovery bis zu sechs;
 die Profiling-Latenzen sind wegen zusätzlicher Probes kein Zeitvergleich.
 
-## Discovery-Protokoll 2, 30. September 2026
+## Discovery mit Leases und Katalogrevisionen, 30. September 2026
 
 [Gemessener C/D-Kandidat](benchmarks/issue-2-550d608f-mixed.json.gz): unveränderter
 Runtime-/SDK-Pin, gleiche Mixed-Einstellungen wie die Ausgangsmessung, drei frische
@@ -143,7 +143,7 @@ D **85,17 [69,84–95,72]**; p99-Median **599,62/1901,18 ms**. Der beobachtete
 Gesamtdurchsatz ist niedriger; das Gateway verfehlt weiterhin die Grenze.
 Die sechs Recovery-Phasen liefern je 24 korrekte Antworten ohne Fehler.
 Die wechselnde Fremdregistrierung verhindert viele unverändert-Antworten; zusätzliche
-Versionsfelder erhöhen dann Antwortbytes. Das ist **keine Performancefreigabe**.
+Katalog-Metadaten erhöhen dann Antwortbytes. Das ist **keine Performancefreigabe**.
 
 Für pure Erneuerungen gibt es zusätzlich je einen frischen C-Lauf mit
 `--stable-catalog --seconds 2 --warmup 5 --idle 12 --repeats 1`, einmal mit
@@ -242,7 +242,7 @@ Recovery-Phasen je acht korrekte Antworten ohne Fehler. Shopping hält einen
 Katalogeintrag, Recipes keinen; vollständige Registry-Mengen bleiben 3/35.
 Einmalige Läufe sind eine separate SDK-Kontrolle, keine statistische Gewinnfreigabe.
 Pending-Zähler sind in dieser Fixture **noch nicht erfasst**, obwohl der neue SDK
-sie anbietet. Pool-Isolation/Admission/Budget-Wire-Protokoll folgen separat in #4–#6;
+sie anbietet. Pool-Isolation, Admission und Budget-Weitergabe folgen separat in #4–#6;
 Basisimage-Digest und weitere Image-Abnahme aus #8 bleiben offen.
 
 ## Control-Isolation, 30. September 2026

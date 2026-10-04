@@ -66,7 +66,7 @@ def main():
         try:
             connection.request("GET" if body is None else "POST", path,
                 None if body is None else json.dumps(body).encode(),
-                {"Content-Type": "application/json", "X-Hoori-Catalog-Protocol": "4", **(headers or {})})
+                {"Content-Type": "application/json", **(headers or {})})
             response = connection.getresponse()
             return response.status, response.read()
         finally:
@@ -258,7 +258,7 @@ def main():
                 "--class-path", ":".join(map(str, data_cp)), "dev/hoori/micro/data/DataApplication"],
                 env=app_env, stdout=log, stderr=log)
             until(lambda: request("data-app", "/health/ready")[0] == 200, "normal generated DataApplication")
-            until(lambda: request("registry", "/v2/catalog")[0] == 200, "registry remains ready")
+            until(lambda: request("registry", "/_hoori/catalog")[0] == 200, "registry remains ready")
             # Discovery needs its initial refresh; only the read-only invalid DTO is polled.
             until(lambda: request("data-app", "/drafts", {"id": 0, "recipeId": 0})[0] == 400, "normal DTO validation")
             time.sleep(.5)

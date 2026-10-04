@@ -297,24 +297,21 @@ final class ServiceBroker {
         prepare();
         boolean register = ready && !service.endpoints.isEmpty();
 
-        catalog(); // Also releases expired rows during idle/control failures; version tokens stay bounded.
+        catalog(); // Also releases expired rows during idle/control failures; epoch history stays bounded.
 
         if (!register && filter.key.equals("none")) return;
 
         try {
             View known = view;
             Catalog.Filter requested = filter;
-            Headers headers = new Headers()
-                    .add("Accept", "application/json")
-                    .add(Catalog.PROTOCOL_HEADER, Catalog.PROTOCOL)
-                    .add(Catalog.VIEW_HEADER, requested.key);
+            Headers headers = new Headers().add("Accept", "application/json").add(Catalog.VIEW_HEADER, requested.key);
 
             if (known.live)
                 headers.add(Catalog.EPOCH_HEADER, known.catalog.epoch)
                         .add(Catalog.REVISION_HEADER, Long.toString(known.catalog.revision))
                         .add(Catalog.KNOWN_VIEW_HEADER, known.scope);
 
-            String path = "/v2/instances/" + config.instanceId;
+            String path = "/_hoori/instances/" + config.instanceId;
             Response response;
 
             if (register && registered) {
@@ -331,7 +328,8 @@ final class ServiceBroker {
                         registration,
                         null);
             } else if (!register) {
-                response = control.send(URI.create(config.registryUrl + "/v2/catalog"), "GET", headers, EMPTY, null);
+                response =
+                        control.send(URI.create(config.registryUrl + "/_hoori/catalog"), "GET", headers, EMPTY, null);
             }
 
             accept(response, known, requested);
@@ -372,9 +370,9 @@ final class ServiceBroker {
 
         try {
             control.send(
-                    URI.create(config.registryUrl + "/v2/instances/" + config.instanceId),
+                    URI.create(config.registryUrl + "/_hoori/instances/" + config.instanceId),
                     "DELETE",
-                    new Headers().add(Catalog.PROTOCOL_HEADER, Catalog.PROTOCOL),
+                    new Headers(),
                     EMPTY,
                     null);
         } catch (IOException ignored) {
@@ -421,9 +419,6 @@ final class ServiceBroker {
     }
 
     private void accept(Response response, View sent, Catalog.Filter requested) throws IOException {
-        if (!Catalog.PROTOCOL.equals(response.headers.get(Catalog.PROTOCOL_HEADER)))
-            throw new IOException("Registry protocol");
-
         if (!requested.key.equals(response.headers.get(Catalog.VIEW_HEADER))) throw new IOException("Registry view");
 
         if (!requested.key.equals(filter.key)) return;
@@ -455,7 +450,7 @@ final class ServiceBroker {
 
         if (next == null
                 || !next.epoch.equals(epoch)
-                || !Long.toString(next.revision).equals(revision)) throw new IOException("Unmatched catalog version");
+                || !Long.toString(next.revision).equals(revision)) throw new IOException("Unmatched catalog revision");
 
         accept(next, requested.key);
     }

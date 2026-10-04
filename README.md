@@ -122,7 +122,7 @@ Die Demo veröffentlicht unter `http://127.0.0.1:8080/openapi.json` den aktuelle
 Gateway-Vertrag und unter `http://127.0.0.1:8080/_hoori/docs` eine lokale API-Referenz.
 Dokumente stammen aus demselben Routing-Snapshot; ihre Publikations-ID macht
 Wechsel sichtbar. Profil, Grenzen und weitere Ausbauschritte stehen in
-[docs/openapi.md](docs/openapi.md). Die Registry verwendet jetzt Protokoll 4.
+[docs/openapi.md](docs/openapi.md).
 
 ## Bauen und starten
 

@@ -60,7 +60,7 @@ def main():
                 delete_release.wait(2)
             try:
                 self.send_response(status)
-                for key, value in {"Content-Type": "application/json", "X-Hoori-Catalog-Protocol": "4",
+                for key, value in {"Content-Type": "application/json",
                                    "X-Hoori-Catalog-Epoch": "fault-check", "X-Hoori-Catalog-Revision": "1",
                                    "X-Hoori-Catalog-View": "none", "Content-Length": str(len(body))}.items():
                     self.send_header(key, value)

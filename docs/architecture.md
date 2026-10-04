@@ -88,9 +88,9 @@ Template, consumes/produces und optionaler Permission. OpenAPI-Anwendungen ergä
 Operationshashes sowie Vertrags-Hash und API-Gruppe pro Instanz; Schemas bleiben
 beim Service. Der HTTP-Schlüssel bleibt unabhängig von Java-Methodennamen und Requestdaten.
 
-Registry-Protokoll **4** unter `/v2/instances/{id}`, `/v2/instances/{id}/lease`
-und `/v2/catalog`; Katalog-/Instanzaufrufe benötigen `X-Hoori-Catalog-Protocol: 4`.
-Alte Protokolle werden zurückgewiesen. TTL, Epochen, Revisionen und die
+Die Registry verwendet HTTP/JSON unter `/_hoori/instances/{id}`,
+`/_hoori/instances/{id}/lease` und `/_hoori/catalog`.
+TTL, Epochen, Revisionen und die
 `complete`-Markierung begrenzen Wiederanmeldung und Neustart. Bei unveränderter
 Epoche/Revision/Sicht bestätigen Lease und Katalogabruf mit 204. Filter sind
 `none`, `public` oder `services=name:version,...` mit höchstens 32 Dependencies.

@@ -198,7 +198,6 @@ public final class OpenApiDocument {
                         materialized.containsKey("requestBody") ? "application/json" : "",
                         "application/json");
                 Map<String, Object> wire = new LinkedHashMap<>();
-                wire.put("profile", "hoori-openapi-1");
                 wire.put("method", verb);
                 wire.put("path", path.getKey());
                 wire.put("permission", permission);

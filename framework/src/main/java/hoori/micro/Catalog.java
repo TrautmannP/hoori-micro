@@ -17,8 +17,6 @@ import java.util.Objects;
  */
 final class Catalog {
     static final int MAX_INSTANCES = 256;
-    static final String PROTOCOL = "4";
-    static final String PROTOCOL_HEADER = "X-Hoori-Catalog-Protocol";
     static final String EPOCH_HEADER = "X-Hoori-Catalog-Epoch", REVISION_HEADER = "X-Hoori-Catalog-Revision";
     static final String VIEW_HEADER = "X-Hoori-Catalog-View", KNOWN_VIEW_HEADER = "X-Hoori-Catalog-Known-View";
     static final Catalog EMPTY = new Catalog("", 0, false, new Instance[0]);

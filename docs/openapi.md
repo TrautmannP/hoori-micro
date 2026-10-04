@@ -66,8 +66,8 @@ nicht behauptet. `summary` auf Operationsebene ändert den Operationshash nicht.
 
 ## Gateway und Dokumentation
 
-Registry-Protokoll **4** überträgt Hashes und API-Gruppe, keine Schemas. Alle
-Teilnehmer müssen dieses Protokoll sprechen. Das Gateway berücksichtigt auch den
+Der Registry-Katalog enthält Hashes und API-Gruppe, keine Schemas.
+Das Gateway berücksichtigt auch den
 Operationshash bei Konflikten und Instanzauswahl. Ein alter und neuer Provider
 können unveränderte Operationen gemeinsam bedienen; ein zusätzliches Mapping wird
 nur bei Instanzen ausgewählt, die es anbieten. Widersprüchliche Verträge halten

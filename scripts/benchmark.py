@@ -125,7 +125,7 @@ def http(port: int, path: str, method: str = "GET", payload=None):
     connection = HTTPConnection("127.0.0.1", port, timeout=10)
     try:
         body = None if payload is None else json.dumps(payload).encode()
-        connection.request(method, path, body, {"Content-Type": "application/json", "X-Hoori-Catalog-Protocol": "4"})
+        connection.request(method, path, body, {"Content-Type": "application/json"})
         response = connection.getresponse()
         data = response.read()
         if response.status >= 400:
@@ -239,11 +239,11 @@ def experiment(args, variant: str, repeat: int, work: Path, receipt: dict, docum
             while not control_stop.is_set():
                 for n in range(args.catalog_instances):
                     name = f"extra-{n}"
-                    http(args.port, f"/v2/instances/{name}", "PUT", {
+                    http(args.port, f"/_hoori/instances/{name}", "PUT", {
                         "id": name, "service": name, "version": 1, "url": "http://recipes:8080",
                         "endpoints": [{"method": "POST", "path": "/bench", "consumes": "application/json", "produces": "application/json"}]})
-                # One changing unrelated provider, using the actual registration protocol.
-                http(args.port, "/v2/instances/changing", "PUT", {
+                # One changing unrelated provider, using the registry HTTP API.
+                http(args.port, "/_hoori/instances/changing", "PUT", {
                     "id": "changing", "service": "changing", "version": 1, "url": "http://recipes:8080",
                     "endpoints": [{"method": "POST", "consumes": "application/json", "produces": "application/json",
                                  "path": f"/unrelated/{n}/" + ("a" if change % 2 else "b"),
@@ -298,7 +298,7 @@ def experiment(args, variant: str, repeat: int, work: Path, receipt: dict, docum
         if args.stable_catalog:
             # Measure before the burst: #4's known registrar timeout bug must not mimic a saving.
             def registry_ids():
-                catalog = json.loads(http(args.port, "/v2/catalog"))
+                catalog = json.loads(http(args.port, "/_hoori/catalog"))
                 if not catalog["complete"]:
                     raise RuntimeError("Stable catalog has not completed warmup")
                 return sorted(instance["id"] for instance in catalog["instances"])
