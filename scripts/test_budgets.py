@@ -14,7 +14,7 @@ import subprocess
 import threading
 import time
 
-from runtime_check import ROOT, runtime_jars, verify
+from runtime_check import ROOT, runtime_classpath, verify
 
 
 def main():
@@ -52,16 +52,16 @@ def main():
                 dependencies = view[len("services="):].split(",")
                 selected = [i for i in selected if f"{i['service']}:{i['version']}" in dependencies]
                 for i in selected:
-                    i["actions"] = [{"name": a["name"]} for a in i["actions"]]
+                    i["endpoints"] = [{k: v for k, v in endpoint.items() if k != "permission"} for endpoint in i["endpoints"]]
             elif view == "public":
                 for i in selected:
-                    i["actions"] = [a for a in i["actions"] if "path" in a]
-                selected = [i for i in selected if i["actions"]]
+                    i["endpoints"] = [a for a in i["endpoints"] if "permission" in a]
+                selected = [i for i in selected if i["endpoints"]]
             body = json.dumps({"epoch": "budget-test", "revision": current, "complete": True,
                                "instances": selected}).encode() if status != 204 else b""
             self.send_response(status)
             for name, value in {"Content-Type": "application/json", "Content-Length": str(len(body)),
-                "X-Hoori-Catalog-Protocol": "2", "X-Hoori-Catalog-Epoch": "budget-test",
+                "X-Hoori-Catalog-Protocol": "3", "X-Hoori-Catalog-Epoch": "budget-test",
                 "X-Hoori-Catalog-Revision": str(current), "X-Hoori-Catalog-View": view}.items():
                 self.send_header(name, value)
             self.end_headers()
@@ -71,7 +71,7 @@ def main():
                 pass
 
         def do_GET(self):
-            if self.path.startswith("/v1/"):
+            if self.path.startswith("/v2/"):
                 return self.reply()
             wire.append({"path": self.path, "budget": self.headers.get("X-Hoori-Budget-Ms"),
                          "port": self.client_address[1]})
@@ -138,7 +138,7 @@ def main():
         raise AssertionError("Native budget/gateway state did not converge")
 
     def invoke_headers(value):
-        return [("X-Hoori-Action", "shopping.serial"), ("X-Hoori-Version", "1"),
+        return [("X-Hoori-Endpoint", "POST /chain application/json application/json"), ("X-Hoori-Version", "1"),
                 ("X-Hoori-Budget-Ms", value)]
 
     def serial_answer(result, maximum):
@@ -166,7 +166,7 @@ def main():
         env = os.environ.copy()
         engine = env.get("HOORI_ENGINE", "mixed")
         cp = ":".join([str(ROOT / "framework/target/test-classes"), str(ROOT / "framework/target/classes")]
-                      + [str(runtime / jar) for jar in runtime_jars(receipt)])
+                      + list(map(str, runtime_classpath(runtime, receipt))))
         command = [str(runtime / "bin/hoori"), "run", "--engine", engine, "--live-output", "--graceful-signals",
                    "--max-heap-bytes", "33554432", "--allow-environment-read", "--allow-network-listen",
                    "--allow-network-connect", "--class-path", cp, "hoori/micro/BudgetMain"]
@@ -195,25 +195,26 @@ def main():
             until(lambda: "/chain" in probe("gateway")["routes"])
             # Compile/warm all real hops before the timing assertions.
             serial_answer(request("gateway", "/chain", {}), 2000)
-            assert request("gateway", "/observe/1", {"id": None})[0] == 400
+            status, body = request("gateway", "/observe/1", {"id": None})
+            assert status == 200 and json.loads(body)["body"] == {"id": None}, (status, body)
             assert request("gateway", "/observe/%ff", {})[0] == 400
             before = probe("recipes")["calls"]
             for bad in ("", "-1", "01", "1.0", "600001", "999999999", "bad"):
-                assert request("shopping", "/_hoori/invoke", {}, invoke_headers(bad))[0] == 400
-            assert request("shopping", "/_hoori/invoke", {}, invoke_headers("1000")
+                assert request("shopping", "/chain", {}, invoke_headers(bad))[0] == 400
+            assert request("shopping", "/chain", {}, invoke_headers("1000")
                            + [("x-hoori-budget-ms", "500")])[0] == 400
-            assert request("shopping", "/_hoori/invoke", {}, invoke_headers("0"))[0] == 504
+            assert request("shopping", "/chain", {}, invoke_headers("0"))[0] == 504
             assert probe("recipes")["calls"] == before
-            serial_answer(request("shopping", "/_hoori/invoke", {}, invoke_headers("1000")), 1000)
-            serial_answer(request("shopping", "/_hoori/invoke", {}, invoke_headers("600000")), 2000)
+            serial_answer(request("shopping", "/chain", {}, invoke_headers("1000")), 1000)
+            serial_answer(request("shopping", "/chain", {}, invoke_headers("600000")), 2000)
             for malicious in (("X-Hoori-Budget-Ms", "0"), ("X-Hoori-Budget-Ms", "bad")):
                 value = serial_answer(request("gateway", "/chain", {}, [malicious, ("X-Hoori-Budget-Ms", "600000"),
-                        ("X-Hoori-Action", "wrong.action"), ("X-Hoori-Version", "999"),
+                        ("X-Hoori-Endpoint", "wrong endpoint"), ("X-Hoori-Version", "999"),
                         ("Authorization", "Bearer not-forwarded"), ("X-Request-ID", "native-chain")]), 2000)
                 assert value["first"]["requestId"] == value["second"]["requestId"] == "native-chain"
             serial_answer(request("shopping", "/root", {}), 1000)
             before = probe("recipes")["calls"]
-            assert request("shopping", "/_hoori/invoke", {}, [("X-Hoori-Action", "shopping.expired"),
+            assert request("shopping", "/expired", {}, [("X-Hoori-Endpoint", "POST /expired application/json application/json"),
                     ("X-Hoori-Version", "1"), ("X-Hoori-Budget-Ms", "1000")])[0] == 504
             assert probe("recipes")["calls"] == before, "Expired context started another child"
             assert request("shopping", "/cancel", {}) == (200, b"cancelled")
@@ -228,21 +229,21 @@ def main():
                 observations.append({"recovery": {role: probe(role) for role in ports}})
 
             # Native routing boundaries: removal, policy, rolling metadata conflict, count and byte overflow.
-            new_revision = update(lambda: instances["recipes"]["actions"][0].update(path="/changed/{id}"))
+            new_revision = update(lambda: instances["recipes"]["endpoints"][1].update(path="/changed/{id}"))
             until(lambda: probe("gateway")["revision"] == new_revision)
             assert request("gateway", "/observe/1", {})[0] == 404
-            assert request("gateway", "/changed/1", {})[0] == 200
-            new_revision = update(lambda: instances["recipes"]["actions"][0].update(permission="recipes:admin"))
+            assert request("gateway", "/changed/1", {})[0] == 404  # Provider does not serve a fabricated template.
+            new_revision = update(lambda: instances["recipes"]["endpoints"][1].update(permission="recipes:admin"))
             until(lambda: probe("gateway")["revision"] == new_revision)
             assert request("gateway", "/changed/1", {})[0] == 403
             other = deepcopy(instances["recipes"])
             other.update(id="old-recipes")
-            other["actions"][0].update(path="/old/{id}", permission="recipes:read")
+            other["endpoints"][1].update(path="/changed/{id}", permission="recipes:read")
             new_revision = update(lambda: instances.update({"old-recipes": other}))
             until(lambda: probe("gateway")["revision"] == new_revision)
             assert request("gateway", "/changed/1", {})[0] == request("gateway", "/old/1", {})[0] == 404
             update(lambda: instances.pop("old-recipes"))
-            new_revision = update(lambda: instances["recipes"]["actions"][0].update(path="/observe/{id}", permission="recipes:read"))
+            new_revision = update(lambda: instances["recipes"]["endpoints"][1].update(path="/observe/{id}", permission="recipes:read"))
             until(lambda: probe("gateway")["revision"] == new_revision)
             for kind in ("count", "bytes"):
                 previous = probe("gateway")["revision"]
@@ -250,13 +251,13 @@ def main():
                 for n, count in enumerate((128, 128, 1) if kind == "count" else (100, 100)):
                     name = f"extra-{n}" + ("x" * 50 if kind == "bytes" else "")
                     extras[name] = {"id": name, "service": name, "version": 1, "url": f"http://127.0.0.1:{ports['recipes']}",
-                        "actions": [{"name": f"action-{i}" + ("x" * 40 if kind == "bytes" else ""), "method": "POST",
+                        "endpoints": [{"method": "POST", "consumes": "application/json", "produces": "application/json",
                                      "path": f"/extra/{n}/{i}/" + ("y" * 230 if kind == "bytes" else "x"),
                                      "permission": name + ":" + ("r" * 63 if kind == "bytes" else "read")} for i in range(count)]}
                 first_name = next(iter(extras))
                 accepted_revision = update(lambda: instances.update({first_name: extras[first_name]}))
                 until(lambda: probe("gateway")["revision"] == accepted_revision)
-                assert len(probe("gateway")["routes"]) == len(extras[first_name]["actions"]) + 2
+                assert len(probe("gateway")["routes"]) == len(extras[first_name]["endpoints"]) + 2
                 update(lambda: instances.update(extras))
                 until(lambda: probe("gateway")["revision"] == 0)
                 assert request("gateway", "/observe/1", {})[0] == 404, "Overflow/expired routes stayed public"
@@ -264,7 +265,7 @@ def main():
                 until(lambda: probe("gateway")["revision"] == new_revision)
                 assert new_revision > previous and request("gateway", "/observe/1", {})[0] == 200
                 observations.append({"gateway_bound": kind, "accepted_revision": accepted_revision,
-                                     "accepted_extra_routes": len(extras[first_name]["actions"]),
+                                     "accepted_extra_routes": len(extras[first_name]["endpoints"]),
                                      "expired_revision": 0, "recovered_revision": new_revision})
             assert request("gateway", "/_hoori/invoke", {})[0] == 404
             observations.append({"final": {role: probe(role) for role in ports}})

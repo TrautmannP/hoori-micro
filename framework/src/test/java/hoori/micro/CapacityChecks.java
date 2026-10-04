@@ -34,7 +34,7 @@ public final class CapacityChecks {
                 "HOORI_INSTANCE_ID",
                 "capacity");
 
-        return Microservice.create(Service.named("capacity"), values::get);
+        return Microservice.create("capacity", 1, values::get);
     }
 
     private static void roots() throws Exception {

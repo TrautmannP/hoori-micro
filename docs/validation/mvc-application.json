@@ -1,0 +1,169 @@
+{
+  "scope": "Initial generated application and managed CRUD slice for #36/#37; distributed migration pending",
+  "checks": [
+    {
+      "engine": "interpreter",
+      "gc_stress": false,
+      "runtime": {
+        "dirty": false,
+        "revision": "83d2b8fc83ffee6ed7c748409ff7b4802d8a341b"
+      },
+      "jars": {
+        "framework/target/hoori-micro-0.1.0-SNAPSHOT.jar": "df4de19bcaf3e02095845692308403261daaf1816e3ba62ee2226521d907bcfa",
+        "examples/mvc-crud/target/mvc-crud-0.1.0-SNAPSHOT.jar": "ac947ed4a3495f4a891d235191fc72160a87c33434dab8b45d0e7648baedd3a5",
+        ".docker-context/runtime/lib/hoori-guest-base-0.4.0.jar": "ce843f845da7d12d321353ebea270815781d3b9fa964ca5f6e0ce3c34c232b28",
+        ".docker-context/runtime/lib/hoori-http-api-0.1.0.jar": "d019b6cafbbc94eea0eca6d6b314aae1fb9a2697062f0e87510a00ea69ece660",
+        ".docker-context/runtime/lib/hoori-rest-api-0.1.0.jar": "9b744a80bbf8c76c74c0faf980d153cd9bc0a8a1c49f75ba971546e5e3e2e37d",
+        ".docker-context/runtime/lib/hoori-concurrent-api-0.1.0.jar": "4ce30e3f77b9a6b5d893c06ff5c8e952f0e4b4b09bdd33be60741de84c95a30f",
+        ".docker-context/runtime/lib/hoori-concurrent-http-api-0.1.0.jar": "09e91799117ec832c070ae4424519e3852cb7eadcdad6804647e06d4b989c94b",
+        ".docker-context/runtime/lib/hoori-validation-api-0.1.0.jar": "5b9da87d5ef2df12aca331aeaa6d38beecd26a777131d72a59a729837addabdd",
+        ".docker-context/runtime/lib/hoori-rest-validation-api-0.1.0.jar": "3df89d4a7441a6d28063768ddaa6af090dc20549a8da6f8e7a8dd28708daa58e",
+        ".docker-context/runtime/lib/hoori-rest-mvc-api-0.1.0.jar": "f2917fec09a035b857f12f39f22eec0011eebebc502777534dc999520f212b5c",
+        ".docker-context/runtime/lib/hoori-validation-avaje-0.1.0.jar": "fda2e1a5e708c3117a4df1f6634157f1aacde192a913cc8620a0c9783127e233",
+        ".docker-context/dependencies/avaje-applog-1.2.jar": "d1aa0ba97c77ee4428e3feb23d62231cfd00e2771b3fe4b79e7393f854273353",
+        ".docker-context/dependencies/avaje-validator-2.18.jar": "5e98fe4b6a9e1dff77eed90f95b0282645153b39f6a3b8b0a01b198f42143283",
+        ".docker-context/dependencies/avaje-validator-http-plugin-2.18.jar": "e2daf73352bae03820eebcf6bbbda8203f6ccab00d7985d3ec2059ab0427c457",
+        ".docker-context/dependencies/avaje-validator-inject-plugin-2.18.jar": "5e980fb0781981c6b64d06a028d5651728570b94e4def4326ecee71542571ab2",
+        ".docker-context/dependencies/jakarta.validation-api-3.1.1.jar": "63ce00156388c365f3ac1be71fcfaf114682fc0c452020b5df6e7ec236e142ab",
+        ".docker-context/dependencies/jspecify-1.0.1.jar": "070d75f261fe4c5b8202508366715f7f2d4660f88c8ef7e6d3575e48c9683b66"
+      },
+      "checks": [
+        "startup failure closes alias resource once before any listener/ready",
+        "generated CRUD: path/query/JSON, defaults, UTF-8, duplicates, validation, 201/Location, 204, advice, 404/405/406/415",
+        "singleton identity; admission before JSON; validation before work; child context, owner isolation, deadline/cleanup priority and recovery",
+        "SIGTERM drains the admitted child/response before exactly-once resource close"
+      ],
+      "logs": [
+        ".cache/mvc-interpreter-normal-710177-0.log",
+        ".cache/mvc-interpreter-normal-710177-1.log",
+        ".cache/mvc-interpreter-normal-710177-2.log"
+      ]
+    },
+    {
+      "engine": "interpreter",
+      "gc_stress": true,
+      "runtime": {
+        "dirty": false,
+        "revision": "83d2b8fc83ffee6ed7c748409ff7b4802d8a341b"
+      },
+      "jars": {
+        "framework/target/hoori-micro-0.1.0-SNAPSHOT.jar": "9f17847a985da3be9e6c042b465f10867d20765c7c73b23e237da791f5f278f8",
+        "examples/mvc-crud/target/mvc-crud-0.1.0-SNAPSHOT.jar": "ac947ed4a3495f4a891d235191fc72160a87c33434dab8b45d0e7648baedd3a5",
+        ".docker-context/runtime/lib/hoori-guest-base-0.4.0.jar": "ce843f845da7d12d321353ebea270815781d3b9fa964ca5f6e0ce3c34c232b28",
+        ".docker-context/runtime/lib/hoori-http-api-0.1.0.jar": "d019b6cafbbc94eea0eca6d6b314aae1fb9a2697062f0e87510a00ea69ece660",
+        ".docker-context/runtime/lib/hoori-rest-api-0.1.0.jar": "9b744a80bbf8c76c74c0faf980d153cd9bc0a8a1c49f75ba971546e5e3e2e37d",
+        ".docker-context/runtime/lib/hoori-concurrent-api-0.1.0.jar": "4ce30e3f77b9a6b5d893c06ff5c8e952f0e4b4b09bdd33be60741de84c95a30f",
+        ".docker-context/runtime/lib/hoori-concurrent-http-api-0.1.0.jar": "09e91799117ec832c070ae4424519e3852cb7eadcdad6804647e06d4b989c94b",
+        ".docker-context/runtime/lib/hoori-validation-api-0.1.0.jar": "5b9da87d5ef2df12aca331aeaa6d38beecd26a777131d72a59a729837addabdd",
+        ".docker-context/runtime/lib/hoori-rest-validation-api-0.1.0.jar": "3df89d4a7441a6d28063768ddaa6af090dc20549a8da6f8e7a8dd28708daa58e",
+        ".docker-context/runtime/lib/hoori-rest-mvc-api-0.1.0.jar": "f2917fec09a035b857f12f39f22eec0011eebebc502777534dc999520f212b5c",
+        ".docker-context/runtime/lib/hoori-validation-avaje-0.1.0.jar": "fda2e1a5e708c3117a4df1f6634157f1aacde192a913cc8620a0c9783127e233",
+        ".docker-context/dependencies/avaje-applog-1.2.jar": "d1aa0ba97c77ee4428e3feb23d62231cfd00e2771b3fe4b79e7393f854273353",
+        ".docker-context/dependencies/avaje-validator-2.18.jar": "5e98fe4b6a9e1dff77eed90f95b0282645153b39f6a3b8b0a01b198f42143283",
+        ".docker-context/dependencies/avaje-validator-http-plugin-2.18.jar": "e2daf73352bae03820eebcf6bbbda8203f6ccab00d7985d3ec2059ab0427c457",
+        ".docker-context/dependencies/avaje-validator-inject-plugin-2.18.jar": "5e980fb0781981c6b64d06a028d5651728570b94e4def4326ecee71542571ab2",
+        ".docker-context/dependencies/jakarta.validation-api-3.1.1.jar": "63ce00156388c365f3ac1be71fcfaf114682fc0c452020b5df6e7ec236e142ab",
+        ".docker-context/dependencies/jspecify-1.0.1.jar": "070d75f261fe4c5b8202508366715f7f2d4660f88c8ef7e6d3575e48c9683b66"
+      },
+      "checks": [
+        "startup failure closes alias resource once before any listener/ready",
+        "generated CRUD: path/query/JSON, defaults, UTF-8, duplicates, validation, 201/Location, 204, advice, 404/405/406/415",
+        "singleton identity; admission before JSON; validation before work; child context, owner isolation, deadline/cleanup priority and recovery",
+        "SIGTERM drains the admitted child/response before exactly-once resource close"
+      ],
+      "logs": [
+        ".cache/mvc-interpreter-gc-720437-0.log",
+        ".cache/mvc-interpreter-gc-720437-1.log",
+        ".cache/mvc-interpreter-gc-720437-2.log"
+      ]
+    },
+    {
+      "engine": "mixed",
+      "gc_stress": false,
+      "runtime": {
+        "dirty": false,
+        "revision": "83d2b8fc83ffee6ed7c748409ff7b4802d8a341b"
+      },
+      "jars": {
+        "framework/target/hoori-micro-0.1.0-SNAPSHOT.jar": "df4de19bcaf3e02095845692308403261daaf1816e3ba62ee2226521d907bcfa",
+        "examples/mvc-crud/target/mvc-crud-0.1.0-SNAPSHOT.jar": "ac947ed4a3495f4a891d235191fc72160a87c33434dab8b45d0e7648baedd3a5",
+        ".docker-context/runtime/lib/hoori-guest-base-0.4.0.jar": "ce843f845da7d12d321353ebea270815781d3b9fa964ca5f6e0ce3c34c232b28",
+        ".docker-context/runtime/lib/hoori-http-api-0.1.0.jar": "d019b6cafbbc94eea0eca6d6b314aae1fb9a2697062f0e87510a00ea69ece660",
+        ".docker-context/runtime/lib/hoori-rest-api-0.1.0.jar": "9b744a80bbf8c76c74c0faf980d153cd9bc0a8a1c49f75ba971546e5e3e2e37d",
+        ".docker-context/runtime/lib/hoori-concurrent-api-0.1.0.jar": "4ce30e3f77b9a6b5d893c06ff5c8e952f0e4b4b09bdd33be60741de84c95a30f",
+        ".docker-context/runtime/lib/hoori-concurrent-http-api-0.1.0.jar": "09e91799117ec832c070ae4424519e3852cb7eadcdad6804647e06d4b989c94b",
+        ".docker-context/runtime/lib/hoori-validation-api-0.1.0.jar": "5b9da87d5ef2df12aca331aeaa6d38beecd26a777131d72a59a729837addabdd",
+        ".docker-context/runtime/lib/hoori-rest-validation-api-0.1.0.jar": "3df89d4a7441a6d28063768ddaa6af090dc20549a8da6f8e7a8dd28708daa58e",
+        ".docker-context/runtime/lib/hoori-rest-mvc-api-0.1.0.jar": "f2917fec09a035b857f12f39f22eec0011eebebc502777534dc999520f212b5c",
+        ".docker-context/runtime/lib/hoori-validation-avaje-0.1.0.jar": "fda2e1a5e708c3117a4df1f6634157f1aacde192a913cc8620a0c9783127e233",
+        ".docker-context/dependencies/avaje-applog-1.2.jar": "d1aa0ba97c77ee4428e3feb23d62231cfd00e2771b3fe4b79e7393f854273353",
+        ".docker-context/dependencies/avaje-validator-2.18.jar": "5e98fe4b6a9e1dff77eed90f95b0282645153b39f6a3b8b0a01b198f42143283",
+        ".docker-context/dependencies/avaje-validator-http-plugin-2.18.jar": "e2daf73352bae03820eebcf6bbbda8203f6ccab00d7985d3ec2059ab0427c457",
+        ".docker-context/dependencies/avaje-validator-inject-plugin-2.18.jar": "5e980fb0781981c6b64d06a028d5651728570b94e4def4326ecee71542571ab2",
+        ".docker-context/dependencies/jakarta.validation-api-3.1.1.jar": "63ce00156388c365f3ac1be71fcfaf114682fc0c452020b5df6e7ec236e142ab",
+        ".docker-context/dependencies/jspecify-1.0.1.jar": "070d75f261fe4c5b8202508366715f7f2d4660f88c8ef7e6d3575e48c9683b66"
+      },
+      "checks": [
+        "startup failure closes alias resource once before any listener/ready",
+        "generated CRUD: path/query/JSON, defaults, UTF-8, duplicates, validation, 201/Location, 204, advice, 404/405/406/415",
+        "singleton identity; admission before JSON; validation before work; child context, owner isolation, deadline/cleanup priority and recovery",
+        "SIGTERM drains the admitted child/response before exactly-once resource close"
+      ],
+      "logs": [
+        ".cache/mvc-mixed-normal-707901-0.log",
+        ".cache/mvc-mixed-normal-707901-1.log",
+        ".cache/mvc-mixed-normal-707901-2.log"
+      ]
+    },
+    {
+      "engine": "mixed",
+      "gc_stress": true,
+      "runtime": {
+        "dirty": false,
+        "revision": "83d2b8fc83ffee6ed7c748409ff7b4802d8a341b"
+      },
+      "jars": {
+        "framework/target/hoori-micro-0.1.0-SNAPSHOT.jar": "9f17847a985da3be9e6c042b465f10867d20765c7c73b23e237da791f5f278f8",
+        "examples/mvc-crud/target/mvc-crud-0.1.0-SNAPSHOT.jar": "ac947ed4a3495f4a891d235191fc72160a87c33434dab8b45d0e7648baedd3a5",
+        ".docker-context/runtime/lib/hoori-guest-base-0.4.0.jar": "ce843f845da7d12d321353ebea270815781d3b9fa964ca5f6e0ce3c34c232b28",
+        ".docker-context/runtime/lib/hoori-http-api-0.1.0.jar": "d019b6cafbbc94eea0eca6d6b314aae1fb9a2697062f0e87510a00ea69ece660",
+        ".docker-context/runtime/lib/hoori-rest-api-0.1.0.jar": "9b744a80bbf8c76c74c0faf980d153cd9bc0a8a1c49f75ba971546e5e3e2e37d",
+        ".docker-context/runtime/lib/hoori-concurrent-api-0.1.0.jar": "4ce30e3f77b9a6b5d893c06ff5c8e952f0e4b4b09bdd33be60741de84c95a30f",
+        ".docker-context/runtime/lib/hoori-concurrent-http-api-0.1.0.jar": "09e91799117ec832c070ae4424519e3852cb7eadcdad6804647e06d4b989c94b",
+        ".docker-context/runtime/lib/hoori-validation-api-0.1.0.jar": "5b9da87d5ef2df12aca331aeaa6d38beecd26a777131d72a59a729837addabdd",
+        ".docker-context/runtime/lib/hoori-rest-validation-api-0.1.0.jar": "3df89d4a7441a6d28063768ddaa6af090dc20549a8da6f8e7a8dd28708daa58e",
+        ".docker-context/runtime/lib/hoori-rest-mvc-api-0.1.0.jar": "f2917fec09a035b857f12f39f22eec0011eebebc502777534dc999520f212b5c",
+        ".docker-context/runtime/lib/hoori-validation-avaje-0.1.0.jar": "fda2e1a5e708c3117a4df1f6634157f1aacde192a913cc8620a0c9783127e233",
+        ".docker-context/dependencies/avaje-applog-1.2.jar": "d1aa0ba97c77ee4428e3feb23d62231cfd00e2771b3fe4b79e7393f854273353",
+        ".docker-context/dependencies/avaje-validator-2.18.jar": "5e98fe4b6a9e1dff77eed90f95b0282645153b39f6a3b8b0a01b198f42143283",
+        ".docker-context/dependencies/avaje-validator-http-plugin-2.18.jar": "e2daf73352bae03820eebcf6bbbda8203f6ccab00d7985d3ec2059ab0427c457",
+        ".docker-context/dependencies/avaje-validator-inject-plugin-2.18.jar": "5e980fb0781981c6b64d06a028d5651728570b94e4def4326ecee71542571ab2",
+        ".docker-context/dependencies/jakarta.validation-api-3.1.1.jar": "63ce00156388c365f3ac1be71fcfaf114682fc0c452020b5df6e7ec236e142ab",
+        ".docker-context/dependencies/jspecify-1.0.1.jar": "070d75f261fe4c5b8202508366715f7f2d4660f88c8ef7e6d3575e48c9683b66"
+      },
+      "checks": [
+        "startup failure closes alias resource once before any listener/ready",
+        "generated CRUD: path/query/JSON, defaults, UTF-8, duplicates, validation, 201/Location, 204, advice, 404/405/406/415",
+        "singleton identity; admission before JSON; validation before work; child context, owner isolation, deadline/cleanup priority and recovery",
+        "SIGTERM drains the admitted child/response before exactly-once resource close"
+      ],
+      "logs": [
+        ".cache/mvc-mixed-gc-722481-0.log",
+        ".cache/mvc-mixed-gc-722481-1.log",
+        ".cache/mvc-mixed-gc-722481-2.log"
+      ]
+    }
+  ],
+  "independent_build": {
+    "directory": "/tmp/hoori-micro-app-pq6n5qym",
+    "runtime": {
+      "dirty": false,
+      "revision": "83d2b8fc83ffee6ed7c748409ff7b4802d8a341b"
+    },
+    "engines": [
+      "interpreter",
+      "mixed"
+    ],
+    "source_removed_before_run": true
+  }
+}

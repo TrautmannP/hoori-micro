@@ -28,7 +28,7 @@ class RuntimeCheckTest(unittest.TestCase):
             target = self.path / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("test fixture, not a runtime\n")
-        for name in self.lock["runtimeSdks"]:
+        for name in self.lock["runtimeSdks"] + self.lock.get("buildSdks", []):
             pom = (f'<project xmlns="{runtime_check.NS["m"]}"><modelVersion>4.0.0</modelVersion>'
                    f'<groupId>dev.hoori</groupId><artifactId>{name}</artifactId>'
                    '<version>0.1.0</version></project>')
@@ -146,14 +146,27 @@ class RuntimeCheckTest(unittest.TestCase):
                 (target / (artifact + "-0.1.0.jar")).write_bytes(b"application fixture")
             (root / "docker").mkdir()
             (root / "docker/Dockerfile").write_text("FROM scratch\n")
-            with patch.object(stage, "ROOT", root):
+            with patch.object(stage, "ROOT", root), patch.object(stage, "external_jars", return_value=[]):
                 stage.stage(self.path)
             output = root / ".docker-context"
             self.assertEqual(self.receipt, runtime_check.verify(output / "runtime", self.lock))
             jars = (output / "runtime-classpath.txt").read_text().splitlines()
             self.assertEqual(runtime_check.runtime_jars(self.receipt, self.lock), jars)
-            self.assertEqual(5, len(jars))
+            self.assertEqual(1 + len(self.lock["runtimeSdks"]), len(jars))
             self.assertNotIn("lib/unused-optional.jar", jars)
+
+    def test_external_dependency_hashes_and_selection(self):
+        path = self.path / "validator.jar"
+        path.write_bytes(b"original")
+        lock = {"runtimeDependencies": {path.name: hashlib.sha256(path.read_bytes()).hexdigest()}}
+        self.assertEqual([path], runtime_check.external_jars(self.path, lock))
+        path.write_bytes(b"changed")
+        with self.assertRaises(ValueError):
+            runtime_check.external_jars(self.path, lock)
+        path.write_bytes(b"original")
+        (self.path / "processor.jar").write_bytes(b"unwanted")
+        with self.assertRaises(ValueError):
+            runtime_check.external_jars(self.path, lock)
 
     def test_modified(self):
         (self.path / "bin/hoori").write_text("changed")

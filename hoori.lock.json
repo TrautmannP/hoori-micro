@@ -1,11 +1,38 @@
 {
-  "revision": "7d7245aa782ba6f79c47397f008789f13552a4c5",
+  "revision": "83d2b8fc83ffee6ed7c748409ff7b4802d8a341b",
   "sdkVersion": "0.1.0",
   "guestVersion": "0.4.0",
   "runtimeSdks": [
     "hoori-http-api",
     "hoori-rest-api",
     "hoori-concurrent-api",
-    "hoori-concurrent-http-api"
-  ]
+    "hoori-concurrent-http-api",
+    "hoori-validation-api",
+    "hoori-rest-validation-api",
+    "hoori-rest-mvc-api",
+    "hoori-validation-avaje"
+  ],
+  "buildSdks": [
+    "hoori-rest-annotations",
+    "hoori-rest-processor",
+    "hoori-validation-processor",
+    "hoori-rest-mvc-processor",
+    "hoori-validation-avaje-processor",
+    "hoori-task-annotations",
+    "hoori-task-processor",
+    "hoori-transaction-api"
+  ],
+  "externalDependencies": [
+    "io.avaje:avaje-validator:2.18",
+    "jakarta.validation:jakarta.validation-api:3.1.1",
+    "io.avaje:avaje-validator-generator:2.18"
+  ],
+  "runtimeDependencies": {
+    "avaje-validator-2.18.jar": "5e98fe4b6a9e1dff77eed90f95b0282645153b39f6a3b8b0a01b198f42143283",
+    "avaje-validator-http-plugin-2.18.jar": "e2daf73352bae03820eebcf6bbbda8203f6ccab00d7985d3ec2059ab0427c457",
+    "avaje-validator-inject-plugin-2.18.jar": "5e980fb0781981c6b64d06a028d5651728570b94e4def4326ecee71542571ab2",
+    "avaje-applog-1.2.jar": "d1aa0ba97c77ee4428e3feb23d62231cfd00e2771b3fe4b79e7393f854273353",
+    "jakarta.validation-api-3.1.1.jar": "63ce00156388c365f3ac1be71fcfaf114682fc0c452020b5df6e7ec236e142ab",
+    "jspecify-1.0.1.jar": "070d75f261fe4c5b8202508366715f7f2d4660f88c8ef7e6d3575e48c9683b66"
+  }
 }

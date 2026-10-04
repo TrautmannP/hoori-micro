@@ -19,8 +19,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /** Test-only real guest services and a shared-SDK-pool wire probe. */
 public final class BudgetMain {
-    private static final Action<Object, Object> OBSERVE =
-            new Action<>("recipes.observe", JsonTree.CODEC, JsonTree.CODEC);
     private static final AtomicInteger CALLS = new AtomicInteger();
 
     public static void main(String[] args) throws Exception {
@@ -32,47 +30,51 @@ public final class BudgetMain {
             return;
         }
 
-        Service service = Service.named(role);
+        try (Microservice app = Microservice.create(role)) {
+            RemoteClient recipes = role.equals("shopping") ? new RemoteClient(app, "recipes", 1) : null;
 
-        if (role.equals("recipes"))
-            service.action(OBSERVE, (ctx, input) -> {
-                        CALLS.incrementAndGet();
-                        long delay = ((Map<?, ?>) input).get("delay") instanceof Long value ? value : 0;
+            if (role.equals("recipes")) {
+                HttpFixture.Body observe = (ctx, input) -> {
+                    CALLS.incrementAndGet();
+                    long delay = ((Map<?, ?>) input).get("delay") instanceof Long value ? value : 0;
 
-                        if (delay < 0 || delay > 1500) throw new RequestException(400, "Delay bound");
+                    if (delay < 0 || delay > 1500) throw new RequestException(400, "Delay bound");
 
-                        Thread.sleep(delay);
-                        String wire = ctx.ownerRequest().headers.get(Context.BUDGET_HEADER);
+                    Thread.sleep(delay);
+                    String wire = ctx.ownerRequest().headers.get(Context.BUDGET_HEADER);
 
-                        return Map.of(
-                                "wire",
-                                wire == null ? 0L : Long.parseLong(wire),
-                                "remaining",
-                                ctx.budget().remainingNanos() / 1_000_000L,
-                                "requestId",
-                                ctx.invocation().requestId(),
-                                "authorization",
-                                ctx.ownerRequest().headers.get("Authorization") != null);
-                    })
-                    .http("observe", "POST", "/observe/{id}")
-                    .requirePermission("observe", "recipes:read");
+                    return Map.of(
+                            "wire",
+                            wire == null ? 0L : Long.parseLong(wire),
+                            "remaining",
+                            ctx.budget().remainingNanos() / 1_000_000L,
+                            "requestId",
+                            ctx.invocation().requestId(),
+                            "authorization",
+                            ctx.ownerRequest().headers.get("Authorization") != null,
+                            "body",
+                            input);
+                };
+                HttpFixture.post(app, "/observe", null, JsonTree.CODEC, observe);
+                HttpFixture.post(app, "/observe/{id}", "recipes:read", JsonTree.CODEC, observe);
+            }
 
-        if (role.equals("shopping"))
-            service.dependsOn("recipes", 1)
-                    .action("serial", JsonTree.CODEC, JsonTree.CODEC, (ctx, input) -> serial(ctx))
-                    .http("serial", "POST", "/chain")
-                    .requirePermission("serial", "shopping:read")
-                    .action("expired", JsonTree.CODEC, JsonTree.CODEC, (ctx, input) -> {
-                        return TaskScope.named("shorter")
+            if (role.equals("shopping")) {
+                HttpFixture.post(app, "/chain", "shopping:read", JsonTree.CODEC, (ctx, input) -> serial(recipes));
+                HttpFixture.post(
+                        app,
+                        "/expired",
+                        null,
+                        JsonTree.CODEC,
+                        (ctx, input) -> TaskScope.named("shorter")
                                 .within(Duration.ofMillis(50))
                                 .call(scope -> {
                                     Thread.sleep(100);
 
-                                    return ctx.call(OBSERVE, Map.of());
-                                });
-                    });
+                                    return HttpFixture.call(recipes, "/observe", Map.of());
+                                }));
+            }
 
-        try (Microservice app = Microservice.create(service)) {
             if (role.equals("gateway"))
                 Gateway.mount(
                         app,
@@ -87,7 +89,7 @@ public final class BudgetMain {
                                         200,
                                         TaskScope.named("shorter")
                                                 .within(Duration.ofMillis(1000))
-                                                .call(scope -> serial(app.context())),
+                                                .call(scope -> serial(recipes)),
                                         JsonTree.CODEC,
                                         app.jsonLimits()));
                 app.routes().post("/cancel", request -> {
@@ -95,7 +97,7 @@ public final class BudgetMain {
                     boolean[] interrupted = new boolean[1];
                     Thread child = new Thread(() -> {
                         try {
-                            app.runTask(() -> app.context().call(OBSERVE, Map.of("delay", 1500)));
+                            app.runTask(() -> HttpFixture.call(recipes, "/observe", Map.of("delay", 1500)));
                         } catch (Throwable error) {
                             failure[0] = error;
                             interrupted[0] = Thread.currentThread().isInterrupted();
@@ -155,10 +157,10 @@ public final class BudgetMain {
         }
     }
 
-    private static Object serial(Context context) throws Exception {
-        Object first = context.call(OBSERVE, Map.of("delay", 100));
+    private static Object serial(RemoteClient recipes) throws Exception {
+        Object first = HttpFixture.call(recipes, "/observe", Map.of("delay", 100));
         Thread.sleep(200);
-        Object second = context.call("recipes.observe", Map.of("delay", 100));
+        Object second = HttpFixture.call(recipes, "/observe", Map.of("delay", 100));
 
         return Map.of("first", first, "second", second);
     }

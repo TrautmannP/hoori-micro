@@ -15,7 +15,7 @@ while IFS= read -r jar; do
 done < "$runtime_dir/../runtime-classpath.txt"
 set -- run --engine "${HOORI_ENGINE:-mixed}" --live-output --graceful-signals \
   --max-heap-bytes "${HOORI_MAX_HEAP_BYTES:-33554432}" \
-  --allow-environment-read --allow-network-listen --class-path "$classpath"
+  --allow-environment-read --allow-network-listen --allow-resource-read --class-path "$classpath"
 case "${HOORI_OUTBOUND:-none}" in
   none) ;;
   http) set -- "$@" --allow-network-connect --allow-host-resolution ;;

@@ -11,7 +11,7 @@ import subprocess
 import threading
 import time
 
-from runtime_check import ROOT, runtime_jars, verify
+from runtime_check import ROOT, runtime_classpath, verify
 
 
 def request(port, path):
@@ -60,7 +60,7 @@ def main():
                 delete_release.wait(2)
             try:
                 self.send_response(status)
-                for key, value in {"Content-Type": "application/json", "X-Hoori-Catalog-Protocol": "2",
+                for key, value in {"Content-Type": "application/json", "X-Hoori-Catalog-Protocol": "3",
                                    "X-Hoori-Catalog-Epoch": "fault-check", "X-Hoori-Catalog-Revision": "1",
                                    "X-Hoori-Catalog-View": "none", "Content-Length": str(len(body))}.items():
                     self.send_header(key, value)
@@ -87,7 +87,7 @@ def main():
                     "HOORI_HEARTBEAT_MS": "100", "HOORI_REGISTRY_TTL_MS": "600", "HOORI_CONTROL_TIMEOUT_MS": "300",
                     "HOORI_CLIENT_TIMEOUT_MS": "300"})
         cp = ":".join([str(ROOT / "framework/target/test-classes"), str(ROOT / "framework/target/classes")]
-                      + [str(runtime / jar) for jar in runtime_jars(receipt)])
+                      + list(map(str, runtime_classpath(runtime, receipt))))
         command = [str(runtime / "bin/hoori"), "run", "--engine", env.get("HOORI_ENGINE", "mixed"),
                    "--live-output", "--graceful-signals", "--max-heap-bytes", "33554432", "--allow-environment-read",
                    "--allow-network-listen", "--allow-network-connect", "--class-path", cp, "hoori/micro/BenchmarkMain"]

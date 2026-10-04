@@ -1,5 +1,5 @@
 {
-  "mainClass": "dev/hoori/micro/data/DataMain",
+  "mainClass": "dev/hoori/micro/data/DataApplication",
   "runtimeSdks": ["hoori-transaction-api", "hoori-jdbc-api", "hoori-jdbi-api"],
   "buildSdks": ["hoori-task-annotations", "hoori-task-processor"],
   "externalDependencies": ["org.jdbi:jdbi3-core:3.55.0"],

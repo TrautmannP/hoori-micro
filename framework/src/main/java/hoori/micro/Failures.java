@@ -43,7 +43,9 @@ final class Failures {
         Throwable cause = failure;
         // A depth bound also terminates cyclic cause graphs. Only semantic SDK wrappers are peeled.
         for (int depth = 0; depth < 32; depth++) {
-            if (cause instanceof OperationFailedException operation) {
+            if (cause instanceof RemoteClient.TransportFailure) {
+                // Synchronous client interfaces preserve checked transport causes in this wrapper.
+            } else if (cause instanceof OperationFailedException operation) {
                 if (transaction == ScopeExtension.Status.NONE) transaction = operation.status();
             } else if (!(cause instanceof ScopeFailedException
                     || cause instanceof SubtaskFailedException

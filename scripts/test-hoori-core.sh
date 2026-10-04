@@ -11,3 +11,4 @@ cp="$PWD/framework/target/classes:$PWD/framework/target/test-classes:$(python3 s
 "$runtime/bin/hoori" run --engine "${HOORI_ENGINE:-mixed}" --class-path "$cp" hoori/micro/AdmissionChecks
 "$runtime/bin/hoori" run --engine "${HOORI_ENGINE:-mixed}" --class-path "$cp" hoori/micro/TaskChecks
 "$runtime/bin/hoori" run --engine "${HOORI_ENGINE:-mixed}" --class-path "$cp" hoori/micro/CapacityChecks
+"$runtime/bin/hoori" run --engine "${HOORI_ENGINE:-mixed}" --class-path "$cp" hoori/micro/ApplicationChecks

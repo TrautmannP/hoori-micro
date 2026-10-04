@@ -1,41 +1,34 @@
-# Optionale Task-Fassaden
+# Optionale Task-Fassade
 
-Dieses Beispiel wird separat vom HTTP-Reaktor gebaut. Es verwendet die Original-
-POMs und den `hoori-task-processor` derselben geprüften Distribution:
+`FacadeApplication` nutzt denselben Starter und Bootstrap wie die HTTP-Beispiele:
+`controller/OverviewController` bindet den Request, `service/OverviewComposition`
+komponiert zwei Reads, `client/RecipeClient` und `PantryClient` beschreiben HTTP.
+Das injizierte `OverviewService`-Interface setzt mit `@TaskScoped` eine
+800-ms-Methodengrenze. Ein kürzeres Parent-Budget bleibt maßgeblich.
 
 ```bash
-./scripts/build.sh /pfad/zur/gepinnten/distribution
 python3 scripts/optional_example.py build task-facade
-# Registry, Recipes und Pantry über run-local.sh starten, dann:
+# Registry, Recipes und Pantry über scripts/run-local.sh starten, dann:
 python3 scripts/optional_example.py run task-facade
-curl -fsS http://127.0.0.1:8084/overview -H 'Content-Type: application/json' -d '{"id":1}'
+curl -fsS http://127.0.0.1:8084/overview/1
 ```
 
-`RecipesClientTasks` und `PantryClientTasks` entstehen über den expliziten Maven-
-Processor-Pfad. Ihre normalen `TaskSpec`s starten erst bei Ausführung und binden
-erst dort den aktuellen Micro-Kontext. Die handgeschriebenen Delegates rufen
-`app.context().call(...)` auf; Discovery bleibt im vorhandenen Broker.
+`@GenerateTasks` an den Clients erzeugt originale Hoori-Task-Fassaden. Der
+Anwendungsgraph konstruiert und injiziert sie sowie den Scoped-Delegate;
+Anwendungscode verdrahtet keine erzeugten Klassen. Ein TaskSpec bleibt bis zur
+Ausführung lazy und verwendet dann den aktuellen Kontext. Der Controller prüft
+`@Positive` vor dem Fachservice; `/overview/0` liefert einen begrenzten Feldfehler.
 
-`new OverviewServiceScoped(delegate)` setzt die erklärte 800-ms-Methodengrenze.
-Ein kürzeres Request-/Parent-Budget bleibt die Obergrenze. Rückkehr wartet auf
-lokalen Kind-/Ressourcenabschluss; ein Remote-Provider kann unabhängig weiterlaufen.
-Direkte Aufrufe und Selbstaufrufe des ursprünglichen Delegates bleiben gewöhnliche
-Java-Aufrufe. Es gibt keine automatische Interception oder Instanzsuche.
+Dekoration gilt für das injizierte öffentliche Interface. Direkte Aufrufe der
+konkreten Implementierung und Selbstaufrufe bleiben normale Java-Aufrufe.
+Es gibt keinen allgemeinen AOP-Container. Rückkehr wartet auf lokalen
+Child-/Ressourcenabschluss; ein Remote-Provider kann unabhängig weiterlaufen.
 
-Erzeugte Klassen stehen in `target/generated-sources/annotations` und im App-JAR.
-Annotationen/Processor bleiben auf dem Build-/Compilepfad. Zum Ausführen werden
-nur das App-JAR, Micro, Verträge und die vier SDKs samt Guest Base geladen.
-`HOORI_ENGINE=interpreter` wählt die andere Engine; die Port-/Registry-Variablen
-aus der allgemeinen Konfiguration gelten ebenfalls.
+Dieses Modul wird separat gebaut. Die Task-Processor bleiben auf dem Buildpfad,
+DB-Abhängigkeiten sind nicht enthalten. `test_composition.py --facade` prüft beide
+normalen App-Einstiege und zusätzliche kontrollierte Fälle für Lazy-Ausführung,
+Kontext, überlappende Reads, Checked Exceptions, Deadline, Recovery und Shutdown.
+Den Check auch mit `HOORI_ENGINE=interpreter` ausführen.
 
-Der kürzere Weg ohne Codegen bleibt `ctx.task(Recipes.GET, query)` in Shopping.
-Die Fassade lohnt sich für bestehende synchrone Client-Interfaces; sie spart dort
-handgeschriebene Task-Wrapper, fügt aber einen bewussten Buildschritt hinzu.
-Lokale generierte Transaktionsgrenzen zeigt das separate
-[Datenbankbeispiel](../local-data/README.md): `StoreScoped` erhält seinen stabilen
-Manager ausdrücklich. Das fügt diesem HTTP-Beispiel keine Transaction-Abhängigkeit hinzu.
-
-Nach dem Build prüft `python3 scripts/test_composition.py --facade` echte
-Discovery-Calls, verzögerte/wiederholte Ausführung, Request-Kontext, Checked Exceptions,
-lokale/Parent-Budgets und Recovery. Den Befehl auch mit
-`HOORI_ENGINE=interpreter` ausführen. Die generische Processor-Matrix bleibt upstream.
+Für einzelne parallele Aufrufe kann normale Fachlogik stattdessen
+`Tasks.task(() -> client.get(id))` verwenden, wie im Shopping-Service.

@@ -17,6 +17,7 @@ import urllib.request
 
 from benchmark import kernel_sample, percentile
 from runtime_check import verify
+from build_rolling import build as build_rolling
 
 ROOT = Path(__file__).resolve().parents[1]
 ENV = os.environ.copy()
@@ -64,18 +65,18 @@ def eventually(path: str, expected, what: str) -> None:
 
 
 def ready_meal() -> None:
-    eventually("/meals/1", {"id": 1, "title": "Kartoffelsuppe"}, "Action call did not recover")
+    eventually("/meals/1", {"id": 1, "title": "Kartoffelsuppe"}, "HTTP call did not recover")
 
 
 def registered(expected=None) -> dict:
-    """Services with their action names, once the registry reports a complete catalog."""
+    """Services with their HTTP endpoints, once the registry reports a complete catalog."""
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         try:
             catalog = json.loads(compose("exec", "-T", "registry", "curl", "-fsS", "--max-time", "2",
-                                         "http://127.0.0.1:8080/v1/catalog", capture=True))
+                                         "-H", "X-Hoori-Catalog-Protocol: 3", "http://127.0.0.1:8080/v2/catalog", capture=True))
             if catalog["complete"]:
-                services = {i["service"]: sorted(a["name"] for a in i["actions"]) for i in catalog["instances"]}
+                services = {i["service"]: sorted(a["method"] + " " + a["path"] for a in i["endpoints"]) for i in catalog["instances"]}
                 if expected is None or services == expected:
                     return services
         except (subprocess.SubprocessError, ValueError, KeyError):
@@ -91,7 +92,7 @@ def container(service: str) -> str:
 def registry_request(method: str, path: str, headers=None, payload=None):
     args = ["exec", "-T", "registry", "curl", "-sS", "--max-time", "10", "--dump-header", "-",
             "--write-out", "\nEND", "-X", method]
-    for name, value in (headers or {}).items():
+    for name, value in ({"X-Hoori-Catalog-Protocol": "3"} | (headers or {})).items():
         args += ["-H", name + ": " + value]
     if payload is not None:
         args += ["-H", "Content-Type: application/json", "--data-binary", json.dumps(payload)]
@@ -102,38 +103,40 @@ def registry_request(method: str, path: str, headers=None, payload=None):
 
 
 def discovery_protocol() -> None:
-    path = "/v1/instances/legacy-probe"
-    small = {"id": "legacy-probe", "service": "probe", "version": 1,
-             "url": "http://recipes:8080", "actions": [{"name": "ping"}]}
-    status, _, body = registry_request("PUT", path, payload=small)
-    require(status == 200, "legacy registration compatibility")
+    path = "/v2/instances/protocol-probe"
+    small = {"id": "protocol-probe", "service": "probe", "version": 1,
+             "url": "http://recipes:8080", "endpoints": [{"method": "GET", "path": "/ping", "consumes": "", "produces": "application/json"}]}
+    status, _, body = registry_request("PUT", path, {"X-Hoori-Catalog-Protocol": "2"}, small)
+    require(status == 426, "previous protocol must be rejected")
+    status, _, body = registry_request("PUT", path, {"X-Hoori-Catalog-Protocol": "3"}, small)
+    require(status == 200, "current endpoint protocol registration")
     catalog = json.loads(body)
-    known = {"X-Hoori-Catalog-Protocol": "2", "X-Hoori-Catalog-Epoch": catalog["epoch"],
+    known = {"X-Hoori-Catalog-Protocol": "3", "X-Hoori-Catalog-Epoch": catalog["epoch"],
              "X-Hoori-Catalog-Revision": str(catalog["revision"])}
     for _ in range(3):
         status, fields, body = registry_request("POST", path + "/lease", known)
         require(status == 204 and body == "", "unchanged lease must have no catalog body")
         require(fields["x-hoori-catalog-epoch"] == catalog["epoch"]
                 and fields["x-hoori-catalog-revision"] == str(catalog["revision"]), "lease changed the revision")
-    require(registry_request("GET", "/v1/catalog", known)[0] == 204, "conditional catalog")
+    require(registry_request("GET", "/v2/catalog", known)[0] == 204, "conditional catalog")
     filtered = dict(known, **{"X-Hoori-Catalog-View": "services=recipes:1"})
-    status, fields, body = registry_request("GET", "/v1/catalog", filtered)
+    status, fields, body = registry_request("GET", "/v2/catalog", filtered)
     consumer = json.loads(body)
     require(status == 200 and fields["x-hoori-catalog-view"] == "services=recipes:1",
             "a different view must receive its full snapshot")
     require(len(consumer["instances"]) == 1 and consumer["instances"][0]["service"] == "recipes"
-            and all(set(a) == {"name"} for a in consumer["instances"][0]["actions"]),
+            and all(set(a) == {"method", "path", "consumes", "produces"} for a in consumer["instances"][0]["endpoints"]),
             "consumer view includes unrelated services or publication metadata")
     filtered["X-Hoori-Catalog-Known-View"] = "services=recipes:1"
-    require(registry_request("GET", "/v1/catalog", filtered)[0] == 204, "filtered confirmation")
+    require(registry_request("GET", "/v2/catalog", filtered)[0] == 204, "filtered confirmation")
     for view in ("none", "public"):
         filtered["X-Hoori-Catalog-View"] = view
-        status, _, body = registry_request("GET", "/v1/catalog", filtered)
+        status, _, body = registry_request("GET", "/v2/catalog", filtered)
         require(status == 200, "changed filter received the previous view's confirmation")
         instances = json.loads(body)["instances"]
         require(not instances if view == "none" else
-                bool(instances) and all("path" in a and "permission" in a for i in instances for a in i["actions"]),
-                "provider/public view contains foreign/private actions")
+                bool(instances) and all("path" in a and "permission" in a for i in instances for a in i["endpoints"]),
+                "provider/public view contains foreign/private endpoints")
     require(registry_request("POST", path + "/lease",
                              dict(known, **{"X-Hoori-Catalog-View": "services=recipes:0"}))[0] == 400,
             "invalid filter must fail before lease renewal")
@@ -141,16 +144,16 @@ def discovery_protocol() -> None:
             "unsupported protocol must fail before changing state")
     # Each replacement fits the HTTP document limit; their aggregate cannot fit the catalog.
     big = dict(small)
-    big["actions"] = [{"name": f"action-{i}", "method": "GET", "path": "/probe/" + str(i) + "/" + "x" * 220,
+    big["endpoints"] = [{"method": "GET", "consumes": "", "produces": "application/json", "path": "/probe/" + str(i) + "/" + "x" * 220,
                        "permission": "probe:read"} for i in range(128)]
     require(len(json.dumps(big).encode()) < 65536, "metadata fixture exceeds individual body bound")
     status, _, _ = registry_request("PUT", path, known, big)
     # This fits once, but another provider with equally sized metadata would overflow the full view.
     require(status == 200, "first bounded large registration")
     other = dict(big, id="overflow-probe")
-    require(registry_request("PUT", "/v1/instances/overflow-probe", known, other)[0] == 413,
+    require(registry_request("PUT", "/v2/instances/overflow-probe", known, other)[0] == 413,
             "aggregate overflow must be rejected")
-    status, _, body = registry_request("GET", "/v1/catalog")
+    status, _, body = registry_request("GET", "/v2/catalog")
     require(status == 200 and all(i["id"] != "overflow-probe" for i in json.loads(body)["instances"]),
             "rejected metadata was committed")
     require(registry_request("DELETE", path, known)[0] == 204, "deregistration")
@@ -224,7 +227,7 @@ def saturated_pool() -> None:
             require(stats['hoori_micro_pool_pending_acquires{pool="control"}'] == 0
                     and stats['hoori_micro_pool_active_connections{pool="control"}'] <= 1,
                     "control pool exceeded bounds")
-            _, _, body = registry_request("GET", "/v1/catalog")
+            _, _, body = registry_request("GET", "/v2/catalog")
             require(any(i["service"] == "shopping" for i in json.loads(body)["instances"]),
                     "saturated data pool prevented lease renewal")
             require(time.monotonic() < deadline, "saturation calls exceeded native test deadline")
@@ -256,7 +259,7 @@ def main() -> int:
     override.write_text(json.dumps({"services": settings}))
     COMPOSE.extend(["--file", str(override)])
     try:
-        ENV["HOORI_DEMO_RECOMMEND"] = "0"
+        build_rolling(ROOT / ".docker-context/runtime")
         compose("up", "--build", "--detach", "--wait", "--wait-timeout", "180")
         ready_meal()
         eventually("/overview/1", {"recipe": {"id": 1, "title": "Kartoffelsuppe"},
@@ -267,12 +270,12 @@ def main() -> int:
             status, _, body = request(path, payload={"ids": [2, 1, 2, 1, 2]})
             require(status == 200 and [item["id"] for item in json.loads(body)] == [2, 1, 2, 1, 2],
                     "bounded batch/bulk ordering")
-        eventually("/recipes/1", {"id": 1, "title": "Kartoffelsuppe"}, "published recipes action")
+        eventually("/recipes/1", {"id": 1, "title": "Kartoffelsuppe"}, "published recipes endpoint")
         require(request("/health/live")[0] == 200, "liveness")
         require(request("/health/ready")[0] == 200, "readiness")
         require(request("/meals/999")[0] == 404, "domain 404 across two hops")
         require(request("/meals/not-a-number")[0] == 400, "input validation")
-        require(request("/recipes/1/recommendation")[0] == 404, "unpublished action must not exist yet")
+        require(request("/recipes/1/recommendation")[0] == 404, "unpublished endpoint must not exist yet")
         require(request("/_hoori/invoke")[0] == 404, "internal invoke endpoint is not public")
         status, headers, body = request("/demo/context", "hop-check-1")
         require(status == 200 and json.loads(body) == {"requestId": "hop-check-1", "authorization": False},
@@ -281,10 +284,12 @@ def main() -> int:
         require(normalized.get("x-request-id") == "hop-check-1", "response correlation")
         status, _, body = request("/metrics")
         require(status == 200 and b"hoori_http" in body, "HTTP metrics")
-        require(registered() == {"recipes": ["context", "get", "get-many", "slow"], "pantry": ["items"],
-                                "shopping": ["batch", "bulk", "context", "dashboard", "meal", "overview", "slow"]},
-                "catalog lists exactly the defined actions")
-        print("PASS: gateway publication, action calls, domain errors, health, metrics and context")
+        expected = {
+            "recipes": ["DELETE /recipes/{id}", "GET /recipes", "GET /recipes/demo/context", "GET /recipes/demo/slow/{id}", "GET /recipes/{id}", "POST /recipes", "POST /recipes/bulk"],
+            "pantry": ["GET /pantry/{id}"],
+            "shopping": ["DELETE /meals/{id}", "GET /dashboard/{id}", "GET /demo/context", "GET /demo/slow/{id}", "GET /meals", "GET /meals/{id}", "GET /overview/{id}", "POST /meals", "POST /meals/batch", "POST /meals/bulk"]}
+        require(registered() == expected, "catalog lists exactly the HTTP contracts")
+        print("PASS: gateway publication, endpoint calls, domain errors, health, metrics and context")
 
         discovery_protocol()
         # Warm compilation before making the cooperative waiting/saturation assertion.
@@ -318,31 +323,31 @@ def main() -> int:
         settings["recipes"]["cpus"] = .25
         override.write_text(json.dumps({"services": settings}))
         old_replica = compose("run", "--detach", "--no-deps", "--name", PROJECT + "-recipes-old",
-                              "-e", "HOORI_DEMO_RECOMMEND=0", "recipes", capture=True).splitlines()[-1]
-        ENV["HOORI_DEMO_RECOMMEND"] = "1"
-        compose("up", "--detach", "--force-recreate", "--wait", "--wait-timeout", "180", "recipes")
-        eventually("/recipes/1/recommendation", {"id": 2, "title": "Apfelstrudel"}, "new action not published")
+                              "recipes", capture=True).splitlines()[-1]
+        settings["recipes"]["build"] = {"args": {"SERVICE": "recipes-next"}}
+        override.write_text(json.dumps({"services": settings}))
+        compose("up", "--build", "--detach", "--force-recreate", "--wait", "--wait-timeout", "180", "recipes")
+        eventually("/recipes/1/recommendation", {"id": 2, "title": "Apfelstrudel"}, "new endpoint not published")
         deadline = time.monotonic() + 60
         while True:
-            _, _, body = registry_request("GET", "/v1/catalog")
+            _, _, body = registry_request("GET", "/v2/catalog")
             providers = [i for i in json.loads(body)["instances"] if i["service"] == "recipes"]
             if len(providers) == 2:
                 break
             require(time.monotonic() < deadline, "old/new replicas did not register simultaneously")
             time.sleep(.5)
-        require(sorted(len(i["actions"]) for i in providers) == [4, 5], "rolling action fixture")
+        require(sorted(len(i["endpoints"]) for i in providers) == [7, 8], "rolling endpoint fixture")
         for provider in providers:
             # HOSTNAME advertises the individual container, never the shared recipes DNS alias.
             status = compose("exec", "-T", "shopping", "curl", "-sS", "--max-time", "10", "-o", "/dev/null",
-                             "-w", "%{http_code}", "-X", "POST", "-H", "X-Hoori-Action: recipes.recommend",
-                             "-H", "X-Hoori-Version: 1", "-H", "Content-Type: application/json", "--data", '{"id":1}',
-                             provider["url"] + "/_hoori/invoke", capture=True)
-            require(status == ("200" if any(a["name"] == "recommend" for a in provider["actions"]) else "421"),
+                             "-w", "%{http_code}", "-X", "GET", "-H", "X-Hoori-Endpoint: GET /recipes/{id}/recommendation - application/json",
+                             "-H", "X-Hoori-Version: 1", provider["url"] + "/recipes/1/recommendation", capture=True)
+            require(status == ("200" if any(a["path"] == "/recipes/{id}/recommendation" for a in provider["endpoints"]) else "404"),
                     "advertise URL did not reach the selected instance")
         for _ in range(8):
             status, _, body = request("/recipes/1/recommendation")
             require(status == 200 and json.loads(body) == {"id": 2, "title": "Apfelstrudel"},
-                    "new action was routed to an old provider")
+                    "new endpoint was routed to an old provider")
         subprocess.run(["docker", "stop", "--timeout", "15", old_replica], check=True, timeout=30)
         subprocess.run(["docker", "rm", old_replica], check=True, timeout=30)
         old_replica = None
@@ -356,7 +361,7 @@ def main() -> int:
             time.sleep(.1)
         ready_meal()
         require({name: identity(name) for name in stable} == stable, "gateway/shopping were redeployed")
-        print("PASS: old/new replicas select by action and exact advertise address; gateway/shopping unchanged")
+        print("PASS: old/new replicas select by endpoint and exact advertise address; gateway/shopping unchanged")
 
         traffic_phase[0] = "registry_timeout"
         compose("pause", "registry")
@@ -378,14 +383,14 @@ def main() -> int:
             time.sleep(.2)
         require(request("/health/ready")[0] == 200, "snapshot expiry changed local readiness")
         compose("up", "--detach", "--wait", "--wait-timeout", "180", "registry")
-        registered({"recipes": ["context", "get", "get-many", "recommend", "slow"], "pantry": ["items"],
-                    "shopping": ["batch", "bulk", "context", "dashboard", "meal", "overview", "slow"]})
+        expected["recipes"] = sorted(expected["recipes"] + ["GET /recipes/{id}/recommendation"])
+        registered(expected)
         ready_meal()
         print("PASS: control timeout under business load, bounded snapshot expiry and epoch recovery")
 
         traffic_phase[0] = "provider_crash"
         old_provider = identity("recipes")
-        _, _, body = registry_request("GET", "/v1/catalog")
+        _, _, body = registry_request("GET", "/v2/catalog")
         old_ids = {i["id"] for i in json.loads(body)["instances"] if i["service"] == "recipes"}
         compose("kill", "--signal", "SIGKILL", "recipes")
         status, _, body = request("/meals/1")
@@ -395,20 +400,21 @@ def main() -> int:
         require(request("/health/ready")[0] == 200, "no recursive readiness dependency by default")
         deadline = time.monotonic() + 15
         while True:
-            _, _, body = registry_request("GET", "/v1/catalog")
+            _, _, body = registry_request("GET", "/v2/catalog")
             if not old_ids.intersection(i["id"] for i in json.loads(body)["instances"]):
                 break
             require(time.monotonic() < deadline, "crashed provider did not expire by TTL")
             time.sleep(.2)
         settings["recipes"]["cpus"] = .5
         override.write_text(json.dumps({"services": settings}))
-        compose("up", "--detach", "--force-recreate", "--wait", "--wait-timeout", "180", "recipes")
+        compose("up", "--build", "--detach", "--force-recreate", "--wait", "--wait-timeout", "180", "recipes")
         ready_meal()
         require(identity("recipes")["container"] != old_provider["container"], "provider was not replaced")
         traffic_phase[0] = "catalog_cycles"
         for enabled in ("0", "1"):
-            ENV["HOORI_DEMO_RECOMMEND"] = enabled
-            compose("up", "--detach", "--force-recreate", "--wait", "--wait-timeout", "180", "recipes")
+            settings["recipes"]["build"] = {"args": {"SERVICE": "recipes-next" if enabled == "1" else "recipes"}}
+            override.write_text(json.dumps({"services": settings}))
+            compose("up", "--build", "--detach", "--force-recreate", "--wait", "--wait-timeout", "180", "recipes")
             if enabled == "1":
                 eventually("/recipes/1/recommendation", {"id": 2, "title": "Apfelstrudel"}, "route did not reappear")
             else:

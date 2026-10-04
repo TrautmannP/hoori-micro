@@ -46,10 +46,8 @@ services:
       args: {SERVICE: recipes, RUNTIME_BASE: '${HOORI_RUNTIME_BASE:-debian:trixie-slim@sha256:7792b1f7702a86946cd518db72b6a407302c3e9bc1635634368b878189e8221c}'}
     environment:
       <<: *env
-      HOORI_MAIN_CLASS: dev/hoori/micro/demo/RecipesMain
+      HOORI_MAIN_CLASS: dev/hoori/micro/recipes/RecipesApplication
       HOORI_OUTBOUND: http
-      # 1 simulates a later recipes release with an additional action.
-      HOORI_DEMO_RECOMMEND: ${HOORI_DEMO_RECOMMEND:-0}
     depends_on: *after-registry
     networks: [backend]
   pantry:
@@ -59,7 +57,7 @@ services:
       args: {SERVICE: pantry, RUNTIME_BASE: '${HOORI_RUNTIME_BASE:-debian:trixie-slim@sha256:7792b1f7702a86946cd518db72b6a407302c3e9bc1635634368b878189e8221c}'}
     environment:
       <<: *env
-      HOORI_MAIN_CLASS: dev/hoori/micro/demo/PantryMain
+      HOORI_MAIN_CLASS: dev/hoori/micro/pantry/PantryApplication
       HOORI_OUTBOUND: http
     depends_on: *after-registry
     networks: [backend]
@@ -70,7 +68,7 @@ services:
       args: {SERVICE: shopping, RUNTIME_BASE: '${HOORI_RUNTIME_BASE:-debian:trixie-slim@sha256:7792b1f7702a86946cd518db72b6a407302c3e9bc1635634368b878189e8221c}'}
     environment:
       <<: *env
-      HOORI_MAIN_CLASS: dev/hoori/micro/demo/ShoppingMain
+      HOORI_MAIN_CLASS: dev/hoori/micro/shopping/ShoppingApplication
       HOORI_OUTBOUND: http
     depends_on: *after-registry
     networks: [backend]
@@ -84,7 +82,7 @@ services:
       HOORI_MAIN_CLASS: hoori/micro/Gateway
       HOORI_OUTBOUND: http
       # Demo policy: grants these permissions to every caller. No authentication.
-      HOORI_GATEWAY_PERMISSIONS: recipes:read,pantry:read,shopping:read,shopping:demo
+      HOORI_GATEWAY_PERMISSIONS: recipes:read,recipes:write,pantry:read,shopping:read,shopping:write,shopping:demo
     depends_on: *after-registry
     ports:
       - '127.0.0.1:${HOORI_DEMO_PORT:-8080}:8080'

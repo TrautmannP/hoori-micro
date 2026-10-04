@@ -1,5 +1,5 @@
 {
-  "mainClass": "dev/hoori/micro/facade/FacadeMain",
+  "mainClass": "dev/hoori/micro/facade/FacadeApplication",
   "runtimeSdks": [],
   "buildSdks": ["hoori-task-annotations", "hoori-task-processor"]
 }

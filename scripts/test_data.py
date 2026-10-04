@@ -14,7 +14,7 @@ import sys
 import time
 
 from optional_example import classpath, configuration
-from runtime_check import ROOT, runtime_jars, verify
+from runtime_check import ROOT, runtime_classpath, verify
 from stage import jar
 
 
@@ -50,12 +50,12 @@ def main():
     data_cp += [ROOT / "examples/local-data/target/test-classes"]
     core_cp = [jar("framework", "hoori-micro"), jar("examples/demo-contracts", "hoori-micro-demo-contracts")]
     core_cp += [jar(f"examples/{role}-service", role + "-service") for role in ("recipes", "pantry", "shopping")]
-    core_cp += [ROOT / "examples/shopping-service/target/test-classes", *[runtime / p for p in runtime_jars(receipt)]]
+    core_cp += [ROOT / "examples/shopping-service/target/test-classes", *runtime_classpath(runtime, receipt)]
     evidence = {"runtime": receipt["source"], "engine": engine, "classpath_sha256": hashes,
                 "fixtures_sha256": fixture_hashes, "postgres_image": IMAGE, "checks": [], "recovery": []}
     evidence["probe_sha256"] = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in
         [Path(__file__), ROOT / "examples/local-data/target/test-classes/dev/hoori/micro/data/DataChecks.class"]}
-    ports, processes, logs = {}, {}, {}
+    ports, processes, logs, environments = {}, {}, {}, {}
     for role in ("registry", "recipes", "pantry", "data"):
         with socket.socket() as free:
             free.bind(("127.0.0.1", 0))
@@ -66,7 +66,7 @@ def main():
         try:
             connection.request("GET" if body is None else "POST", path,
                 None if body is None else json.dumps(body).encode(),
-                {"Content-Type": "application/json", **(headers or {})})
+                {"Content-Type": "application/json", "X-Hoori-Catalog-Protocol": "3", **(headers or {})})
             response = connection.getresponse()
             return response.status, response.read()
         finally:
@@ -92,9 +92,8 @@ def main():
     def gate(role, opened):
         assert request(role, "/gate/" + ("open" if opened else "closed"), {})[0] == 200
 
-    def invoke(identifier, action="save", recipe=1):
-        return request("data", "/_hoori/invoke", {"id": identifier, "recipeId": recipe},
-                       {"X-Hoori-Action": "drafts." + action, "X-Hoori-Version": "1", "X-Request-ID": "save-" + str(identifier)})
+    def invoke(identifier, recipe=1):
+        return request("data", "/drafts", {"id": identifier, "recipeId": recipe}, {"X-Request-ID": "save-" + str(identifier)})
 
     def case(mode, identifier):
         return request("data", "/case/" + mode, {"id": identifier, "recipeId": 1}, {"X-Request-ID": "data-" + mode})
@@ -137,6 +136,7 @@ def main():
                     "HOORI_REQUEST_TIMEOUT_MS": "30000", "HOORI_SHUTDOWN_GRACE_MS": "400",
                     "HOORI_DB_URL": f"jdbc:postgresql://127.0.0.1:{peers.proxy_port}/hoori_jdbc",
                     "HOORI_DB_USER": "hoori_jdbc", "HOORI_DB_PASSWORD": env["HOORI_JDBC_TEST_PASSWORD"], "HOORI_DB_SSLMODE": "disable"}
+                environments[role] = runtime_env
                 main = "dev/hoori/micro/data/DataChecks" if role == "data" else (
                     "hoori/micro/Registry" if role == "registry" else "dev/hoori/micro/demo/CompositionMain")
                 cp = data_cp if role == "data" else core_cp
@@ -144,15 +144,23 @@ def main():
                 logs[role] = log
                 processes[role] = subprocess.Popen([str(runtime / "bin/hoori"), "run", "--engine", engine, "--live-output",
                     "--graceful-signals", "--max-heap-bytes", "33554432", "--allow-environment-read", "--allow-network-listen",
-                    "--allow-network-connect", *(config["capabilities"] if role == "data" else []),
+                    "--allow-network-connect", *(config["capabilities"] if role == "data" else ["--allow-resource-read"]),
                     "--class-path", ":".join(map(str, cp)), main], env=runtime_env, stdout=log, stderr=log)
                 until(lambda: request(role, "/health/ready")[0] == 200, role + " ready")
             until(lambda: request("data", "/discovery")[0] == 200, "read-only discovery readiness")
+            opened = probe()["opened"]
+            remote_calls = {role: probe(role)["calls"] for role in ("recipes", "pantry")}
+            status, raw = invoke(0, recipe=0)
+            assert status == 400 and json.loads(raw) == {"code": "validation_failed", "violations": [
+                    {"path": "id", "code": "positive"}, {"path": "recipeId", "code": "positive"}]}, (status, raw)
+            assert probe()["opened"] == opened and rows(0) == "0|0"
+            assert all(probe(role)["calls"] == remote_calls[role] for role in remote_calls)
+            evidence["checks"].append("generated Draft validation rejects both IDs before remote reads and local DB acquisition")
             assert invoke(1)[0] == 200 and rows(1) == "1|1"
-            assert invoke(3, "save-scoped")[0] == 200 and rows(3) == "1|1"
-            assert invoke(3, "save-scoped")[0] == 500 and rows(3) == "1|1", "Generated boundary must roll back a SQL constraint failure"
+            assert invoke(3)[0] == 200 and rows(3) == "1|1"
+            assert invoke(3)[0] == 500 and rows(3) == "1|1", "Generated boundary must roll back a SQL constraint failure"
             assert invoke(4, recipe=999)[0] == 502 and rows(4) == "0|0"
-            evidence["checks"].append("real Micro actions: explicit and generated local data/outbox commit; remote failure writes nothing")
+            evidence["checks"].append("real MVC: automatically decorated local data/outbox commit; remote failure writes nothing")
 
             with ThreadPoolExecutor(max_workers=3) as pool:
                 before = probe()["opened"]
@@ -239,6 +247,25 @@ def main():
                 assert "transaction=UNKNOWN" in text and "transaction=COMMITTED" in text and "transaction=ROLLED_BACK" in text
                 assert "data_status=ROLLED_BACK query_cancelled=true" in text
                 evidence["checks"].append("SIGTERM cancels blocked query, completes rollback and closes service resources with zero active connections")
+            # Prove the unmodified application main uses the generated constructor graph as well.
+            log = (output / "application.log").open("w")
+            logs["data-app"] = log
+            ports["data-app"] = ports["data"]
+            app_env = environments["data"] | {"HOORI_INSTANCE_ID": "data-app"}
+            processes["data-app"] = subprocess.Popen([str(runtime / "bin/hoori"), "run", "--engine", engine,
+                "--live-output", "--graceful-signals", "--max-heap-bytes", "33554432", "--allow-environment-read",
+                "--allow-network-listen", "--allow-network-connect", *config["capabilities"],
+                "--class-path", ":".join(map(str, data_cp)), "dev/hoori/micro/data/DataApplication"],
+                env=app_env, stdout=log, stderr=log)
+            until(lambda: request("data-app", "/health/ready")[0] == 200, "normal generated DataApplication")
+            until(lambda: request("registry", "/v2/catalog")[0] == 200, "registry remains ready")
+            # Discovery needs its initial refresh; only the read-only invalid DTO is polled.
+            until(lambda: request("data-app", "/drafts", {"id": 0, "recipeId": 0})[0] == 400, "normal DTO validation")
+            time.sleep(.5)
+            assert request("data-app", "/drafts", {"id": 201, "recipeId": 1})[0] == 200 and rows(201) == "1|1"
+            assert request("data-app", "/drafts", {"id": 202, "recipeId": 999})[0] == 502 and rows(202) == "0|0"
+            stop("data-app")
+            evidence["checks"].append("normal DataApplication main: generated manager/repository/transaction/client graph commits once, remote failure writes nothing and drains")
             for role in ("recipes", "pantry", "registry"):
                 stop(role)
             sql(db["name"], "select pg_terminate_backend(pid) from pg_stat_activity where application_name='hoori-micro-holder'")

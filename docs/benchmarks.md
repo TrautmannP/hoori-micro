@@ -1,5 +1,9 @@
 # Lokale Vergleichsbenchmarks
 
+**Historische Messungen:** Die Ergebnisse unten stammen von den jeweils genannten
+Ständen vor der MVC-Migration. Der aktuelle Benchmark-Consumer nutzt HTTP-Endpunkte;
+für ihn liegt keine neue Performance-Freigabe vor.
+
 `scripts/benchmark.py` verwendet die verifizierte Headless-Release-Distribution und
 den echten HTTP-/REST-Transport. `BenchmarkMain` liegt ausschließlich in den
 Testklassen: statische Ziele und Snapshots sind keine Framework-API und landen
@@ -8,9 +12,9 @@ nicht in den ausgelieferten Service-JARs.
 | Variante | Pfad |
 |---|---|
 | A | Shopping → direkte REST-Echo-Route von Recipes |
-| B | Shopping → echter Broker mit festem Testsnapshot → Action-Dispatcher |
-| C | Shopping → Produktionsbroker/Discovery → Action-Dispatcher |
-| D | dynamisches Gateway → Shopping-Action → Recipes-Action |
+| B | Shopping → echter Broker mit festem Testsnapshot → HTTP-Endpunkt |
+| C | Shopping → Produktionsbroker/Discovery → HTTP-Endpunkt |
+| D | dynamisches Gateway → Shopping-Endpunkt → Recipes-Endpunkt |
 
 Alle verwenden dieselbe Echo-Fachlogik, JSON-Codecs, Payloads, Runtime, Engine und
 Transportlimits. A/B isolieren Transport bzw. Broker; C/D verwenden den tatsächlichen

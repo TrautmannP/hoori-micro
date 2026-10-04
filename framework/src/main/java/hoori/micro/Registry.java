@@ -32,14 +32,14 @@ public final class Registry {
     }
 
     public static void main(String[] args) throws Exception {
-        try (Microservice app = Microservice.create(Service.named("registry"))) {
+        try (Microservice app = Microservice.create("registry")) {
             new Registry(app.config().registryTtlMillis, app.jsonLimits()).mount(app);
             app.run();
         }
     }
 
     void mount(Microservice app) {
-        app.controlRoute("PUT", "/v1/instances/{id}", request -> {
+        app.controlRoute("PUT", "/v2/instances/{id}", request -> {
             Catalog.Filter filter = protocol(request.raw().headers, false);
             Catalog.Instance instance = request.body(Catalog.INSTANCE, limits);
 
@@ -50,7 +50,7 @@ public final class Registry {
 
             return reply(request.raw().headers, now, filter);
         });
-        app.controlRoute("POST", "/v1/instances/{id}/lease", request -> {
+        app.controlRoute("POST", "/v2/instances/{id}/lease", request -> {
             Catalog.Filter filter = protocol(request.raw().headers, true);
 
             if (request.raw().body.length != 0) throw new RequestException(400, "Lease body must be empty");
@@ -61,13 +61,13 @@ public final class Registry {
 
             return reply(request.raw().headers, now, filter);
         });
-        app.controlRoute("DELETE", "/v1/instances/{id}", request -> {
+        app.controlRoute("DELETE", "/v2/instances/{id}", request -> {
             protocol(request.raw().headers, false);
             remove(request.pathParam("id"));
 
             return Responses.empty(204);
         });
-        app.controlRoute("GET", "/v1/catalog", request -> {
+        app.controlRoute("GET", "/v2/catalog", request -> {
             Catalog.Filter filter = protocol(request.raw().headers, false);
 
             return reply(request.raw().headers, System.nanoTime(), filter);
@@ -148,12 +148,12 @@ public final class Registry {
     private synchronized Response reply(Headers known, long now, Catalog.Filter filter) {
         snapshot(now);
         Headers headers = new Headers()
-                .add(Catalog.PROTOCOL_HEADER, "2")
+                .add(Catalog.PROTOCOL_HEADER, Catalog.PROTOCOL)
                 .add(Catalog.EPOCH_HEADER, epoch)
                 .add(Catalog.REVISION_HEADER, Long.toString(revision))
                 .add(Catalog.VIEW_HEADER, filter.key);
 
-        if ("2".equals(known.get(Catalog.PROTOCOL_HEADER))
+        if (Catalog.PROTOCOL.equals(known.get(Catalog.PROTOCOL_HEADER))
                 && epoch.equals(known.get(Catalog.EPOCH_HEADER))
                 && Long.toString(revision).equals(known.get(Catalog.REVISION_HEADER))
                 && (filter.key.equals(known.get(Catalog.KNOWN_VIEW_HEADER))
@@ -169,11 +169,10 @@ public final class Registry {
     private static Catalog.Filter protocol(Headers headers, boolean required) {
         String version = headers.get(Catalog.PROTOCOL_HEADER);
 
-        if (!(version == null && !required || "2".equals(version)))
-            throw new RequestException(426, "Catalog protocol 2 required");
+        if (!Catalog.PROTOCOL.equals(version)) throw new RequestException(426, "Catalog protocol 3 required");
 
         if (version == null && headers.get(Catalog.VIEW_HEADER) != null)
-            throw new RequestException(426, "Catalog protocol 2 required");
+            throw new RequestException(426, "Catalog protocol 3 required");
 
         int views = 0;
         for (int i = 0; i < headers.size(); i++)

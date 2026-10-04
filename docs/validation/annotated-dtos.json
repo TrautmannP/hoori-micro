@@ -1,0 +1,126 @@
+{
+  "date": "2026-10-04",
+  "scope": "Local consumer acceptance; no CI, full Jakarta Validation or production/performance qualification",
+  "hoori": {
+    "source": {
+      "dirty": false,
+      "revision": "6f581305baa31f75b6ffdf8214f527b966ac66d1"
+    },
+    "profile": "release",
+    "receipt_sha256": "0d5421b2a679ec5c420a71484edc76e62831822f87df95b7fc8b85f33e753d4c",
+    "runtime_sha256": "7a04d9667f6da48e235827c72318ca66527c41062203d32ac3c53235e2c92744",
+    "guest_base_sha256": "fd99006e33728c79848987017bd6ab21b467888f39a0efc90059c70efc265f24",
+    "runtime_sdks": [
+      "hoori-http-api",
+      "hoori-rest-api",
+      "hoori-concurrent-api",
+      "hoori-concurrent-http-api",
+      "hoori-validation-api",
+      "hoori-rest-validation-api"
+    ],
+    "external_jars_sha256": {
+      "avaje-validator-2.18.jar": "5e98fe4b6a9e1dff77eed90f95b0282645153b39f6a3b8b0a01b198f42143283",
+      "avaje-validator-http-plugin-2.18.jar": "e2daf73352bae03820eebcf6bbbda8203f6ccab00d7985d3ec2059ab0427c457",
+      "avaje-validator-inject-plugin-2.18.jar": "5e980fb0781981c6b64d06a028d5651728570b94e4def4326ecee71542571ab2",
+      "avaje-applog-1.2.jar": "d1aa0ba97c77ee4428e3feb23d62231cfd00e2771b3fe4b79e7393f854273353",
+      "jakarta.validation-api-3.1.1.jar": "63ce00156388c365f3ac1be71fcfaf114682fc0c452020b5df6e7ec236e142ab",
+      "jspecify-1.0.1.jar": "070d75f261fe4c5b8202508366715f7f2d4660f88c8ef7e6d3575e48c9683b66"
+    }
+  },
+  "micro": {
+    "base_revision": "b0704623e9a8f856e0b27617e5c8b271b3937775",
+    "uncommitted_changes": true,
+    "jars_sha256": {
+      "framework/target/hoori-micro-0.1.0-SNAPSHOT.jar": "d65311b090509c7425f57a8ac16c71cb83d93363c7f33ce07014aa0a80445e6f",
+      "examples/demo-contracts/target/hoori-micro-demo-contracts-0.1.0-SNAPSHOT.jar": "286b699bc4083da705a790e2f64fbde1e490cfb619f72667c141701f5cffbca4",
+      "examples/recipes-service/target/recipes-service-0.1.0-SNAPSHOT.jar": "19dc76d66d82af2c5c9869b080a940e75d655c6e4d86b894c92390b93958689a",
+      "examples/pantry-service/target/pantry-service-0.1.0-SNAPSHOT.jar": "97271c5953339a451634bbe183c31e10ac8f6cb33b4eef763b104b589c5e6033",
+      "examples/shopping-service/target/shopping-service-0.1.0-SNAPSHOT.jar": "033aed0c19c2d32da7374e71a3399b7b5ffffee2d57df496818611c725e2f412",
+      "examples/task-facade/target/task-facade-0.1.0-SNAPSHOT.jar": "39b29cb3778a2f83f2c801608ea7be3465676891149e77f72a2c1d6be548cad8",
+      "examples/local-data/target/local-data-0.1.0-SNAPSHOT.jar": "89ebcad6f5593650c096e89984bf9994eb8c5b1e7b431498533b09f82d648a14"
+    }
+  },
+  "host_checks": {
+    "scripts/build.sh": "pass: 25 JUnit tests and Spotless",
+    "scripts/test-core.sh": "pass: 117 assertions and 5 formatter fixtures",
+    "python3 -B -m unittest discover -s scripts/tests -v": "pass: 24 tests",
+    "python3 -B scripts/optional_example.py build task-facade": "pass",
+    "python3 -B scripts/optional_example.py build local-data": "pass"
+  },
+  "native_checks": {
+    "mixed": {
+      "scripts/test-hoori-core.sh": "pass; generated DTO checks also pass with GC stress and without JDK/processor on runtime path",
+      "python3 -B scripts/test_composition.py --facade": {
+        "result": "pass",
+        "checks": [
+          "ordinary route and Gateway use two discovered typed providers with correct correlation",
+          "generated input codecs and explicit validators: direct RPC/Gateway field errors, no invalid handler/fanout, safe internal/nested failures and recovery",
+          "generated facade lazy/reused with current context; checked errors, 800ms method/250ms parent bounds, cancellation/recovery; no build tools on runtime path",
+          "two real provider handlers entered before either response was released",
+          "fail-fast returns after local cancellation; optional unavailable differs from successful empty",
+          "batch bound/order/all-complete; bulk performs one RPC; malformed/oversized input rejected",
+          "settled does not turn global admission rejection into an optional result; recovery succeeds",
+          "SIGTERM drains local fanout against actual Hoori providers"
+        ]
+      },
+      "python3 -B scripts/test_data.py": {
+        "result": "pass",
+        "checks": [
+          "generated Draft validation rejects both IDs before remote reads and local DB acquisition",
+          "real Micro actions: explicit and generated local data/outbox commit; remote failure writes nothing",
+          "both discovered remote reads start before any local DB acquisition",
+          "body/required-child/deadline/caught REQUIRED errors roll back after child drain; foreign Handle fails before SQL; independent child commit survives parent rollback",
+          "separate overlapping handles; confirmed commit survives notification/encoding failure; lost acknowledgement is UNKNOWN, physically discarded and never replayed",
+          "three real Statement.cancel/SQLSTATE 57014 cycles drain before rollback/return; subsequent requests work, closed connections collect and task/handle counts recover",
+          "SIGTERM cancels blocked query, completes rollback and closes service resources with zero active connections"
+        ]
+      },
+      "python3 -B scripts/smoke.py": {
+        "result": "pass",
+        "complete": true
+      },
+      "raw_evidence_sha256": {
+        ".cache/composition-facade-mixed.json": "bc95665eb438e8ea0f36d0931893a594cb2f19f8fb8f18851c49567589f79aa4",
+        ".cache/data-mixed/results.json": "757c8dff9210a98018603def9ab53efbf02693d50a37d183f407abf6e342d3d6",
+        ".cache/hoori-micro-check-558006.json": "7675e90dab51f567594a25b3cef10d1619c58cadf19427f5bb211cbd0bd8a6ae"
+      }
+    },
+    "interpreter": {
+      "scripts/test-hoori-core.sh": "pass; generated DTO checks also pass with GC stress and without JDK/processor on runtime path",
+      "python3 -B scripts/test_composition.py --facade": {
+        "result": "pass",
+        "checks": [
+          "ordinary route and Gateway use two discovered typed providers with correct correlation",
+          "generated input codecs and explicit validators: direct RPC/Gateway field errors, no invalid handler/fanout, safe internal/nested failures and recovery",
+          "generated facade lazy/reused with current context; checked errors, 800ms method/250ms parent bounds, cancellation/recovery; no build tools on runtime path",
+          "two real provider handlers entered before either response was released",
+          "fail-fast returns after local cancellation; optional unavailable differs from successful empty",
+          "batch bound/order/all-complete; bulk performs one RPC; malformed/oversized input rejected",
+          "settled does not turn global admission rejection into an optional result; recovery succeeds",
+          "SIGTERM drains local fanout against actual Hoori providers"
+        ]
+      },
+      "python3 -B scripts/test_data.py": {
+        "result": "pass",
+        "checks": [
+          "generated Draft validation rejects both IDs before remote reads and local DB acquisition",
+          "real Micro actions: explicit and generated local data/outbox commit; remote failure writes nothing",
+          "both discovered remote reads start before any local DB acquisition",
+          "body/required-child/deadline/caught REQUIRED errors roll back after child drain; foreign Handle fails before SQL; independent child commit survives parent rollback",
+          "separate overlapping handles; confirmed commit survives notification/encoding failure; lost acknowledgement is UNKNOWN, physically discarded and never replayed",
+          "three real Statement.cancel/SQLSTATE 57014 cycles drain before rollback/return; subsequent requests work, closed connections collect and task/handle counts recover",
+          "SIGTERM cancels blocked query, completes rollback and closes service resources with zero active connections"
+        ]
+      },
+      "python3 -B scripts/smoke.py": {
+        "result": "pass",
+        "complete": true
+      },
+      "raw_evidence_sha256": {
+        ".cache/composition-facade-interpreter.json": "1421108c260e5d3e43c2ad6d39a85f2649137af4a2e979effbd7826b74cf3576",
+        ".cache/data-interpreter/results.json": "045bb245e3a95ff9839db7494665888c990a02ba92c27c80da2c1c527fb190c0",
+        ".cache/hoori-micro-check-583578.json": "1e44794f429482aa442112e7f9b879abc160a1c208c2bfaf4a52c12408bb7a09"
+      }
+    }
+  }
+}

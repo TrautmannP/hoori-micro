@@ -8,39 +8,31 @@ import hoori.http.PoolOverloadedException;
 import hoori.http.RequestBudget;
 import hoori.http.Response;
 import hoori.rest.json.Json;
-import hoori.rest.json.JsonCodec;
 import hoori.rest.json.JsonException;
 import hoori.rest.json.JsonLimits;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.net.SocketTimeoutException;
 import java.net.URI;
-import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * Per-service broker. Resolves "service.action" against a local catalog copy, picks an instance
- * that offers exactly this action and version, and calls its /_hoori/invoke over the service's
- * data Hoori pool. Only the heartbeat thread uses the separate control pool for the registry.
- * No retries, redirects, ambient identity or peer bodies in errors.
- */
+/** Per-service endpoint selection and shared pools. Registry I/O stays on the control path. */
 final class ServiceBroker {
     @FunctionalInterface
     interface Exchange {
         Response send(URI target, String method, Headers headers, byte[] body, RequestBudget budget) throws IOException;
     }
 
-    static final String INVOKE_PATH = "/_hoori/invoke";
-    static final String ACTION_HEADER = "X-Hoori-Action", VERSION_HEADER = "X-Hoori-Version";
+    static final String ENDPOINT_HEADER = "X-Hoori-Endpoint", VERSION_HEADER = "X-Hoori-Version";
     private static final byte[] EMPTY = new byte[0];
 
-    private final Service service;
+    private final ServiceDefinition service;
     private final ServiceConfig config;
     private final Exchange exchange, control;
     private final JsonLimits limits;
     private final Admission outgoing;
-    private final byte[] registration;
+    private byte[] registration;
     private final AtomicInteger turn = new AtomicInteger();
     final Executions executions;
     private volatile Catalog.Filter filter;
@@ -52,11 +44,12 @@ final class ServiceBroker {
     private int failures;
     private boolean registryReachable = true; // heartbeat thread only; logs transitions, not every beat
 
-    ServiceBroker(Service service, ServiceConfig config, Exchange exchange, JsonLimits limits) {
+    ServiceBroker(ServiceDefinition service, ServiceConfig config, Exchange exchange, JsonLimits limits) {
         this(service, config, exchange, exchange, limits);
     }
 
-    ServiceBroker(Service service, ServiceConfig config, Exchange exchange, Exchange control, JsonLimits limits) {
+    ServiceBroker(
+            ServiceDefinition service, ServiceConfig config, Exchange exchange, Exchange control, JsonLimits limits) {
         if (service == null || config == null || exchange == null || control == null || limits == null)
             throw new NullPointerException();
 
@@ -67,14 +60,22 @@ final class ServiceBroker {
         this.limits = limits;
         executions = new Executions(config);
         outgoing = new Admission(config.outgoingCalls, config.outgoingPendingCalls);
-        Catalog.Entry[] entries = new Catalog.Entry[service.actions.size()];
-        int i = 0;
-        for (Service.Definition<?, ?> action : service.actions.values()) entries[i++] = action.entry();
+        filter = Catalog.Filter.consumer(service.dependencies, false);
+    }
+
+    void prepare() {
+        if (registration != null) return;
+
         registration = Json.encode(
-                new Catalog.Instance(config.instanceId, service.name, service.version, config.advertiseUrl, entries),
+                new Catalog.Instance(
+                        config.instanceId,
+                        service.name,
+                        service.version,
+                        config.advertiseUrl,
+                        service.endpoints.values().toArray(new Catalog.Entry[0])),
                 Catalog.INSTANCE,
                 limits);
-        filter = Catalog.Filter.consumer(service.dependencies, false);
+        filter = Catalog.Filter.consumer(service.dependencies, publicCatalog);
     }
 
     static Exchange dataTransport(HttpClient http) {
@@ -117,96 +118,113 @@ final class ServiceBroker {
         outgoing.close();
     }
 
-    <I, O> O call(Invocation invocation, RequestBudget budget, Action<I, O> action, I input) throws IOException {
-        if (action == null || input == null) throw new NullPointerException();
+    <T> T call(
+            Invocation invocation,
+            RequestBudget budget,
+            String service,
+            int version,
+            HttpEndpoint endpoint,
+            RemoteClient.Encoder encoder,
+            RemoteClient.Decoder<T> decoder)
+            throws IOException {
+        if (dependency(service) != version) throw new IllegalArgumentException("Conflicting client version");
 
-        int version = dependency(action.service);
         try (Admission.Permit permit = admit(invocation, budget)) {
             permit.check(outgoing);
-            byte[] result = invoke(
+            ClientRequest request = encoder.encode(limits);
+            Response response = invoke(
                     permit,
                     invocation,
-                    action.service,
+                    service,
                     version,
-                    action.operation,
-                    Json.encode(input, action.input, limits));
-            O decoded = decode(action.service, result, action.output);
+                    endpoint,
+                    request.target(),
+                    request.headers,
+                    request.body,
+                    snapshot());
+
+            if (response.status < 200 || response.status >= 300) throw failure(service, endpoint, response);
+
+            T result;
+            try {
+                result = decoder.decode(response, limits);
+            } catch (JsonException | IllegalArgumentException invalid) {
+                throw new ServiceCallException(service, response.status, "invalid response", null);
+            }
             permit.check(outgoing);
 
-            return decoded;
+            return result;
         }
     }
 
-    Object call(Invocation invocation, RequestBudget budget, String action, Map<String, ?> params) throws IOException {
-        if (params == null) throw new NullPointerException("params");
-
-        String[] name = ServiceName.qualified(action);
-        int version = dependency(name[0]);
-        try (Admission.Permit permit = admit(invocation, budget)) {
-            permit.check(outgoing);
-            byte[] result =
-                    invoke(permit, invocation, name[0], version, name[1], Json.encode(params, JsonTree.CODEC, limits));
-            Object decoded = decode(name[0], result, JsonTree.CODEC);
-            permit.check(outgoing);
-
-            return decoded;
-        }
+    ServiceCallException failure(String service, HttpEndpoint endpoint, Response response) {
+        return new ServiceCallException(
+                service,
+                response.status,
+                "unexpected HTTP status",
+                null,
+                endpoint,
+                ValidationErrors.read(response),
+                HttpResponses.problem(response));
     }
 
-    /** Returns the successful JSON body. Also used by the gateway with the catalog's version. */
-    byte[] invoke(
-            Admission.Permit permit, Invocation invocation, String service, int version, String action, byte[] params)
-            throws IOException {
-        return invoke(permit, invocation, service, version, action, params, snapshot());
-    }
-
-    byte[] invoke(
+    Response invoke(
             Admission.Permit permit,
             Invocation invocation,
             String service,
             int version,
-            String action,
-            byte[] params,
+            HttpEndpoint endpoint,
+            String pathAndQuery,
+            Headers explicit,
+            byte[] body,
             View source)
             throws IOException {
         permit.check(outgoing);
         Catalog.Instance target = (fresh(source) ? source.catalog : Catalog.EMPTY)
-                .select(service, version, action, turn.getAndIncrement());
+                .select(service, version, endpoint.key(), turn.getAndIncrement());
 
-        if (target == null) throw new ServiceCallException(service, 0, "no instance offers " + action, null);
+        if (target == null) throw new ServiceCallException(service, 0, "no instance offers endpoint", null);
 
-        Headers headers = new Headers()
-                .add("Accept", "application/json")
-                .add("Content-Type", "application/json")
-                .add(ACTION_HEADER, service + "." + action)
-                .add(VERSION_HEADER, Integer.toString(version));
+        if (!pathAndQuery.startsWith("/") || pathAndQuery.length() > 8192 || body.length > config.bodyBytes)
+            throw new IllegalArgumentException("Outbound request limit");
+
+        Headers headers = new Headers();
+        for (int i = 0; i < explicit.size(); i++) {
+            if (!ClientRequest.allowedHeader(explicit.name(i)))
+                throw new IllegalArgumentException("Reserved client header");
+
+            headers.add(explicit.name(i), explicit.value(i));
+        }
+
+        if (!endpoint.produces().isEmpty() && headers.get("Accept") == null) headers.add("Accept", endpoint.produces());
+
+        if (!endpoint.consumes().isEmpty() && headers.get("Content-Type") == null)
+            headers.add("Content-Type", endpoint.consumes());
+
+        headers.add(ENDPOINT_HEADER, endpoint.key()).add(VERSION_HEADER, Integer.toString(version));
 
         if (invocation != null) headers.add("X-Request-ID", invocation.requestId());
 
         Response response;
         try {
-            response = exchange.send(target.invokeTarget, "POST", headers, params, permit.budget);
+            response = exchange.send(
+                    URI.create(target.url + pathAndQuery), endpoint.method(), headers, body, permit.budget);
         } catch (PoolOverloadedException overloaded) {
             throw new CallRejectedException();
         } catch (SocketTimeoutException expired) {
             permit.expired();
             throw expired;
-        } catch (InterruptedIOException cancelledOrExpired) {
-            // Keep the SDK's cancellation/timeout semantics and interrupt status intact.
-            throw cancelledOrExpired;
+        } catch (InterruptedIOException cancelled) {
+            throw cancelled;
         } catch (IOException failed) {
             throw new ServiceCallException(service, 0, "transport failed", failed);
         }
-
-        if (response.status < 200 || response.status >= 300)
-            throw new ServiceCallException(service, response.status, "unexpected HTTP status", null);
-
-        if (!jsonContentType(response.headers))
-            throw new ServiceCallException(service, response.status, "expected application/json", null);
-
         permit.check(outgoing);
 
-        return response.body;
+        if (response.body.length > config.bodyBytes)
+            throw new ServiceCallException(service, response.status, "response limit", null);
+
+        return response;
     }
 
     /** Current snapshot, or EMPTY once no refresh succeeded within HOORI_CATALOG_MAX_AGE_MS. */
@@ -240,7 +258,8 @@ final class ServiceBroker {
                     current.fetchedNanos,
                     current.scope,
                     false,
-                    Gateway.EMPTY_ROUTES);
+                    Gateway.EMPTY_ROUTES,
+                    Gateway.EMPTY_ROUTER);
     }
 
     void followPublicCatalog() {
@@ -249,12 +268,13 @@ final class ServiceBroker {
     }
 
     boolean needsDiscovery() {
-        return !service.actions.isEmpty() || !filter.key.equals("none");
+        return !service.endpoints.isEmpty() || !filter.key.equals("none");
     }
 
     /** One control exchange; an unknown lease permits one full, idempotent re-registration. */
     void beat(boolean ready) throws IOException {
-        boolean register = ready && !service.actions.isEmpty();
+        prepare();
+        boolean register = ready && !service.endpoints.isEmpty();
 
         catalog(); // Also releases expired rows during idle/control failures; version tokens stay bounded.
 
@@ -265,7 +285,7 @@ final class ServiceBroker {
             Catalog.Filter requested = filter;
             Headers headers = new Headers()
                     .add("Accept", "application/json")
-                    .add(Catalog.PROTOCOL_HEADER, "2")
+                    .add(Catalog.PROTOCOL_HEADER, Catalog.PROTOCOL)
                     .add(Catalog.VIEW_HEADER, requested.key);
 
             if (known.live)
@@ -273,7 +293,7 @@ final class ServiceBroker {
                         .add(Catalog.REVISION_HEADER, Long.toString(known.catalog.revision))
                         .add(Catalog.KNOWN_VIEW_HEADER, known.scope);
 
-            String path = "/v1/instances/" + config.instanceId;
+            String path = "/v2/instances/" + config.instanceId;
             Response response;
 
             if (register && registered) {
@@ -290,7 +310,7 @@ final class ServiceBroker {
                         registration,
                         null);
             } else if (!register) {
-                response = control.send(URI.create(config.registryUrl + "/v1/catalog"), "GET", headers, EMPTY, null);
+                response = control.send(URI.create(config.registryUrl + "/v2/catalog"), "GET", headers, EMPTY, null);
             }
 
             accept(response, known, requested);
@@ -327,13 +347,13 @@ final class ServiceBroker {
 
     /** Best effort on graceful stop; TTL expiry covers crashes and an unreachable registry. */
     void deregister() {
-        if (service.actions.isEmpty()) return;
+        if (service.endpoints.isEmpty()) return;
 
         try {
             control.send(
-                    URI.create(config.registryUrl + "/v1/instances/" + config.instanceId),
+                    URI.create(config.registryUrl + "/v2/instances/" + config.instanceId),
                     "DELETE",
-                    new Headers().add(Catalog.PROTOCOL_HEADER, "2"),
+                    new Headers().add(Catalog.PROTOCOL_HEADER, Catalog.PROTOCOL),
                     EMPTY,
                     null);
         } catch (IOException ignored) {
@@ -366,15 +386,18 @@ final class ServiceBroker {
         Gateway.Route[] routes =
                 accepted == old ? current.routes : publicCatalog ? Gateway.build(accepted) : Gateway.EMPTY_ROUTES;
 
+        hoori.rest.Router routing = accepted == old ? current.routing : Gateway.routing(routes);
+
         if (!sameEpoch && old != Catalog.EMPTY) retiredEpoch = old.epoch;
 
         synchronized (this) {
-            view = new View(accepted, fetchedNanos, scope, true, routes);
+            view = new View(accepted, fetchedNanos, scope, true, routes, routing);
         }
     }
 
     private void accept(Response response, View sent, Catalog.Filter requested) throws IOException {
-        if (!"2".equals(response.headers.get(Catalog.PROTOCOL_HEADER))) throw new IOException("Registry protocol");
+        if (!Catalog.PROTOCOL.equals(response.headers.get(Catalog.PROTOCOL_HEADER)))
+            throw new IOException("Registry protocol");
 
         if (!requested.key.equals(response.headers.get(Catalog.VIEW_HEADER))) throw new IOException("Registry view");
 
@@ -394,7 +417,7 @@ final class ServiceBroker {
             synchronized (this) {
                 if (view != sent) throw new IOException("Expired catalog confirmation");
 
-                view = new View(sent.catalog, System.nanoTime(), sent.scope, true, sent.routes);
+                view = new View(sent.catalog, System.nanoTime(), sent.scope, true, sent.routes, sent.routing);
             }
 
             return;
@@ -412,19 +435,27 @@ final class ServiceBroker {
     }
 
     static final class View {
-        static final View EMPTY = new View(Catalog.EMPTY, 0, "", false, Gateway.EMPTY_ROUTES);
+        static final View EMPTY = new View(Catalog.EMPTY, 0, "", false, Gateway.EMPTY_ROUTES, Gateway.EMPTY_ROUTER);
         final Catalog catalog;
         final long fetchedNanos;
         final String scope;
         final boolean live;
         final Gateway.Route[] routes;
+        final hoori.rest.Router routing;
 
-        View(Catalog catalog, long fetchedNanos, String scope, boolean live, Gateway.Route[] routes) {
+        View(
+                Catalog catalog,
+                long fetchedNanos,
+                String scope,
+                boolean live,
+                Gateway.Route[] routes,
+                hoori.rest.Router routing) {
             this.catalog = catalog;
             this.fetchedNanos = fetchedNanos;
             this.scope = scope;
             this.live = live;
             this.routes = routes;
+            this.routing = routing;
         }
     }
 
@@ -447,20 +478,7 @@ final class ServiceBroker {
         return version;
     }
 
-    private <T> T decode(String service, byte[] body, JsonCodec<T> codec) throws ServiceCallException {
-        try {
-            T result = Json.decode(body, codec, limits);
-
-            if (result == null) throw new JsonException("Null JSON response");
-
-            return result;
-        } catch (JsonException invalid) {
-            // Do not retain decoder messages: a custom codec may include peer data there.
-            throw new ServiceCallException(service, 200, "invalid JSON response", null);
-        }
-    }
-
-    private static boolean jsonContentType(Headers headers) {
+    static boolean jsonContentType(Headers headers) {
         String type = null;
         for (int i = 0; i < headers.size(); i++) {
             if (headers.name(i).equalsIgnoreCase("Content-Type")) {

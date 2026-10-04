@@ -11,7 +11,7 @@ import java.util.Map;
 
 /**
  * Untyped JSON for generic calls: Map (insertion order), List, String, Long, Double, Boolean or
- * null. Integral numbers outside long become Double. Typed Action codecs remain preferable.
+ * null. Integral numbers outside long become Double. Application DTOs use the generated MVC adapters.
  */
 public final class JsonTree implements JsonCodec<Object> {
     public static final JsonTree CODEC = new JsonTree();

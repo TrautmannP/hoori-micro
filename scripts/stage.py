@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 import shutil
 import sys
-from runtime_check import ROOT, runtime_jars, verify
+from runtime_check import ROOT, external_jars, runtime_jars, verify
 
 
 def jar(module: str, artifact: str) -> Path:
@@ -24,7 +24,12 @@ def stage(runtime: Path) -> None:
     try:
         shutil.copytree(runtime, work / "runtime")
         verify(work / "runtime")
-        (work / "runtime-classpath.txt").write_text("\n".join(runtime_jars(receipt)) + "\n")
+        dependencies = external_jars(ROOT / "starter/target/lib")
+        (work / "dependencies").mkdir()
+        for dependency in dependencies:
+            shutil.copy2(dependency, work / "dependencies" / dependency.name)
+        (work / "runtime-classpath.txt").write_text("\n".join(runtime_jars(receipt)
+            + ["../dependencies/" + p.name for p in dependencies]) + "\n")
         framework = jar("framework", "hoori-micro")
         contracts = jar("examples/demo-contracts", "hoori-micro-demo-contracts")
         apps = {"registry": [framework], "gateway": [framework]}
