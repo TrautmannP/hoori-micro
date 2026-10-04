@@ -1,12 +1,30 @@
 # Validierung und offene Abnahme
 
-Stand: **4. Oktober 2026**. Aktueller Pin ist der saubere Headless-Release
-`6f581305baa31f75b6ffdf8214f527b966ac66d1`, Guest Base `0.4.0`, SDKs `0.1.0`.
-Die sechs SDKs aus `runtimeSdks` und die sechs originalen Avaje-/Jakarta-JARs aus
+Stand: **4. Oktober 2026**. Aktueller MVC-Pin ist der saubere Headless-Debug-Build
+`83d2b8fc83ffee6ed7c748409ff7b4802d8a341b`, Guest Base `0.4.0`, SDKs `0.1.0`.
+Der folgende DTO-/Tasks-Verlauf dokumentiert ältere, jeweils benannte Stände.
+Die acht SDKs aus `runtimeSdks` und die sechs originalen Avaje-/Jakarta-JARs aus
 `runtimeDependencies` werden geprüft. Processor und Codegen-Annotationen bleiben
 auf dem Buildpfad; DB-Abhängigkeiten bleiben im separaten Datenbeispiel.
 Original-POMs, Receipt, Prüfsummen und Concurrent-Runtime-Bindung gehören zur
 Prüfung. Der Maven-Cache ist nach Distributionsidentität getrennt.
+
+## MVC-Anwendungsschnitt (#36/#37)
+
+`Micro.run` lädt genau den zur App erzeugten Einstieg. Direkte Konstruktoraufrufe,
+`@Bean` und explizit importierte Build-Metadaten bilden den endlichen Graphen.
+Der separate Maven-Consumer baut mit eigener Versionsnummer und läuft ohne
+Quellen, Compiler oder Processor in Interpreter/Mixed. Missing/ambiguous dependency,
+Zyklus, mehrdeutige Konstruktoren und doppelte Apps werden beim Build abgewiesen.
+
+Native CRUD-Prüfungen bestehen in Interpreter/Mixed, jeweils auch mit GC-Stress, mit dem originalen MVC-/Avaje-Adapter innerhalb der
+Micro-Admission/RequestScopes: Path/Query/Body, sichere Validation/Fachfehler,
+201/Location, 204, 404/405/406/415, Child-Korrelation, Deadline-/Cleanup-Priorität,
+Recovery und SIGTERM-Drain. Ein Startfehler schließt bereits erzeugte Ressourcen;
+Identitäts-Aliase werden einmal geschlossen, erst nach dem Request-Drain.
+Hashes und Ergebnisse: [MVC-Schnitt](validation/mvc-application.json).
+Die verteilte MVC-Abnahme von #38–#42 steht noch aus. Historische Performance-
+Aussagen gelten nicht für diesen Pin oder die neue API.
 
 ## Annotationbasierte DTOs (4. Oktober 2026)
 

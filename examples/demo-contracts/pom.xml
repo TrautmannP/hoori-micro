@@ -5,6 +5,7 @@
   <parent><groupId>dev.hoori</groupId><artifactId>hoori-micro-parent</artifactId><version>0.1.0-SNAPSHOT</version><relativePath>../../pom.xml</relativePath></parent>
   <artifactId>hoori-micro-demo-contracts</artifactId>
   <dependencies>
+    <dependency><groupId>dev.hoori</groupId><artifactId>hoori-validation-avaje</artifactId></dependency>
     <dependency><groupId>dev.hoori</groupId><artifactId>hoori-micro</artifactId></dependency>
     <dependency><groupId>dev.hoori</groupId><artifactId>hoori-rest-annotations</artifactId><scope>provided</scope></dependency>
   </dependencies>

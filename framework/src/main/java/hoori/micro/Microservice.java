@@ -11,6 +11,7 @@ import hoori.http.Response;
 import hoori.rest.Handler;
 import hoori.rest.Router;
 import hoori.rest.json.JsonLimits;
+import hoori.rest.mvc.MvcErrors;
 import hoori.runtime.RuntimeMetrics;
 import hoori.runtime.Shutdown;
 import java.io.IOException;
@@ -146,12 +147,48 @@ public final class Microservice implements AutoCloseable {
     public synchronized <T extends AutoCloseable> T own(T resource) {
         if (resource == null) throw new NullPointerException("resource");
 
+        for (AutoCloseable owned : resources) if (owned == resource) return resource;
+
         if (started || stopRequested || resources.size() == 16)
             throw new IllegalStateException("Service resources frozen or full");
 
         resources.add(resource);
 
         return resource;
+    }
+
+    /** Generated application graphs register each owned object immediately after construction. */
+    public <T> T ownBean(T bean) {
+        if (bean == null) throw new IllegalStateException("Bean factory returned null");
+
+        if (bean instanceof AutoCloseable closeable) {
+            try {
+                own(closeable);
+            } catch (RuntimeException rejected) {
+                try {
+                    closeable.close();
+                } catch (Exception cleanup) {
+                    rejected.addSuppressed(cleanup);
+                }
+                throw rejected;
+            }
+        }
+
+        return bean;
+    }
+
+    /** Lifecycle/task failures must not be consumed by application exception advice. */
+    public static hoori.http.Response classifyMvc(hoori.rest.Request request, Exception failure) {
+        Failures.Result result = Failures.classify(failure);
+
+        if (result.kind() != Failures.Kind.INTERNAL) return result.response();
+
+        if (failure instanceof hoori.concurrent.OperationFailedException
+                || failure instanceof hoori.concurrent.ScopeFailedException
+                || failure instanceof hoori.concurrent.SubtaskFailedException
+                || failure instanceof hoori.concurrent.BulkFailedException) return MvcErrors.internal();
+
+        return null;
     }
 
     /** On-demand local diagnostics: at most 8 roots, 32 entries per root, depth 4; no public endpoint. */
@@ -443,8 +480,6 @@ public final class Microservice implements AutoCloseable {
         } finally {
             incoming.close();
             broker.close();
-            http.close();
-            control.close();
             IOException failure = null;
             for (int i = resources.size() - 1; i >= 0; i--) {
                 try {
@@ -455,6 +490,8 @@ public final class Microservice implements AutoCloseable {
                 }
             }
             resources.clear();
+            http.close();
+            control.close();
             closed = true;
 
             if (server != null) server.close();

@@ -11,6 +11,7 @@ cp="$PWD/framework/target/classes:$PWD/framework/target/test-classes:$(python3 s
 "$runtime/bin/hoori" run --engine "${HOORI_ENGINE:-mixed}" --class-path "$cp" hoori/micro/AdmissionChecks
 "$runtime/bin/hoori" run --engine "${HOORI_ENGINE:-mixed}" --class-path "$cp" hoori/micro/TaskChecks
 "$runtime/bin/hoori" run --engine "${HOORI_ENGINE:-mixed}" --class-path "$cp" hoori/micro/CapacityChecks
+"$runtime/bin/hoori" run --engine "${HOORI_ENGINE:-mixed}" --class-path "$cp" hoori/micro/ApplicationChecks
 dto_cp="$PWD/examples/demo-contracts/target/classes:$PWD/examples/demo-contracts/target/test-classes:$cp"
 for stress in normal gc-stress; do
   flags=()

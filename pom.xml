@@ -10,6 +10,9 @@
   <description>Explicit, bounded microservice composition on Hoori HTTP and REST</description>
   <modules>
     <module>framework</module>
+    <module>processor</module>
+    <module>starter</module>
+    <module>examples/mvc-crud</module>
     <module>examples/demo-contracts</module>
     <module>examples/recipes-service</module>
     <module>examples/pantry-service</module>
@@ -20,6 +23,7 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.build.outputTimestamp>2026-09-28T00:00:00Z</project.build.outputTimestamp>
     <hoori.formatter.path>${maven.multiModuleProjectDirectory}/scripts/BlankLines.java</hoori.formatter.path>
+    <hoori.micro.version>0.1.0-SNAPSHOT</hoori.micro.version>
     <hoori.sdk.version>0.1.0</hoori.sdk.version>
     <hoori.guest.version>0.4.0</hoori.guest.version>
     <avaje.validator.version>2.18</avaje.validator.version>
@@ -32,9 +36,11 @@
       <dependency><groupId>dev.hoori</groupId><artifactId>hoori-concurrent-api</artifactId><version>${hoori.sdk.version}</version></dependency>
       <dependency><groupId>dev.hoori</groupId><artifactId>hoori-concurrent-http-api</artifactId><version>${hoori.sdk.version}</version></dependency>
       <dependency><groupId>dev.hoori</groupId><artifactId>hoori-rest-validation-api</artifactId><version>${hoori.sdk.version}</version></dependency>
+      <dependency><groupId>dev.hoori</groupId><artifactId>hoori-rest-mvc-api</artifactId><version>${hoori.sdk.version}</version></dependency>
+      <dependency><groupId>dev.hoori</groupId><artifactId>hoori-validation-avaje</artifactId><version>${hoori.sdk.version}</version></dependency>
       <dependency><groupId>dev.hoori</groupId><artifactId>hoori-rest-annotations</artifactId><version>${hoori.sdk.version}</version></dependency>
-      <dependency><groupId>dev.hoori</groupId><artifactId>hoori-micro</artifactId><version>${project.version}</version></dependency>
-      <dependency><groupId>dev.hoori</groupId><artifactId>hoori-micro-demo-contracts</artifactId><version>${project.version}</version></dependency>
+      <dependency><groupId>dev.hoori</groupId><artifactId>hoori-micro</artifactId><version>${hoori.micro.version}</version></dependency>
+      <dependency><groupId>dev.hoori</groupId><artifactId>hoori-micro-demo-contracts</artifactId><version>${hoori.micro.version}</version></dependency>
     </dependencies>
   </dependencyManagement>
   <dependencies>

@@ -8,6 +8,20 @@ Kein Fork der VM, kein Servlet-/Spring-Adapter und keine zweite HTTP-Implementie
 Smoke-Test sind gegen die gepinnte Hoori-Distribution gelaufen; Umfang und Grenzen
 siehe [Validierung](docs/validation.md). Keine Produktionsfreigabe.
 
+## MVC-Umstellung (#35)
+
+Der erste native Schnitt steht in [mvc-crud](examples/mvc-crud):
+`@MicroApplication` und `Micro.run(...)` starten Controller, Fachservice und
+Repository über einen beim Build erzeugten Konstruktorgraphen. Anwendungscode
+benötigt keine Codec-/Validator-Registrierung. Der Maven-Parent
+`dev.hoori:hoori-micro-starter:0.1.0-SNAPSHOT` konfiguriert die Processor.
+
+GET mit Path/Query, POST mit Validation/201/Location, DELETE/204 und Fachfehler
+laufen in den vorhandenen RequestScopes. Der eigenständige Starter-Consumer und
+importierte Komponentenmodule sind nativ geprüft. Discovery, Gateway, die bisherigen
+verteilten Beispiele und die unten beschriebene Action-API werden im weiteren
+Verlauf von #35 umgestellt; sie sind nicht das Zielmodell.
+
 ## Actions statt Routen
 
 Ein Service definiert seine Actions **einmal** bei sich. Daraus entstehen der lokale
@@ -125,7 +139,7 @@ JDBC-/Jdbi-Transaktionen mit eigener Demo-Datenbank; der HTTP-Kern bleibt DB-fre
 ### 1. Passende Hoori-Distribution bauen
 
 Der Bootstrap ist an Hoori-Commit
-`6f581305baa31f75b6ffdf8214f527b966ac66d1` gebunden. Das verhindert, dass unterschiedliche
+`83d2b8fc83ffee6ed7c748409ff7b4802d8a341b` gebunden. Das verhindert, dass unterschiedliche
 Quellstände trotz unveränderter SDK-Version `0.1.0` vermischt werden.
 `hoori.lock.json` enthält diese Baseline.
 
@@ -138,17 +152,17 @@ Worktree vermeidet Änderungen am eigenen Arbeitsstand:
 
 ```bash
 # Einen noch nicht vorhandenen Zielpfad wählen.
-git worktree add --detach ../hoori-micro-runtime 6f581305baa31f75b6ffdf8214f527b966ac66d1
+git worktree add --detach ../hoori-micro-runtime 83d2b8fc83ffee6ed7c748409ff7b4802d8a341b
 cd ../hoori-micro-runtime
 
 export JAVA_HOME=/pfad/zum/jdk-21
 export HOORI_JAVA21_HOME="$JAVA_HOME"
 export PATH="$JAVA_HOME/bin:$PATH"
-./scripts/build-distribution.sh --release
+./scripts/build-distribution.sh
 
 # Pfad für Schritt 2 merken:
 target_triple=$(rustc -vV | sed -n 's/^host: //p')
-printf '%s\n' "$PWD/target/distributions/$target_triple/headless/release"
+printf '%s\n' "$PWD/target/distributions/$target_triple/headless/debug"
 ```
 
 Die Distribution muss **clean**, headless und zur Zielarchitektur passen.
@@ -162,7 +176,7 @@ verwendet werden; ein Neubau ist dann nicht nötig.
 # Im entpackten hoori-micro-Verzeichnis:
 export JAVA_HOME=/pfad/zum/jdk-21
 export PATH="$JAVA_HOME/bin:$PATH"
-./scripts/build.sh /absoluter/pfad/zur/headless/release-distribution
+./scripts/build.sh /absoluter/pfad/zur/headless/debug-distribution
 
 docker compose up --build --wait
 curl -fsS http://127.0.0.1:8080/meals/1     # gateway → shopping.meal → recipes.get

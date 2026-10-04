@@ -24,7 +24,7 @@ def stage(runtime: Path) -> None:
     try:
         shutil.copytree(runtime, work / "runtime")
         verify(work / "runtime")
-        dependencies = external_jars(ROOT / "framework/target/lib")
+        dependencies = external_jars(ROOT / "starter/target/lib")
         (work / "dependencies").mkdir()
         for dependency in dependencies:
             shutil.copy2(dependency, work / "dependencies" / dependency.name)

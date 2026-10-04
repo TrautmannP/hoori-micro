@@ -10,6 +10,7 @@
   </parent>
   <artifactId>hoori-micro</artifactId>
   <dependencies>
+    <dependency><groupId>dev.hoori</groupId><artifactId>hoori-rest-mvc-api</artifactId></dependency>
     <dependency>
       <groupId>dev.hoori</groupId>
       <artifactId>hoori-rest-api</artifactId>

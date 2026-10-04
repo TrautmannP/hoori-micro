@@ -13,7 +13,7 @@ import hoori.micro.Microservice;
 import hoori.micro.Service;
 import hoori.transaction.Transactions;
 import hoori.validation.ValidationLimits;
-import hoori.validation.Validators;
+import hoori.validation.avaje.AvajeValidators;
 import java.util.Locale;
 import java.util.Map;
 
@@ -21,7 +21,7 @@ import java.util.Map;
 public final class DataMain {
     public static Service definition(JdbiTransactions manager) {
         Locale.setDefault(Locale.ENGLISH);
-        var drafts = Validators.builder()
+        var drafts = AvajeValidators.builder()
                 .record(Draft.class, DraftValidationAdapter::new)
                 .build()
                 .forType(Draft.class, ValidationLimits.DEFAULT);

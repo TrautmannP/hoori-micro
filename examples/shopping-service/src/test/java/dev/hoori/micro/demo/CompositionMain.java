@@ -47,7 +47,7 @@ public final class CompositionMain {
                             (ctx, input) -> ctx.call(Recipes.GET, new GetRecipe(0)))
                     .http("POST", "/downstream-invalid")
                     .requirePermission("shopping:read");
-            var broken = hoori.validation.Validators.builder()
+            var broken = hoori.validation.avaje.AvajeValidators.builder()
                     .record(GetRecipe.class, GetRecipeValidationAdapter::new)
                     .rule(GetRecipe.class, "id", "demo_rule", input -> {
                         throw new IllegalStateException("PRIVATE rule failure");

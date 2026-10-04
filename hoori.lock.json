@@ -1,5 +1,5 @@
 {
-  "revision": "6f581305baa31f75b6ffdf8214f527b966ac66d1",
+  "revision": "83d2b8fc83ffee6ed7c748409ff7b4802d8a341b",
   "sdkVersion": "0.1.0",
   "guestVersion": "0.4.0",
   "runtimeSdks": [
@@ -8,16 +8,21 @@
     "hoori-concurrent-api",
     "hoori-concurrent-http-api",
     "hoori-validation-api",
-    "hoori-rest-validation-api"
+    "hoori-rest-validation-api",
+    "hoori-rest-mvc-api",
+    "hoori-validation-avaje"
   ],
   "buildSdks": [
     "hoori-rest-annotations",
     "hoori-rest-processor",
-    "hoori-validation-processor"
+    "hoori-validation-processor",
+    "hoori-rest-mvc-processor",
+    "hoori-validation-avaje-processor"
   ],
   "externalDependencies": [
     "io.avaje:avaje-validator:2.18",
-    "jakarta.validation:jakarta.validation-api:3.1.1"
+    "jakarta.validation:jakarta.validation-api:3.1.1",
+    "io.avaje:avaje-validator-generator:2.18"
   ],
   "runtimeDependencies": {
     "avaje-validator-2.18.jar": "5e98fe4b6a9e1dff77eed90f95b0282645153b39f6a3b8b0a01b198f42143283",
