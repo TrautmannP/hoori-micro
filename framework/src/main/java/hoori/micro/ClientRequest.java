@@ -9,10 +9,11 @@ import java.nio.charset.StandardCharsets;
 
 /** Encoding support for generated clients; constructed only after outgoing admission. */
 public final class ClientRequest {
+    private static final byte[] EMPTY = new byte[0];
     private String path;
-    private final StringBuilder query = new StringBuilder();
+    private StringBuilder query;
     final Headers headers = new Headers();
-    byte[] body = new byte[0];
+    byte[] body = EMPTY;
 
     public ClientRequest(String template) {
         this.path = template;
@@ -33,6 +34,8 @@ public final class ClientRequest {
 
             return this;
         }
+
+        if (query == null) query = new StringBuilder();
 
         query.append(query.length() == 0 ? '?' : '&')
                 .append(encode(name))
@@ -87,11 +90,12 @@ public final class ClientRequest {
         if (path.indexOf('{') >= 0 || path.indexOf('}') >= 0 || !path.startsWith("/"))
             throw new IllegalArgumentException("Unbound client template");
 
-        return path + query;
+        return query == null ? path : path + query;
     }
 
     private void bounded() {
-        if (path.length() + query.length() > 8192) throw new IllegalArgumentException("Client target limit");
+        if (path.length() + (query == null ? 0 : query.length()) > 8192)
+            throw new IllegalArgumentException("Client target limit");
     }
 
     private static String text(Object value) {

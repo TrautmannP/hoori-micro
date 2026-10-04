@@ -197,8 +197,9 @@ final class ServiceBroker {
             Gateway.Route published)
             throws IOException {
         permit.check(outgoing);
-        Catalog.Instance target = (fresh(source) ? source.catalog : Catalog.EMPTY)
-                .select(service, version, endpoint.key(), turn.getAndIncrement(), published);
+        Catalog catalog = fresh(source) ? source.catalog : Catalog.EMPTY;
+        String key = endpoint.key();
+        Catalog.Instance target = catalog.select(service, version, key, turn.getAndIncrement(), published);
 
         if (target == null) throw new ServiceCallException(service, 0, "no instance offers endpoint", null);
 
@@ -218,7 +219,7 @@ final class ServiceBroker {
         if (!endpoint.consumes().isEmpty() && headers.get("Content-Type") == null)
             headers.add("Content-Type", endpoint.consumes());
 
-        headers.add(ENDPOINT_HEADER, endpoint.key()).add(VERSION_HEADER, Integer.toString(version));
+        headers.add(ENDPOINT_HEADER, key).add(VERSION_HEADER, Integer.toString(version));
 
         if (invocation != null) headers.add("X-Request-ID", invocation.requestId());
 
