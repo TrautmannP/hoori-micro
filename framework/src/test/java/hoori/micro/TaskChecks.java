@@ -1,6 +1,7 @@
 package hoori.micro;
 
 import hoori.concurrent.Cancellation;
+import hoori.concurrent.ScopeStateException;
 import hoori.concurrent.TaskCancelledException;
 import hoori.concurrent.TaskScope;
 import hoori.concurrent.TaskSpec;
@@ -65,6 +66,26 @@ public final class TaskChecks {
                 try (var permit = admission.acquire(RequestBudget.afterMillis(5000), false)) {
                     permit.check(admission);
                 }
+            }
+        });
+        TaskScope.named("admission-registration-capacity").cancellable().run(scope -> {
+            var registrations = new Cancellation.Registration[Cancellation.MAX_REGISTRATIONS];
+            try {
+                for (int i = 0; i < registrations.length; i++)
+                    registrations[i] = scope.cancellation().onCancel(() -> {});
+                // A free permit needs no callback slot; a queued call still obeys the SDK limit.
+                try (var permit = admission.acquire(RequestBudget.afterMillis(5000), false)) {
+                    try {
+                        admission.acquire(RequestBudget.afterMillis(5000), false);
+                        throw new AssertionError("Waiter exceeded cancellation registration capacity");
+                    } catch (ScopeStateException expected) {
+                        require(
+                                admission.stats().pending == 0 && admission.stats().active == 1,
+                                "Failed waiter registration leaked its slot");
+                    }
+                }
+            } finally {
+                for (var registration : registrations) if (registration != null) registration.close();
             }
         });
         try {

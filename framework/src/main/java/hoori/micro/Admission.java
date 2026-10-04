@@ -30,9 +30,9 @@ final class Admission {
 
         Thread current = Thread.currentThread();
         Cancellation token = Cancellation.current();
+        Cancellation.Registration registration = null;
         int slot = -1;
-        // Register outside the admission lock. A cancel before park leaves an unpark permit.
-        try (var registration = token == null ? null : token.onCancel(() -> LockSupport.unpark(current))) {
+        try {
             for (; ; ) {
                 Cancellation.checkpoint();
                 // Admission and cancellation request share this linearization point. If a reason
@@ -76,14 +76,24 @@ final class Admission {
                         }
                     }
                 }
+
+                // Immediate admission needs no wake callback. Register only before actually waiting,
+                // outside both locks; a cancellation or release before park leaves an unpark permit.
+                if (token != null && registration == null)
+                    registration = token.onCancel(() -> LockSupport.unpark(current));
+
                 // Unpark before park leaves a permit; registration/removal stays under the same monitor.
                 LockSupport.parkNanos(this, budget.remainingNanos());
             }
         } finally {
-            if (slot >= 0)
-                synchronized (lock) {
-                    remove(slot);
-                }
+            try {
+                if (registration != null) registration.close();
+            } finally {
+                if (slot >= 0)
+                    synchronized (lock) {
+                        remove(slot);
+                    }
+            }
         }
     }
 
