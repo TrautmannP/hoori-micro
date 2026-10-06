@@ -137,6 +137,7 @@ class RuntimeCheckTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for module, artifact in (("framework", "hoori-micro"),
+                    ("examples/mvc-crud", "mvc-crud"),
                     ("examples/demo-contracts", "hoori-micro-demo-contracts"),
                     ("examples/recipes-service", "recipes-service"),
                     ("examples/pantry-service", "pantry-service"),
@@ -154,6 +155,8 @@ class RuntimeCheckTest(unittest.TestCase):
             self.assertEqual(runtime_check.runtime_jars(self.receipt, self.lock), jars)
             self.assertEqual(1 + len(self.lock["runtimeSdks"]), len(jars))
             self.assertNotIn("lib/unused-optional.jar", jars)
+            self.assertEqual({"hoori-micro-0.1.0.jar", "mvc-crud-0.1.0.jar"},
+                             {p.name for p in (output / "apps/mvc-crud/lib").glob("*.jar")})
 
     def test_external_dependency_hashes_and_selection(self):
         path = self.path / "validator.jar"

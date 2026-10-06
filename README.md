@@ -165,6 +165,11 @@ Ohne Docker je ein Terminal öffnen: `scripts/run-local.sh registry`, `recipes`,
 `pantry`, `shopping`, `gateway`. Die Ports sind 8090, 8081, 8083, 8082 und 8080.
 Der langsame Demo-Endpunkt benötigt `HOORI_CLIENT_TIMEOUT_MS` über drei Sekunden.
 
+**IntelliJ:** Die geteilten `.run/`-Konfigurationen verwenden Hoori als Runtime.
+Zuerst `Hoori - Build`, dann ein Beispiel oder `Hoori - Demo` ausführen.
+Native Testkonfigurationen sind ebenfalls enthalten; lokale JDK-/Distributionspfade
+und die optionalen Beispiele erklärt [docs/intellij.md](docs/intellij.md).
+
 Für eine eigene Maven-Anwendung zuerst die geprüften Micro-Artefakte installieren
 (`mvn -Dmaven.repo.local=<Cache aus build.sh> -pl processor,starter -am install`),
 dann den Starter als Parent mit `<relativePath/>` verwenden. Die eigene

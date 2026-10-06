@@ -64,3 +64,17 @@ gilt für das [dokumentierte JSON-Profil](openapi.md), nicht für vollständiges
 OpenAPI oder JSON Schema. Sie ist lokal und funktional: keine CI-/Produktions-/Performance-Freigabe,
 keine vollständige Spring-/Jakarta-/JDK-Kompatibilität. #8, #10 und #11 behalten
 ihre eigenständigen offenen Anforderungen.
+
+## IntelliJ-Konfigurationen, 7. Oktober 2026
+
+Die [17 geteilten Konfigurationen](intellij.md) sind als XML samt Compound-Verweisen
+geprüft. Der Build und beide optionalen Builds bestehen mit JDK `21.0.12.1` und
+dem unveränderten Runtime-Pin. Portable Core-/Formatter- und 24 Python-Tests sind
+grün; Guest-Core läuft in Mixed und Interpreter. HTTP, MVC mit GC-Stress,
+Task-Fassade, Local Data und Docker-Smoke bestehen in Mixed. Die lokalen
+Startbefehle für alle fünf Demo-Rollen und CRUD wurden einschließlich echter
+Hoori-Prozessauswahl, HTTP und SIGTERM-Drain geprüft.
+
+Keine visuelle IntelliJ-Abnahme. Interpreter-Varianten der HTTP-/Beispiel-/Smoke-Gates
+und die übrigen oben genannten Gates wurden für diese Änderung nicht erneut
+ausgeführt; ihre bisherigen Receipts bleiben dem früheren Prüfstand zugeordnet.

@@ -33,6 +33,7 @@ def stage(runtime: Path) -> None:
         framework = jar("framework", "hoori-micro")
         contracts = jar("examples/demo-contracts", "hoori-micro-demo-contracts")
         apps = {"registry": [framework], "gateway": [framework]}
+        apps["mvc-crud"] = [framework, jar("examples/mvc-crud", "mvc-crud")]
         for service in ("recipes", "pantry", "shopping"):
             apps[service] = [framework, contracts, jar(f"examples/{service}-service", f"{service}-service")]
         for app, jars in apps.items():

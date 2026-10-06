@@ -7,10 +7,11 @@ case "${1:-}" in
   recipes) export HOORI_MAIN_CLASS=dev/hoori/micro/recipes/RecipesApplication HOORI_OUTBOUND=http port=8081 ;;
   pantry) export HOORI_MAIN_CLASS=dev/hoori/micro/pantry/PantryApplication HOORI_OUTBOUND=http port=8083 ;;
   shopping) export HOORI_MAIN_CLASS=dev/hoori/micro/shopping/ShoppingApplication HOORI_OUTBOUND=http port=8082 ;;
+  mvc-crud) export HOORI_MAIN_CLASS=dev/hoori/micro/crud/CrudApplication HOORI_OUTBOUND=http port=8085 ;;
   gateway) export HOORI_MAIN_CLASS=hoori/micro/Gateway HOORI_OUTBOUND=http port=8080
     export HOORI_OPENAPI_ENABLED=${HOORI_OPENAPI_ENABLED:-true}
     export HOORI_GATEWAY_PERMISSIONS=${HOORI_GATEWAY_PERMISSIONS:-recipes:read,recipes:write,pantry:read,shopping:read,shopping:write,shopping:demo} ;;
-  *) echo 'usage: scripts/run-local.sh registry|recipes|pantry|shopping|gateway (after scripts/build.sh)' >&2; exit 2 ;;
+  *) echo 'usage: scripts/run-local.sh registry|recipes|pantry|shopping|gateway|mvc-crud (after scripts/build.sh)' >&2; exit 2 ;;
 esac
 export HOORI_HOME="$PWD/.docker-context/runtime"
 export HOORI_APP_LIB="$PWD/.docker-context/apps/$1/lib"

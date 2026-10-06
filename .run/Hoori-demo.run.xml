@@ -1,0 +1,10 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Hoori - Demo" type="CompoundRunConfigurationType" folderName="Hoori">
+    <toRun name="Hoori - registry" type="ShConfigurationType" />
+    <toRun name="Hoori - recipes" type="ShConfigurationType" />
+    <toRun name="Hoori - pantry" type="ShConfigurationType" />
+    <toRun name="Hoori - shopping" type="ShConfigurationType" />
+    <toRun name="Hoori - gateway" type="ShConfigurationType" />
+    <method v="2" />
+  </configuration>
+</component>
