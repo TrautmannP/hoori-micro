@@ -1,0 +1,132 @@
+---
+title: Components & graph
+description: '@Service, @Repository, @Configuration/@Bean, resource ownership and graph build errors.'
+---
+
+## Components
+
+Components below the app's base package carry one of these annotations:
+
+| Annotation | Package | Kind |
+|---|---|---|
+| `@RestController`, `@RestControllerAdvice` | `hoori.rest.mvc` | Concrete class |
+| `@Service`, `@Repository`, `@Configuration` | `hoori.micro.app` | Concrete class |
+| `@ServiceClient` | `hoori.micro.app` | Interface (implementation is generated) |
+
+Rules for concrete components:
+
+- `public`, non-generic, concrete (not abstract)
+- **exactly one** public constructor
+- nested components must be `static`
+
+All components are singletons. There is no scope language, no field injection and no
+general-purpose proxy.
+
+## Constructor injection
+
+```java
+@Service
+public final class RecipeService {
+    private final RecipeRepository repository;
+    private final Microservice app;
+
+    public RecipeService(RecipeRepository repository, Microservice app) {
+        this.repository = repository;
+        this.app = app;
+    }
+}
+```
+
+Besides your own components, these infrastructure values are injectable:
+
+| Type | Content |
+|---|---|
+| `hoori.micro.Environment` | Single-key configuration lookup |
+| `hoori.micro.Microservice` | The running app (context, `runTask`, resources) |
+| `String[]` | Startup arguments |
+
+## `@Configuration` and `@Bean`
+
+For infrastructure objects you cannot or do not want to annotate, `@Bean` methods of a
+configuration supply the instance. Factory parameters are resolved like constructor
+parameters.
+
+```java
+import hoori.micro.app.Bean;
+import hoori.micro.app.Configuration;
+
+@Configuration
+public final class DatabaseConfiguration {
+    @Bean
+    public hoori.jdbi.JdbiTransactions manager() {
+        return new hoori.jdbi.JdbiTransactions(factory(), IO_TIMEOUT_MILLIS);
+    }
+    // …
+}
+```
+
+A `@Bean` method is public, non-generic and returns an object.
+
+## Resource ownership
+
+Singletons implementing `AutoCloseable` are owned by the app by default:
+
+- They are closed in **reverse creation order**, after the request drain.
+- The same instance exposed under several types is closed only once.
+- A bootstrap failure cleans up already-created resources before listeners, readiness or
+  registration start.
+
+Opt out for externally managed objects:
+
+```java
+@Bean(owned = false)
+public SharedPool pool() { return SharedPool.global(); } // SharedPool: your own example type
+```
+
+## Limits
+
+| Limit | Value |
+|---|---|
+| Components + beans | max. 128 |
+| Own closeable resources | max. 16 |
+
+## Understanding build errors
+
+The graph is checked while compiling. Typical processor messages:
+
+<Accordions>
+<Accordion title="Component needs exactly one public constructor">
+  A component has no or several public constructors. Keep exactly one.
+</Accordion>
+<Accordion title="Component must be public and non-generic">
+  Make the component class `public` and remove its type parameters.
+</Accordion>
+<Accordion title="Nested component must be static">
+  Declare nested component classes `static`.
+</Accordion>
+<Accordion title="Dependency cycle: …">
+  Two or more components depend on each other. Split responsibilities or extract a shared
+  dependency.
+</Accordion>
+<Accordion title="Duplicate imported component: …">
+  A type is available through several modules. Check `@MicroApplication(imports = …)`.
+</Accordion>
+<Accordion title="Bean factory must be public, non-generic and return an object">
+  Make the `@Bean` method public, drop generics and avoid `void`/primitive return types.
+</Accordion>
+<Accordion title="Application name must be a lowercase service name">
+  `name` in `@MicroApplication` must follow the name format (`a-z`, digits, `-`, max. 63).
+</Accordion>
+<Accordion title="GatewayRoute needs an HTTP mapping">
+  `@GatewayRoute` sits on a method without `@GetMapping`/`@PostMapping`/…
+</Accordion>
+<Accordion title="Gateway permission must belong to …">
+  The permission must start with your own service name: `recipes:read` in service `recipes`.
+</Accordion>
+<Accordion title="Scoped interface needs exactly one delegate: …">
+  A `@TaskScoped`/`@Transactional` interface needs exactly one implementation in the graph.
+</Accordion>
+<Accordion title="Transactional interface needs exactly one TransactionManager bean">
+  Provide exactly one stable transaction manager as a `@Bean` for `@Transactional`.
+</Accordion>
+</Accordions>

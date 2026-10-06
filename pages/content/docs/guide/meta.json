@@ -1,0 +1,28 @@
+{
+  "title": "Guide",
+  "description": "Concepts and step-by-step walkthroughs",
+  "root": true,
+  "icon": "BookOpen",
+  "pages": [
+    "---Getting started---",
+    "index",
+    "quick-start",
+    "tutorial",
+    "---Essentials---",
+    "application",
+    "controllers",
+    "validation",
+    "errors",
+    "components",
+    "---Services---",
+    "service-clients",
+    "parallel",
+    "gateway",
+    "openapi",
+    "---Operations---",
+    "lifecycle",
+    "data",
+    "security",
+    "ide"
+  ]
+}

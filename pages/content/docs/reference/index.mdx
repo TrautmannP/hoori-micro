@@ -1,0 +1,25 @@
+---
+title: Reference overview
+description: Look-up material for annotations, runtime API, configuration, HTTP endpoints, metrics and limits.
+---
+
+<Cards>
+  <Card title="Annotations" href="/docs/reference/annotations" description="hoori.micro.app and the hoori.rest.mvc annotations used with it." />
+  <Card title="Runtime API" href="/docs/reference/runtime-api" description="Micro, Microservice, Environment, Context, ServiceCallException." />
+  <Card title="Configuration" href="/docs/reference/configuration" description="All HOORI_* environment variables." />
+  <Card title="HTTP endpoints" href="/docs/reference/endpoints" description="Fixed /health, /metrics and /_hoori routes." />
+  <Card title="Metrics" href="/docs/reference/metrics" description="Fixed metric names and labels." />
+  <Card title="Limits" href="/docs/reference/limits" description="Every built-in bound in one place." />
+  <Card title="Scripts" href="/docs/reference/scripts" description="Build, run and test scripts in scripts/." />
+</Cards>
+
+## Packages at a glance
+
+| Package | Origin | Contains |
+|---|---|---|
+| `hoori.micro.app` | Hoori Micro | `@MicroApplication`, `@Service`, `@Repository`, `@Configuration`, `@Bean`, `@ServiceClient`, `@GatewayRoute`, `@MicroModule`, `Micro` |
+| `hoori.micro` | Hoori Micro | `Microservice`, `Environment`, `Context`, `Invocation`, `ServiceCallException`, `Gateway`, `Registry`, `OpenApi` |
+| `hoori.rest.mvc` | Hoori REST SDK | `@RestController`, `@RequestMapping`, `@GetMapping`…, `@PathVariable`, `@RequestParam`, `@RequestBody`, `@ResponseStatus`, `HttpResult`, `@RestControllerAdvice`, `@ExceptionHandler`, `Problem` |
+| `hoori.concurrent` | Hoori SDK | `Tasks`, `TaskSpec`, `Outcome`, `Budget`, `Cancellation` |
+| `hoori.tasks` | Hoori SDK | `@GenerateTasks`, `@TaskScoped`, `@Transactional` |
+| `jakarta.validation` | Jakarta | `@Valid`, `@NotNull`, `@NotBlank`, `@Size`, `@Positive`, `@Min`, `@Max` |

@@ -1,0 +1,33 @@
+---
+title: Examples overview
+description: Runnable example applications in examples/ – what each one shows and how to call it.
+---
+
+<Callout type="warn">
+  Examples are development demos: in-process or demo-only storage, no production authorization,
+  not migrated business services.
+</Callout>
+
+| Example | Shows | Port |
+|---|---|---|
+| [mvc-crud](/docs/examples/mvc-crud) | Smallest self-contained CRUD with OpenAPI | 8085 |
+| [recipes & pantry](/docs/examples/recipes-pantry) | Controller, service, in-memory repository, advice; small read-only provider | 8081 / 8083 |
+| [shopping](/docs/examples/shopping) | Injected clients, overview/dashboard, bounded batch/bulk | 8082 (via gateway 8080) |
+| [task-facade](/docs/examples/task-facade) | Generated task facades and `@TaskScoped` method boundary | 8084 |
+| [local-data](/docs/examples/local-data) | Remote preparation, short Jdbi transaction, atomic outbox | 8084 |
+| `demo-contracts` | Shared DTOs without framework wiring | – |
+
+## Run the full demo
+
+```bash
+./scripts/build.sh /abs/path/to/distribution
+docker compose up --build --wait
+curl -fsS http://127.0.0.1:8080/meals/1
+docker compose down
+```
+
+<Callout>
+  `mvc-crud` and `recipes-service` publish the same `/recipes` paths, as do `task-facade` and
+  `shopping` for `/overview/{id}`. Don't publish both variants through the same gateway – it
+  withholds conflicting routes.
+</Callout>

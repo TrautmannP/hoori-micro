@@ -1,0 +1,36 @@
+---
+title: Security boundaries
+description: What the demo protects, what it does not, and what is missing before production use.
+---
+
+<Callout type="error" title="Development demo">
+  The bundled applications are a private development demo. The registry and internal controller
+  endpoints are **unauthenticated**.
+</Callout>
+
+## What is in place
+
+- Gateway targets come only from the checked, bounded catalog.
+- The gateway checks the declared permission per request; unpublished methods are unreachable
+  through it.
+- External endpoint/version/budget headers do not steer internal calls.
+- Credentials, cookies and hop-by-hop headers are not forwarded.
+- DTO/body/catalog/admission bounds and safe field/error codes limit input and output.
+- Logs contain no tokens, bodies or raw peer errors.
+
+## What is not
+
+| Topic | State |
+|---|---|
+| User identity | None – `HOORI_GATEWAY_PERMISSIONS` grants to every caller |
+| Service identity | None – a registry catalog is not proof of identity |
+| Registry write authorization | None |
+| TLS / mTLS, key rotation | Not implemented (`HOORI_TLS_CA_FILE` only adds a CA bundle for outgoing HTTPS) |
+| Authorization at the data owner | Not implemented |
+
+## Rules for your code
+
+- Treat the request ID as correlation only, never as authentication.
+- Future security context belongs in request/`TaskContext`, not in `ThreadLocal`.
+- Never pass a user token on unchecked as an internal permission.
+- Never log credentials, bodies or raw upstream failures.

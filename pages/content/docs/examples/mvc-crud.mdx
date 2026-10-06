@@ -1,0 +1,47 @@
+---
+title: mvc-crud
+description: The smallest self-contained CRUD service with an OpenAPI contract.
+---
+
+`CrudApplication` constructs controller, service and in-memory repository through the regular
+generated graph. `src/main/resources/openapi.json` is the contract for GET/list, POST with
+201/Location and DELETE with 204.
+
+<Files>
+  <Folder name="examples/mvc-crud/src/main" defaultOpen>
+    <Folder name="java/dev/hoori/micro/crud" defaultOpen>
+      <File name="CrudApplication.java" />
+      <File name="controller/RecipeController.java" />
+      <File name="service/RecipeService.java" />
+      <File name="repository/RecipeRepository.java" />
+      <File name="dto/CreateRecipe.java, Recipe.java" />
+      <File name="error/RecipeAdvice.java, RecipeNotFound.java" />
+    </Folder>
+    <File name="resources/openapi.json" />
+  </Folder>
+</Files>
+
+## Code
+
+<include meta='title="CrudApplication.java"'>../../../../examples/mvc-crud/src/main/java/dev/hoori/micro/crud/CrudApplication.java</include>
+
+<include meta='title="controller/RecipeController.java"'>../../../../examples/mvc-crud/src/main/java/dev/hoori/micro/crud/controller/RecipeController.java</include>
+
+The full step-by-step version is the [tutorial](/docs/guide/tutorial).
+
+## Run
+
+```bash
+./scripts/build.sh /abs/path/to/distribution
+scripts/run-local.sh mvc-crud
+curl -fsS http://127.0.0.1:8085/recipes/1
+```
+
+## Test
+
+```bash
+python3 scripts/test_mvc.py --gc-stress
+python3 scripts/test_application_build.py
+```
+
+For a gateway demo grant `crud:read,crud:write`.

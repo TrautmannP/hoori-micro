@@ -1,0 +1,136 @@
+---
+title: Quick start
+description: Get the distribution, build the repository and start the demo with its gateway.
+---
+
+## Prerequisites
+
+| Tool | Version |
+|---|---|
+| JDK | 21, qualified with **21.0.12.1** (build only; no host JDK is used at runtime) |
+| Maven | 3.9.x |
+| Python | 3.10+ |
+| Docker / Compose | for container checks and the Compose demo |
+| Hoori distribution | Headless release matching `hoori.lock.json` |
+
+<Callout type="warn">
+  Old JDK 21 builds can lose `TYPE_USE` metadata from contract JARs. The starter sets the
+  required compiler flag, but the JDK still has to be recent enough.
+</Callout>
+
+<Steps>
+<Step>
+
+### Build the distribution
+
+`hoori.lock.json` pins runtime, guest base and SDKs to one Hoori commit. In your Hoori
+checkout, create a separate worktree for exactly that commit:
+
+```bash
+git worktree add --detach ../hoori-micro-runtime 83d2b8fc83ffee6ed7c748409ff7b4802d8a341b
+cd ../hoori-micro-runtime
+export JAVA_HOME=/path/to/jdk-21.0.12.1
+export HOORI_JAVA21_HOME="$JAVA_HOME"
+export PATH="$JAVA_HOME/bin:$PATH"
+./scripts/build-distribution.sh --release
+```
+
+</Step>
+<Step>
+
+### Build Hoori Micro
+
+In the Hoori Micro repository, with the same build JDK:
+
+```bash
+./scripts/build.sh /absolute/path/to/headless/release-distribution
+```
+
+`build.sh` checks the receipt, revision, checksums and original POMs, builds in a Maven cache
+separated per distribution and produces `.docker-context/`.
+
+</Step>
+<Step>
+
+### Start the demo
+
+<Tabs items={['Docker Compose', 'Local (no Docker)']}>
+<Tab value="Docker Compose">
+
+```bash
+docker compose up --build --wait
+```
+
+</Tab>
+<Tab value="Local (no Docker)">
+
+Open one terminal per role:
+
+```bash
+scripts/run-local.sh registry   # :8090
+scripts/run-local.sh recipes    # :8081
+scripts/run-local.sh pantry     # :8083
+scripts/run-local.sh shopping   # :8082
+scripts/run-local.sh gateway    # :8080
+```
+
+`run-local.sh` binds to loopback and still starts the real HooriVM. `java -jar …` is not a
+supported networking mode.
+
+</Tab>
+</Tabs>
+
+</Step>
+<Step>
+
+### Try it
+
+```bash
+curl -fsS http://127.0.0.1:8080/meals/1
+curl -fsS http://127.0.0.1:8080/overview/1
+curl -i http://127.0.0.1:8080/recipes \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"Möhrensuppe"}'
+```
+
+The gateway's API reference is at
+[`http://127.0.0.1:8080/_hoori/docs`](http://127.0.0.1:8080/_hoori/docs), the current contract
+at `/openapi.json`.
+
+</Step>
+<Step>
+
+### Clean up
+
+```bash
+docker compose down
+```
+
+</Step>
+</Steps>
+
+## Set up your own project
+
+First install the verified Micro artifacts into the Maven cache created by `build.sh`:
+
+```bash
+mvn -Dmaven.repo.local=<cache from build.sh> -pl processor,starter -am install
+```
+
+Then use the starter as parent. Your project version is independent of the Micro version:
+
+```xml title="pom.xml"
+<parent>
+  <groupId>dev.hoori</groupId>
+  <artifactId>hoori-micro-starter</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <relativePath/>
+</parent>
+<artifactId>my-service</artifactId>
+```
+
+<Callout>
+  There is no separately published artifact repository yet.
+</Callout>
+
+Continue with the [tutorial](/docs/guide/tutorial).

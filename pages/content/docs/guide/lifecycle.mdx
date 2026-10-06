@@ -1,0 +1,103 @@
+---
+title: Requests, budgets & shutdown
+description: Admission, request context, time budgets, health probes and the ordered shutdown sequence.
+---
+
+## The request boundary
+
+Every business request passes through the same incoming admission and request-scope boundary:
+
+```text
+HTTP SDK reads bounded raw body
+  → incoming admission (HOORI_INCOMING_CALLS / _PENDING_CALLS)
+    → DTO binding + validation
+      → controller → service → clients (outgoing admission)
+    ← local child / resource drain
+  ← response
+```
+
+Health, metrics and fixed control routes sit outside this boundary but still share HTTP and
+carrier capacity. Saturation and stopping reject waiting work with **503** – there are no retries.
+
+## Request context
+
+Inject `Microservice` to read the current invocation:
+
+```java
+@Service
+public final class RecipeService {
+    private final Microservice app;
+
+    public RecipeService(Microservice app) {
+        this.app = app;
+    }
+
+    public String requestId() {
+        return app.context().invocation().requestId();
+    }
+}
+```
+
+| Call | Returns |
+|---|---|
+| `app.context().invocation()` | `Invocation` with `requestId()` and `origin()` (`REQUEST` or `SERVICE`) |
+| `app.context().budget()` | Remaining `hoori.concurrent.Budget` of the current work |
+| `app.context().ownerRequest()` | Owner-local raw HTTP request – never capture it in tasks |
+
+The request ID is for correlation only, never an authenticated identity. There is no
+`ThreadLocal` request context.
+
+## Budgets
+
+| Variable | Default | Bounds |
+|---|---|---|
+| `HOORI_REQUEST_TIMEOUT_MS` | 10000 | Deadline of an incoming HTTP exchange |
+| `HOORI_WORK_TIMEOUT_MS` | client timeout | Shared budget of the request/service operation |
+| `HOORI_CLIENT_TIMEOUT_MS` | 2000 | Per outgoing call, also limited by the parent budget |
+
+Outgoing calls send the relative remaining budget as `X-Hoori-Budget-Ms`. It is a relative
+budget – not a global real-time deadline and not a remote cancellation protocol.
+
+<Callout type="warn" title="Cooperative execution">
+  Hoori runs cooperatively. CPU work that never reaches a checkpoint cannot be preempted
+  arbitrarily – keep loops short or bounded.
+</Callout>
+
+## Health probes
+
+```bash
+curl -i http://127.0.0.1:8081/health/live
+curl -i http://127.0.0.1:8081/health/ready
+```
+
+These are local HTTP probes – not a guarantee of request distribution and not an automatic
+restart mechanism.
+
+## Shutdown order
+
+<Steps>
+<Step>
+
+**Stop admission.** The service becomes unready and stops admitting new work. Deregistration
+runs independently.
+
+</Step>
+<Step>
+
+**Drain.** Admitted requests may keep using existing slots. Waiting and new work is rejected.
+After `HOORI_SHUTDOWN_GRACE_MS` (default 10000) cancellation is triggered.
+
+</Step>
+<Step>
+
+**Close.** Only after the actual request/child/HTTP drain are app resources and both HTTP
+clients closed.
+
+</Step>
+</Steps>
+
+<Callout type="error">
+  `HttpServer.run()` returning is not proof of a completed drain – and neither is a forced
+  process kill. Pick the outer process timeout deliberately (the Compose demo uses a 15 s
+  `stop_grace_period`).
+</Callout>

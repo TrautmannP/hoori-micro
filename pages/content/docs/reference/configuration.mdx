@@ -1,0 +1,117 @@
+---
+title: Configuration
+description: All HOORI_* environment variables with defaults and bounds.
+---
+
+Everything is read **once at startup**. Empty, padded or invalid values are errors – there is no
+silent fallback. Inject `Environment` to test configuration without a process environment.
+
+## Names
+
+- Service and instance names: 1–63 chars, first `a-z`, then `a-z`, digits or `-`, no trailing `-`.
+- Permissions: `<service>:<scope>`. Major versions: 1–9999.
+- Max. 128 endpoints and 32 dependencies per service.
+- Registry and advertise URLs are `http`/`https` origins with host and optional port – no
+  user/password, query, fragment or base path.
+
+## Server
+
+| Variable | Default | Bounds / meaning |
+|---|---:|---|
+| `HOORI_BIND_ADDRESS` | `0.0.0.0` | Numeric IPv4 bind address; the local launcher sets `127.0.0.1` |
+| `HOORI_PORT` | `8080` | 1–65535; does not change client destination ports |
+| `HOORI_BODY_BYTES` | `65536` | 1024–16777216; HTTP body limit and JSON output limit |
+| `HOORI_SERVER_CONNECTIONS` | `32` | 1–512 admitted server connections |
+| `HOORI_INCOMING_CALLS` | min(16, server connections) | 1 to server limit; all business requests before DTO decoding |
+| `HOORI_INCOMING_PENDING_CALLS` | `0` | 0 to server limit minus incoming calls; waiting requests count as active roots |
+| `HOORI_REQUEST_TIMEOUT_MS` | `10000` | 1–600000; deadline of an incoming HTTP exchange |
+| `HOORI_WORK_TIMEOUT_MS` | client timeout | 1–600000; shared budget of the request/service operation |
+| `HOORI_SHUTDOWN_GRACE_MS` | `10000` | 0–600000; grace after stop, then cancellation and real drain |
+
+## Outgoing calls
+
+| Variable | Default | Bounds / meaning |
+|---|---:|---|
+| `HOORI_CLIENT_CONNECTIONS` | `16` | 1–512 connections in the data pool, plus at most one control connection |
+| `HOORI_CLIENT_PER_ORIGIN` | min(8, total) | 1 to total limit |
+| `HOORI_CLIENT_PENDING_ACQUIRES` | `0` | 0–4096 SDK waiters in the data pool; keep at zero to avoid a second queue |
+| `HOORI_OUTGOING_CALLS` | client per-origin limit | 1 to data connections; one global permit for encoding, HTTP and decoding |
+| `HOORI_OUTGOING_PENDING_CALLS` | outgoing calls | 0–512 waiters before encoding; zero means fail-fast |
+| `HOORI_CLIENT_TIMEOUT_MS` | `2000` | 1–600000; call bound, also limited by the parent budget |
+| `HOORI_CLIENT_IDLE_MS` | `5000` | 1–600000; retention of idle pool connections |
+
+## Discovery
+
+| Variable | Default | Bounds / meaning |
+|---|---:|---|
+| `HOORI_REGISTRY_URL` | `http://registry:8080` | Registry origin |
+| `HOORI_ADVERTISE_URL` | `http://$HOSTNAME:<port>` | Address other instances use; service name if `HOSTNAME` is unset |
+| `HOORI_INSTANCE_ID` | `<name>-<random>` | Registry key of this instance |
+| `HOORI_HEARTBEAT_MS` | `2000` | 100–60000; lease/catalog period with ±10 % jitter, bounded backoff on errors |
+| `HOORI_REGISTRY_TTL_MS` | 3 × heartbeat | Registration expiry and `complete=false` duration; keep registry and providers consistent |
+| `HOORI_CATALOG_MAX_AGE_MS` | `30000` | Greater than heartbeat; catalog validity without a successful refresh |
+| `HOORI_CONTROL_TIMEOUT_MS` | min(1000, TTL/2) | 1 to min(10000, TTL/2); registry exchange, independent of data timeout |
+
+## Launcher, gateway & Docker
+
+| Variable | Meaning |
+|---|---|
+| `HOORI_MAIN_CLASS` | Required by the entrypoint; main class in slash notation, e.g. `hoori/micro/Gateway` |
+| `HOORI_GATEWAY_PERMISSIONS` | `Gateway.main` only: comma-separated permissions granted to every caller; empty rejects all business access |
+| `HOORI_OPENAPI_ENABLED` | `Gateway.main` only: `true` enables OpenAPI aggregation and `/_hoori/docs` (framework default off) |
+| `HOORI_ENGINE` | `mixed` (default) or `interpreter` |
+| `HOORI_OUTBOUND` | `none` or `http`; `http` grants connect and host resolution capabilities, also for HTTPS |
+| `HOORI_TLS_CA_FILE` | Optional readable PEM CA bundle for the Hoori client; verification cannot be disabled |
+| `HOORI_HOME` / `HOORI_APP_LIB` | Runtime/JAR paths for the local launcher; Docker uses `/opt/hoori` and `/opt/app/lib` |
+| `HOORI_MAX_HEAP_BYTES` | Entrypoint: `33554432` logical guest heap limit; does not bound process RSS |
+| `HOORI_RUNTIME_BASE` | Compose build argument for the runtime base image |
+| `HOORI_DEMO_PORT` | Loopback host port of the demo; 8080 normally, 18080 in the smoke test |
+
+## Data example
+
+Only for the separately built [`local-data`](/docs/examples/local-data) example:
+
+| Variable | Meaning |
+|---|---|
+| `HOORI_DB_URL` | PostgreSQL JDBC URL without query parameters |
+| `HOORI_DB_USER` / `HOORI_DB_PASSWORD` | Credentials of the demo database |
+| `HOORI_DB_SSLMODE` | Default `require`; `disable` only for the local throwaway database |
+
+## Example: tuning a local service
+
+```bash
+HOORI_PORT=8081 \
+HOORI_BIND_ADDRESS=127.0.0.1 \
+HOORI_CLIENT_TIMEOUT_MS=5000 \
+HOORI_INCOMING_CALLS=8 \
+HOORI_INCOMING_PENDING_CALLS=8 \
+scripts/run-local.sh recipes
+```
+
+## Docker Compose notes
+
+- Compose forwards only declared variables. `export HOORI_PORT=…` on the host does not reach the
+  container – add overrides to `environment` or a Compose override file.
+- The bundled healthcheck uses the fixed container port 8080. When changing the container port,
+  also change the healthcheck and `HOORI_REGISTRY_URL`.
+- The default advertise URL uses the container ID as host name, which Docker resolves on the
+  shared network; this also works with several replicas.
+- `stop_grace_period` is 15 s in the demo, the framework grace 10 s. Deregistration runs
+  independently; its final join after scope/HTTP drain needs at most three control timeouts.
+  After the grace period, mandatory cleanup may take longer – a forced kill is not a successful drain.
+- Demo-only variables: `HOORI_DEMO_CLIENT_TIMEOUT_MS` (30000, to qualify cold compilation
+  separately) and `HOORI_DEMO_REQUEST_TIMEOUT_MS` (60000).
+
+## Operational rules
+
+- Own and close exactly one `Microservice` per process; never create clients per call.
+- Client targets come only from the registry catalog, never from request values. HTTPS origins
+  need a matching CA configuration and network permissions; a DNS name alone is no service
+  certificate or authorization.
+- Saturation and stop reject waiting work with 503; there are no retries. Already admitted
+  handlers may start further calls during drain while a slot is free; new waiters and
+  background calls are rejected.
+- The raw body is read by the SDK before admission. Health and fixed control routes are outside
+  the business boundary but share HTTP/carrier capacity.
+- For local development use `scripts/run-local.sh`: it binds to loopback and still starts the real
+  HooriVM. `java -jar …` is not a supported networking mode.

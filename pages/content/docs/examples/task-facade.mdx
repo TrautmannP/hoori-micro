@@ -1,0 +1,31 @@
+---
+title: task-facade
+description: Generated task facades via @GenerateTasks and an 800 ms @TaskScoped method boundary.
+---
+
+`FacadeApplication` uses the same starter and bootstrap as the HTTP examples. The injected
+`OverviewService` interface sets an 800 ms method boundary with `@TaskScoped`; a shorter parent
+budget still wins.
+
+<include meta='title="client/RecipeClient.java"'>../../../../examples/task-facade/src/main/java/dev/hoori/micro/facade/client/RecipeClient.java</include>
+
+<include meta='title="service/OverviewService.java"'>../../../../examples/task-facade/src/main/java/dev/hoori/micro/facade/service/OverviewService.java</include>
+
+<include meta='title="service/OverviewComposition.java"'>../../../../examples/task-facade/src/main/java/dev/hoori/micro/facade/service/OverviewComposition.java</include>
+
+<include meta='title="controller/OverviewController.java"'>../../../../examples/task-facade/src/main/java/dev/hoori/micro/facade/controller/OverviewController.java</include>
+
+## Run & test
+
+```bash
+python3 scripts/optional_example.py build task-facade
+# start registry, recipes and pantry via scripts/run-local.sh, then:
+python3 scripts/optional_example.py run task-facade
+curl -fsS http://127.0.0.1:8084/overview/1
+
+python3 scripts/test_composition.py --facade
+HOORI_ENGINE=interpreter python3 scripts/test_composition.py --facade
+```
+
+The module is built separately; the task processors stay on the build path and no DB
+dependencies are included.

@@ -1,0 +1,16 @@
+{
+  "title": "Reference",
+  "description": "Annotations, runtime API, configuration, endpoints",
+  "root": true,
+  "icon": "Code",
+  "pages": [
+    "index",
+    "annotations",
+    "runtime-api",
+    "configuration",
+    "endpoints",
+    "metrics",
+    "limits",
+    "scripts"
+  ]
+}

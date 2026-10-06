@@ -1,318 +1,292 @@
-# Historische Abnahme vor der MVC-Umstellung
+# Historical acceptance before the MVC switch
 
-Die folgenden Ergebnisse gehören ausschließlich zu den jeweils benannten alten
-Pins/APIs. Aktuelle Nachweise stehen in [validation.md](../validation.md).
+The following results belong exclusively to the old pins/APIs named in each section. Current
+evidence is in [validation.md](../validation.md).
 
-## Annotationbasierte DTOs (4. Oktober 2026)
+## Annotation-based DTOs (4 October 2026)
 
-- `scripts/build.sh`: **25 JUnit-Tests und Spotless** bestanden; Codegenerierung
-  durch die originalen Hoori-/Avaje-Processor. Beide optionalen Beispiele bauen.
-- Portable Checks: **117 Assertions, 5 Formatter-Fixtures, 24 Python-Tests**.
-  Externe Runtime-JARs müssen exakt den SHA256-Pins entsprechen; zusätzliche
-  Processor-/fremde JARs werden beim Staging abgewiesen.
-- `scripts/test-hoori-core.sh`: **Interpreter/Mixed bestanden**. Die generierten
-  DTO-Checks laufen zusätzlich jeweils mit GC-Stress und ohne JDK/Processor auf
-  dem Laufzeitpfad: Zahlstrings, Pflichtfelder, Typen, Duplikate, Überlauf,
-  Listenlimit, sichere `id`-/`ids[n]`-Fehler und unveränderte JSON-Ergebnisse.
-- `test_composition.py --facade`: **beide Engines bestanden**. Direkte RPCs und
-  Gateway liefern begrenzte Feldfehler. Ungültige Inputs erreichen keinen Handler
-  und starten keinen Fan-out. Defekte Validatoren bleiben 500, Fehler eines inneren
-  Calls bleiben außen 502. Task-Fassade, Budgets, Cancellation und Drain bestehen.
-- `test_data.py`: **beide Engines bestanden**, mit echtem PostgreSQL und den zum
-  Pin passenden Original-Fault-Peers. Ungültige Draft-IDs starten weder Remote-
-  Reads noch DB-Acquisition. Commit/Rollback/UNKNOWN, Cancel und Recovery bestehen.
-- `scripts/smoke.py`: **beide Engines bestanden**. Die Container führen echte
-  Hoori-Services ohne JDK/Maven aus; Rolling Updates, Registry-Ausfall, Sättigung,
-  Katalogwechsel, Recovery und SIGTERM-Drain bestehen.
-- Receipt-SHA256: `0d5421b2a679ec5c420a71484edc76e62831822f87df95b7fc8b85f33e753d4c`.
-  Pin, Runtime-/App-JAR-Hashes und Check-Nachweise:
-  [DTO-Abnahme](annotated-dtos.json).
+- `scripts/build.sh`: **25 JUnit tests and Spotless** passed; code generation by the original
+  Hoori/Avaje processors. Both optional examples build.
+- Portable checks: **117 assertions, 5 formatter fixtures, 24 Python tests**. External runtime
+  JARs must match the SHA256 pins exactly; additional processor/foreign JARs are rejected during
+  staging.
+- `scripts/test-hoori-core.sh`: **interpreter/mixed passed**. The generated DTO checks run
+  additionally with GC stress each and without JDK/processor on the runtime path: number strings,
+  required fields, types, duplicates, overflow, list limit, safe `id`/`ids[n]` errors and unchanged
+  JSON results.
+- `test_composition.py --facade`: **both engines passed**. Direct RPCs and the gateway deliver
+  bounded field errors. Invalid inputs reach no handler and start no fan-out. Broken validators
+  stay 500; failures of an inner call stay 502 outside. Task facade, budgets, cancellation and
+  drain pass.
+- `test_data.py`: **both engines passed**, with real PostgreSQL and the original fault peers
+  matching the pin. Invalid draft IDs start neither remote reads nor DB acquisition.
+  Commit/rollback/UNKNOWN, cancel and recovery pass.
+- `scripts/smoke.py`: **both engines passed**. The containers run real Hoori services without
+  JDK/Maven; rolling updates, registry outage, saturation, catalog changes, recovery and SIGTERM
+  drain pass.
+- Receipt SHA256: `0d5421b2a679ec5c420a71484edc76e62831822f87df95b7fc8b85f33e753d4c`.
+  Pin, runtime/app JAR hashes and check evidence: [DTO acceptance](annotated-dtos.json).
 
-Das ist ein begrenztes DTO-Profil und eine lokale Consumer-Abnahme. Die folgenden
-Tasks-v2-Nachweise und Performance-Messungen stammen vom früheren Pin `7d7245a`;
-sie wurden durch dieses Upgrade nicht pauschal neu qualifiziert. Insbesondere
-wurden `test-task-runtime.sh`, `test_admission.py`, `test_budgets.py`, `test_control.py`,
-`test_tasks.py` und die Performance-Benchmarks für diesen Pin nicht separat wiederholt.
+This is a bounded DTO profile and a local consumer acceptance. The following tasks v2 evidence
+and performance measurements stem from the earlier pin `7d7245a`; they were not blanket
+re-qualified by this upgrade. In particular, `test-task-runtime.sh`, `test_admission.py`,
+`test_budgets.py`, `test_control.py`, `test_tasks.py` and the performance benchmarks were not
+repeated separately for this pin.
 
-## Tasks-v2-Grundlage (#19)
+## Tasks v2 foundation (#19)
 
-- `scripts/build.sh`: Maven/Spotless und **22 JUnit-Tests** bestanden.
-- `scripts/test-core.sh`: **116 Assertions und 5 Formatter-Fixtures**;
-  Python `unittest`: **20 Tests**, einschließlich POM-Mischung, Runtime-Bindung,
-  Cache-Isolation und unverändertem Staging.
-- `scripts/test-task-runtime.sh`: unabhängiger SDK-Consumer mit echten
-  RequestScopes und parallelen HttpTasks in **Interpreter/Mixed** bestanden.
-  Kompiliert ohne Micro-Klassen; ausgeführt mit `PATH`/`JAVA_HOME=/nonexistent`
-  und genau den fünf Runtime-JARs aus dem Lock, ohne Annotationen/Processor/DB.
-- `scripts/test-hoori-core.sh` und `scripts/smoke.py`: **beide Engines bestanden**.
-  Die Images starten Registry, Gateway und Fachservices; echte DNS-/HTTP-Calls,
-  Sättigung, Rolling/Katalogwechsel, Recovery und SIGTERM-Drain bestehen.
-  Rohdaten: [Mixed](../benchmarks/issue-19-smoke-mixed.json.gz),
-  [Interpreter](../benchmarks/issue-19-smoke-interpreter.json.gz).
-- Receipt-SHA256: `8c6d4340bc272b9d73f18972585ae55a8f364df8d77e993a1e9752e32c585e23`.
-  Das Image enthält die vollständige originale Distribution mit 13 SDKs plus
-  Guest Base; geladen werden Guest Base, HTTP, REST, Concurrent, Concurrent HTTP.
-  Kein JDK/Maven im Image, kein zusätzliches Runtime-/VM-Paketformat.
+- `scripts/build.sh`: Maven/Spotless and **22 JUnit tests** passed.
+- `scripts/test-core.sh`: **116 assertions and 5 formatter fixtures**; Python `unittest`:
+  **20 tests**, including POM mixing, runtime binding, cache isolation and unchanged staging.
+- `scripts/test-task-runtime.sh`: independent SDK consumer with real RequestScopes and parallel
+  HttpTasks passed in **interpreter/mixed**. Compiled without Micro classes; executed with
+  `PATH`/`JAVA_HOME=/nonexistent` and exactly the five runtime JARs from the lock, without
+  annotations/processor/DB.
+- `scripts/test-hoori-core.sh` and `scripts/smoke.py`: **both engines passed**. The images start
+  registry, gateway and business services; real DNS/HTTP calls, saturation, rolling/catalog
+  changes, recovery and SIGTERM drain pass. Raw data:
+  [mixed](../benchmarks/issue-19-smoke-mixed.json.gz),
+  [interpreter](../benchmarks/issue-19-smoke-interpreter.json.gz).
+- Receipt SHA256: `8c6d4340bc272b9d73f18972585ae55a8f364df8d77e993a1e9752e32c585e23`. The image
+  contains the complete original distribution with 13 SDKs plus guest base; loaded are guest
+  base, HTTP, REST, Concurrent, Concurrent HTTP. No JDK/Maven in the image, no additional
+  runtime/VM package format.
 
-## Verwalteter HTTP-Kern (#20–#22, #24–#25)
+## Managed HTTP core (#20–#22, #24–#25)
 
-- Maven/Spotless: **23 JUnit-Tests**, einschließlich unveränderter Fehlerursachen
-  und COMMITTED/ROLLED_BACK/UNKNOWN-Klassifikation. Portable Checks:
-  **117 Assertions, 5 Formatter-Fixtures, 20 Python-Tests**.
-- `test-hoori-core.sh`: Core, Admission und TaskChecks auf echter HooriVM;
-  Cancellation-vor-Registrierung, Cancel/Permit-Rennen, 256 Registrierungszyklen,
-  Fail-fast-Fehlerpriorität und wiederverwendbare Specs/Service-Kontexte.
-- `test_admission.py`, `test_budgets.py`, `test_control.py`: **Interpreter/Mixed
-  bestanden**. Weiterhin echte Hoori-Pools, sinkende serielle Budgets, validierte
-  Wire-Werte, getrennte Control-Recovery und Admission vor Codecs.
-- `test_tasks.py`: **Interpreter/Mixed bestanden**. Keep-alive und überlappende
-  Requests behalten ihre Korrelation; keine Credentials/Raw-Requests in Kindern.
-  Vorab erstellte Specs lesen den aktuellen Kontext und starten vorher keinen Codec.
-  Kontrollierte Pool-/Body-Waits brechen einzeln ab; gleichzeitige und spätere
-  Calls auf demselben Client funktionieren. Beide Parallel-Calls starten vor
-  Freigabe der Antworten. Fail-fast erhält den Fachfehler; settled verschluckt
-  keine globale Deadline. Batch-Reihenfolge/Parallelitätsgrenze, Child-Kapazität,
-  Body-/Child-/Encoder-/Cleanup-Fehler und sichere Antworttexte sind geprüft.
-- Ein kontrolliertes Finally-Gate hält Root und Incoming-Permit belegt, obwohl
-  der lokale Operationsbody bereits zurückgegeben hat. Health bleibt erreichbar;
-  `TaskDiagnostics` zeigt READ/DRAIN. Antwort und Ressourcenfreigabe folgen erst
-  nach Öffnen des Gates. Danach sind Roots/Diagnosereferenzen/Waiter/Permits leer.
-- SIGTERM: Erfolg innerhalb Grace; langsamer Fan-out wird nach 400 ms Grace
-  lokal abgebrochen, Kind-Finally und Ressourcen drainieren vor Client-Close.
-  Verzögerte Registry verlängert diese Frist nicht. Separat: Root bereits beendet,
-  4-MiB-Antwort am langsamen Empfänger noch offen; Transport behält seine Rest-Grace
-  und meldet anschließend ehrlich `roots_drained=true drained=false`.
-  Handler-Stop, mehrfaches Close, 32 Start-/Stop-Interleavings und Fehler am bereits
-  belegten Listener bestehen.
-- Fünf Last-/Fehler-/Deadline-Zyklen mit explizitem GC und Idle im selben Prozess:
-  keine retained Request-/Body-WeakReferences, keine aktiven Roots/Permits/Waiter,
-  leere Diagnoseliste; beobachtete Tasks/Handles kehren auf begrenzte Werte zurück.
-  Das ist gezielte Micro-Ownership-Evidenz, keine konstante RSS-Zusage oder
-  erneute vollständige Upstream-Timer-/VM-/DNS-/TLS-Abnahme.
-- Negativfall: nicht kooperierender Code bleibt über Grace aktiv. Der Harness
-  beendet ihn extern; dieser Lauf beweist **keinen Drain**, und das Log behauptet
-  auch keinen. Ein Socket-Abbruch beweist keinen Rollback eines Remote-Writes.
+- Maven/Spotless: **23 JUnit tests**, including unchanged failure causes and
+  COMMITTED/ROLLED_BACK/UNKNOWN classification. Portable checks:
+  **117 assertions, 5 formatter fixtures, 20 Python tests**.
+- `test-hoori-core.sh`: core, admission and TaskChecks on real HooriVM; cancellation before
+  registration, cancel/permit races, 256 registration cycles, fail-fast failure priority and
+  reusable specs/service contexts.
+- `test_admission.py`, `test_budgets.py`, `test_control.py`: **interpreter/mixed passed**. Still
+  real Hoori pools, decreasing serial budgets, validated wire values, separate control recovery
+  and admission before codecs.
+- `test_tasks.py`: **interpreter/mixed passed**. Keep-alive and overlapping requests keep their
+  correlation; no credentials/raw requests in children. Specs created in advance read the current
+  context and start no codec beforehand. Controlled pool/body waits cancel individually;
+  concurrent and later calls on the same client work. Both parallel calls start before the
+  responses are released. Fail-fast keeps the business error; settled does not swallow a global
+  deadline. Batch order/parallelism limit, child capacity, body/child/encoder/cleanup failures and
+  safe response texts are checked.
+- A controlled finally gate keeps the root and incoming permit occupied although the local
+  operation body has already returned. Health stays reachable; `TaskDiagnostics` shows READ/DRAIN.
+  Response and resource release follow only after the gate opens. Afterwards
+  roots/diagnostic references/waiters/permits are empty.
+- SIGTERM: success within grace; a slow fan-out is cancelled locally after 400 ms grace, child
+  finally and resources drain before client close. A delayed registry does not extend this
+  deadline. Separately: root already finished, 4 MiB response to a slow receiver still open;
+  transport keeps its remaining grace and then honestly reports `roots_drained=true drained=false`.
+  Handler stop, repeated close, 32 start/stop interleavings and failures on an already occupied
+  listener pass.
+- Five load/failure/deadline cycles with explicit GC and idle in the same process: no retained
+  request/body WeakReferences, no active roots/permits/waiters, empty diagnostics list; observed
+  tasks/handles return to bounded values. This is targeted Micro ownership evidence, not a
+  constant RSS promise or a renewed full upstream timer/VM/DNS/TLS acceptance.
+- Negative case: non-cooperating code stays active beyond grace. The harness ends it externally;
+  this run proves **no drain**, and the log does not claim one either. A socket abort proves no
+  rollback of a remote write.
 
-Rohdaten einschließlich Fixture-/Framework-Hashes und GC-Samples:
-[Mixed](../benchmarks/tasks-core-mixed.json.gz),
-[Interpreter](../benchmarks/tasks-core-interpreter.json.gz).
-Zusätzlich ist der vollständige Docker-Smoke in beiden Engines bestanden:
-[Mixed](../benchmarks/tasks-core-smoke-mixed.json.gz),
-[Interpreter](../benchmarks/tasks-core-smoke-interpreter.json.gz), einschließlich
-Rolling-/Katalogwechsel, Sättigung, Registry-Ausfall und SIGTERM-Drain.
+Raw data including fixture/framework hashes and GC samples:
+[mixed](../benchmarks/tasks-core-mixed.json.gz),
+[interpreter](../benchmarks/tasks-core-interpreter.json.gz). Additionally, the complete Docker
+smoke passed in both engines: [mixed](../benchmarks/tasks-core-smoke-mixed.json.gz),
+[interpreter](../benchmarks/tasks-core-smoke-interpreter.json.gz), including rolling/catalog
+changes, saturation, registry outage and SIGTERM drain.
 
-## Service-Komposition (#23)
+## Service composition (#23)
 
-`test_composition.py` startet die tatsächlichen Demo-Definitionen mit testlokalen
-Gates: Registry, Recipes, Pantry, Shopping und Gateway. **Interpreter/Mixed bestehen**.
-Beide Provider beginnen vor Freigabe ihrer Antworten. Geprüft sind typisierte
-Ergebnisse, Korrelation ohne Credentials, lokaler Fail-fast-Abbruch, erfolgreiche
-leere gegenüber nicht verfügbaren Dashboard-Daten und unverdeckte globale Admission.
-Fünf Batch-Elemente halten maximal zwei Calls und die Eingabereihenfolge ein;
-All-complete bearbeitet auch nach einem Item-Fehler alle Elemente. Die gleichwertige
-Bulk-Action benötigt nur einen RPC. SIGTERM drainiert den lokalen Fan-out.
-Der Remote-Provider darf nach Caller-Abbruch unabhängig weiterarbeiten.
+`test_composition.py` starts the actual demo definitions with test-local gates: registry,
+recipes, pantry, shopping and gateway. **Interpreter/mixed pass**. Both providers begin before
+their responses are released. Checked are typed results, correlation without credentials, local
+fail-fast cancellation, successful empty versus unavailable dashboard data and unmasked global
+admission. Five batch elements respect at most two calls and the input order; all-complete
+processes all elements even after an item failure. The equivalent bulk action needs only one RPC.
+SIGTERM drains the local fan-out. The remote provider may keep working independently after the
+caller cancels.
 
-Maven/Spotless (23 JUnit), Core (117 Assertions/5 Formatter-Fixtures), Python (20)
-und Guest-Core bestehen. Der erweiterte Docker-Smoke mit allen fünf Rollen besteht
-ebenfalls in beiden Engines. Sein globales Shopping-Limit von einem Call prüft
-Warteschlangen; Überlappung belegt separat der native Test mit zwei Calls.
-Rohdaten: [Komposition Mixed](../benchmarks/composition-mixed.json.gz),
-[Interpreter](../benchmarks/composition-interpreter.json.gz),
-[Docker Mixed](../benchmarks/composition-smoke-mixed.json.gz),
-[Interpreter](../benchmarks/composition-smoke-interpreter.json.gz).
+Maven/Spotless (23 JUnit), core (117 assertions/5 formatter fixtures), Python (20) and guest core
+pass. The extended Docker smoke with all five roles also passes in both engines. Its global
+shopping limit of one call checks queues; overlap is proven separately by the native test with two
+calls. Raw data: [composition mixed](../benchmarks/composition-mixed.json.gz),
+[interpreter](../benchmarks/composition-interpreter.json.gz),
+[Docker mixed](../benchmarks/composition-smoke-mixed.json.gz),
+[interpreter](../benchmarks/composition-smoke-interpreter.json.gz).
 
-## Optionale Fassaden (#26)
+## Optional facades (#26)
 
-Der separate Maven-Build `optional_example.py build task-facade` installiert
-Original-Annotations-/Processor-POMs aus demselben verifizierten Distributionssatz.
-Er generiert und verpackt gewöhnliche Anwendungsklassen; der HTTP-Reaktor erhält
-keine zusätzlichen Abhängigkeiten. Der kleine Formatter-Pfad ist für den separaten
-Modulaufruf explizit; die Formatierungsregeln bleiben gleich.
+The separate Maven build `optional_example.py build task-facade` installs original
+annotation/processor POMs from the same verified distribution set. It generates and packages
+ordinary application classes; the HTTP reactor gets no additional dependencies. The small
+formatter path is explicit for the separate module invocation; the formatting rules stay the same.
 
-`test_composition.py --facade` besteht in **Interpreter/Mixed**: echte Broker-Calls
-über Discovery, TaskSpec-Erzeugung vor jeder Request-Grenze ohne Delegate-Aufruf,
-Wiederverwendung mit neuer Korrelation, Checked Exceptions mit Finally-Abschluss,
-800-ms-Methodenbudget und kürzerer 250-ms-Parent, Cancellation und anschließende
-Recovery. Die Prozesse laufen mit `PATH`/`JAVA_HOME=/nonexistent` und ohne
-Annotationen-/Processor-JAR im Klassenpfad. Rohdaten:
-[Mixed](../benchmarks/composition-facade-mixed.json.gz),
-[Interpreter](../benchmarks/composition-facade-interpreter.json.gz).
-Die generische upstream Processor-Matrix wird nicht dupliziert.
-Maven/Spotless (23 JUnit), Core (117 Assertions/5 Formatter-Fixtures), Python (21)
-und Guest-Core bestehen; der unveränderte HTTP-Classpath startet auch im erneuten
-Docker-Smoke in beiden Engines: [Mixed](../benchmarks/facade-smoke-mixed.json.gz),
-[Interpreter](../benchmarks/facade-smoke-interpreter.json.gz).
+`test_composition.py --facade` passes in **interpreter/mixed**: real broker calls via discovery,
+TaskSpec creation before any request boundary without delegate call, reuse with new correlation,
+checked exceptions with finally completion, 800 ms method budget and a shorter 250 ms parent,
+cancellation and subsequent recovery. The processes run with `PATH`/`JAVA_HOME=/nonexistent` and
+without annotation/processor JARs on the classpath. Raw data:
+[mixed](../benchmarks/composition-facade-mixed.json.gz),
+[interpreter](../benchmarks/composition-facade-interpreter.json.gz). The generic upstream processor
+matrix is not duplicated. Maven/Spotless (23 JUnit), core (117 assertions/5 formatter fixtures),
+Python (21) and guest core pass; the unchanged HTTP classpath also starts in the repeated Docker
+smoke in both engines: [mixed](../benchmarks/facade-smoke-mixed.json.gz),
+[interpreter](../benchmarks/facade-smoke-interpreter.json.gz).
 
-## Optionale lokale Datenoperationen (#26/#27)
+## Optional local data operations (#26/#27)
 
-Der unabhängige `local-data`-Build verwendet Original-Transaction-/JDBC-/Jdbi-POMs,
-pgJDBC 42.7.13 und Jdbi Core 3.55.0. `StoreScoped` wird durch denselben Processor
-erzeugt und erhält den stabilen Manager ausdrücklich. Beide Engines laufen ohne
-Build-Annotationen/Processor/JDK/Maven im Runtime-Classpath. Der Launcher erlaubt
-zusätzlich File Read: der echte Treiber benötigt die Host-Zeitzone. Reine HTTP-
-Prozesse bekommen weiterhin ausschließlich ihre bisherige SDK-Auswahl.
+The independent `local-data` build uses original Transaction/JDBC/Jdbi POMs, pgJDBC 42.7.13 and
+Jdbi Core 3.55.0. `StoreScoped` is generated by the same processor and receives the stable manager
+explicitly. Both engines run without build annotations/processor/JDK/Maven on the runtime
+classpath. The launcher additionally allows file read: the real driver needs the host time zone.
+Pure HTTP processes still get only their previous SDK selection.
 
-`test_data.py` besteht in **Interpreter/Mixed**, mit PostgreSQL 18.6 aus dem upstream
-Digest und unveränderten, gegen `7d7245a` geprüften Datenbank-/Fault-Peer-Helfern:
+`test_data.py` passes in **interpreter/mixed**, with PostgreSQL 18.6 from the upstream digest and
+unchanged database/fault peer helpers checked against `7d7245a`:
 
-- Reale Invoke-Requests und beide entdeckten Remote-Provider; kein DB-Acquire,
-  solange die vorbereitenden Remote-Reads am kontrollierten Gate warten.
-  Explizite und generierte Grenze speichern Datensatz/Outbox gemeinsam;
-  SQL-Constraints werden auch durch den generierten Delegate korrekt zurückgerollt.
-- Body-, Pflicht-Child-, Deadline- und gefangener innerer REQUIRED-Fehler rollen
-  zurück. Das Child-Finally-Gate hält die Verbindung bis zum tatsächlichen Ende.
-  Fremde Kinder scheitern mit Lookup und retained Handle vor SQL; unabhängig
-  committete Child-Daten bleiben beim Parent-Rollback erhalten.
-- Gleichzeitige Requests besitzen unterschiedliche PostgreSQL-Backend-PIDs.
-  Nach bestätigtem Commit bleiben Daten trotz Callback-/Encoding-Fehler vorhanden.
-  Ein tatsächlich unterdrücktes COMMIT-ACK erzeugt UNKNOWN, einen einzigen Acquire
-  und physischen Discard ohne Wiederholung. Logs unterscheiden COMMITTED,
-  ROLLED_BACK und UNKNOWN. Ein Encoding-Fehler nach Ende der lokalen Grenze hat
-  keinen aktiven Transaktionskontext; er meldet nicht fälschlich Rollback.
-- Drei Query-Cancel-/Recovery-Zyklen: PostgreSQL wartet nachweislich am Advisory-
-  Lock, echte Treiber-Cancellation meldet SQLSTATE 57014, dann erfolgen Rollback
-  und Close vor Rückkehr. Jdbi behält den SQL-Fehler als Hauptursache: sichere 500,
-  intern ROLLED_BACK. Folgerequests funktionieren. Nach GC/Idle null offene oder
-  retained Test-Verbindungen, beobachtet acht aktive Tasks und fünf Handles.
-- SIGTERM während derselben echten DB-Wartearbeit drainiert und rollt zurück;
-  danach schließt die dienstweite Test-Ressource bei null aktiven Verbindungen.
-  Das Beispiel verwendet keinen Pool; eine beliebige Pool-Integration ist damit
-  nicht qualifiziert. Acquisition kann die Work-Deadline überdauern und ist durch
-  die dokumentierten endlichen Driver-Limits begrenzt.
+- Real invoke requests and both discovered remote providers; no DB acquire while the preparing
+  remote reads wait at the controlled gate. Explicit and generated boundaries store record/outbox
+  together; SQL constraints are also rolled back correctly through the generated delegate.
+- Body, mandatory child, deadline and caught inner REQUIRED failures roll back. The child finally
+  gate holds the connection until the actual end. Foreign children fail with lookup and retained
+  handle before SQL; independently committed child data survive the parent rollback.
+- Concurrent requests own different PostgreSQL backend PIDs. After a confirmed commit, data remain
+  despite callback/encoding failures. An actually suppressed COMMIT ACK produces UNKNOWN, a single
+  acquire and a physical discard without retry. Logs distinguish COMMITTED, ROLLED_BACK and
+  UNKNOWN. An encoding failure after the end of the local boundary has no active transaction
+  context; it does not falsely report rollback.
+- Three query cancel/recovery cycles: PostgreSQL provably waits on the advisory lock, real driver
+  cancellation reports SQLSTATE 57014, then rollback and close happen before return. Jdbi keeps
+  the SQL error as the primary cause: safe 500, internally ROLLED_BACK. Subsequent requests work.
+  After GC/idle zero open or retained test connections; observed eight active tasks and five
+  handles.
+- SIGTERM during the same real DB waiting work drains and rolls back; afterwards the service-wide
+  test resource closes with zero active connections. The example uses no pool; an arbitrary pool
+  integration is therefore not qualified. Acquisition can outlast the work deadline and is bounded
+  by the documented finite driver limits.
 
-Rohdaten mit Original-JAR-/Fixture-Hashes und Recovery-Samples:
-[Mixed](../benchmarks/data-mixed.json.gz), [Interpreter](../benchmarks/data-interpreter.json.gz).
-Maven/Spotless (23 JUnit), Core (117 Assertions/5 Formatter-Fixtures), Python (23),
-Guest-Core und erneuter DB-freier Docker-Smoke bestehen in beiden Engines:
-[Mixed](../benchmarks/data-smoke-mixed.json.gz), [Interpreter](../benchmarks/data-smoke-interpreter.json.gz).
-Die vollständige upstream Driver-/TLS-/GC-Matrix wurde hier nicht erneut ausgeführt.
+Raw data with original JAR/fixture hashes and recovery samples:
+[mixed](../benchmarks/data-mixed.json.gz), [interpreter](../benchmarks/data-interpreter.json.gz).
+Maven/Spotless (23 JUnit), core (117 assertions/5 formatter fixtures), Python (23), guest core and
+a repeated DB-free Docker smoke pass in both engines:
+[mixed](../benchmarks/data-smoke-mixed.json.gz),
+[interpreter](../benchmarks/data-smoke-interpreter.json.gz). The complete upstream
+driver/TLS/GC matrix was not re-run here.
 
-## Gemeinsamer Abschluss (#28)
+## Joint completion (#28)
 
-Die zusätzlichen `CapacityChecks` bestehen in **Interpreter/Mixed** auf demselben
-Release: zwei vollständig belegte Micro-Roots, alle 1024 SDK-Timerregistrierungen
-und die VM-Grenze mit 1023 Kindtasks. Ein zusätzlicher Micro-Root scheitert jeweils
-vor seinem Fachbody. Bereits zugelassene Ressourcen drainieren, Slots werden frei,
-Diagnosen sind leer und derselbe Service nimmt anschließend wieder Arbeit an.
-Der Timer-Test hält reale verschachtelte Fristen; keine privaten SDK-Hooks.
-[Native Ausgabe, Runtime- und Fixture-Identitäten](../benchmarks/tasks-capacity-native.json.gz).
+The additional `CapacityChecks` pass in **interpreter/mixed** on the same release: two fully
+occupied Micro roots, all 1024 SDK timer registrations and the VM limit with 1023 child tasks. An
+additional Micro root fails before its business body in each case. Already admitted resources
+drain, slots become free, diagnostics are empty and the same service accepts work again
+afterwards. The timer test holds real nested deadlines; no private SDK hooks.
+[Native output, runtime and fixture identities](../benchmarks/tasks-capacity-native.json.gz).
 
-Der abschließende Build mit Spotless/23 JUnit, 117 Core-Assertions, fünf Formatter-
-Fixtures, 23 Python-Tests und Guest-Core besteht. Die oben dokumentierten nativen
-HTTP-/Kompositions-/Fassaden-/DB-Prüfungen und der letzte Docker-Smoke verwenden
-dasselbe unveränderte Framework-JAR (`6d0a4b06b558497cf20541381766b3ddbf74ee0c972ae89b9df0533b5b63f090`).
-Für #28 kamen ausschließlich Test-Fixtures, Benchmark-Werkzeuge und Dokumentation
-hinzu; die bereits bestandenen vollständigen Matrizen wurden nicht nochmals dupliziert.
-Die echte Docker-Kostenkontrolle ist unter [benchmarks.md](../benchmarks.md#tasks-v2-3-oktober-2026) dokumentiert.
-#8/#10/#11 bleiben eigenständige offene Arbeit; Tasks v2 ist keine Produktions-
-oder Performancefreigabe.
+The final build with Spotless/23 JUnit, 117 core assertions, five formatter fixtures, 23 Python
+tests and guest core passes. The native HTTP/composition/facade/DB checks documented above and the
+last Docker smoke use the same unchanged framework JAR
+(`6d0a4b06b558497cf20541381766b3ddbf74ee0c972ae89b9df0533b5b63f090`). For #28 only test fixtures,
+benchmark tooling and documentation were added; the already passed complete matrices were not
+duplicated again. The real Docker cost control is documented in
+[benchmarks.md](../benchmarks.md#tasks-v2-3-october-2026). #8/#10/#11 remain independent open
+work; tasks v2 is no production or performance approval.
 
-## Bisherige Fachabnahme
+## Previous business acceptance
 
-Die nachfolgende bisherige Fachabnahme gehört zum Satz `d8906e6`, sauberer Headless-
-Release für `x86_64-unknown-linux-gnu`; VM, Guest Base und sämtliche SDK-JARs aus
-derselben Distribution. Sie ersetzt keine erneute Tasks-v2-Abnahme. Temurin 21.0.6,
-Maven 3.9.16, Docker 29.8.1, Compose v5.5.1. Basisimage: amd64-Digest aus
-`docker/Dockerfile`, signierte Debian-Paketquellen vom 30.09.2026.
+The following previous business acceptance belongs to the set `d8906e6`, clean headless release
+for `x86_64-unknown-linux-gnu`; VM, guest base and all SDK JARs from the same distribution. It does
+not replace a renewed tasks v2 acceptance. Temurin 21.0.6, Maven 3.9.16, Docker 29.8.1, Compose
+v5.5.1. Base image: amd64 digest from `docker/Dockerfile`, signed Debian package sources from
+30 September 2026.
 
-## Tatsächlich ausgeführt
+## Actually executed
 
-| Prüfung | Ergebnis | Aussagegrenze |
+| Check | Result | Limit of the statement |
 |---|---|---|
-| `scripts/build.sh` / `mvn clean verify`, Spotless | **22 JUnit-Tests bestanden** | Reale SDK-JARs; JUnit auf HotSpot mit Transport-Seam, keine native Netzwerkfreigabe daraus |
-| `scripts/test-core.sh` | **116 Assertions, 5 Formatter-Fixtures bestanden** | Host-JDK; Namen, Konfiguration und Bounds |
-| Python `unittest` | **14 Tests bestanden** | Distributionsprüfung, Benchmark-Zählung und begrenzte offene Last |
-| `scripts/test-hoori-core.sh`, beide Engines | **bestanden** | Echte Guest-Core-/Admission-Prüfung einschließlich Interrupt, Deadline, Stop/Close |
-| `scripts/test_control.py`, beide Engines | **bestanden** | Getrennter Control-Pool; wiederholte Timeouts, Wiederanmeldung und begrenzte Deregistrierung |
-| `scripts/test_admission.py`, beide Engines | **bestanden** | Admission vor DTO/Encoding, zwei Lastspitzen, Ablauf ohne Wire-Arbeit, Stop/Drain und leere Gates/Pools |
-| `scripts/test_budgets.py`, beide Engines | **bestanden** | Echte SDK-Pool-Probe plus drei native Guest-Prozesse; relative Budgets und vorbereitete Gateway-Snapshots |
-| `scripts/smoke.py`, beide Engines | **bestanden** | Reale Images, drei Lastspitzen, Rolling/Katalogwechsel und Ausfälle unter fortlaufenden Fachcalls, Ressourcenmessung, Cleanup |
-| `scripts/benchmark.py`, beide Engines | **24 A–D-Läufe vollständig; Gateway-p99 verfehlt** | Drei frische Prozesse je Variante/Engine, gleicher Satz und Limits; Runtime-/SDK-Kontrolle separat |
-| D mit 64 wechselnden öffentlichen Routen / getrenntes Profiling | **vollständig** | Größenkontrolle, natürliche GC und leere Handles/abgeschlossene Tasks bei Exit; keine Performancefreigabe |
+| `scripts/build.sh` / `mvn clean verify`, Spotless | **22 JUnit tests passed** | Real SDK JARs; JUnit on HotSpot with a transport seam, no native network approval from it |
+| `scripts/test-core.sh` | **116 assertions, 5 formatter fixtures passed** | Host JDK; names, configuration and bounds |
+| Python `unittest` | **14 tests passed** | Distribution check, benchmark counting and bounded open load |
+| `scripts/test-hoori-core.sh`, both engines | **passed** | Real guest core/admission check including interrupt, deadline, stop/close |
+| `scripts/test_control.py`, both engines | **passed** | Separate control pool; repeated timeouts, re-registration and bounded deregistration |
+| `scripts/test_admission.py`, both engines | **passed** | Admission before DTO/encoding, two load peaks, expiry without wire work, stop/drain and empty gates/pools |
+| `scripts/test_budgets.py`, both engines | **passed** | Real SDK pool probe plus three native guest processes; relative budgets and prepared gateway snapshots |
+| `scripts/smoke.py`, both engines | **passed** | Real images, three load peaks, rolling/catalog changes and outages under continuing business calls, resource measurement, cleanup |
+| `scripts/benchmark.py`, both engines | **24 A–D runs complete; gateway p99 missed** | Three fresh processes per variant/engine, same set and limits; runtime/SDK control separate |
+| D with 64 changing public routes / separate profiling | **complete** | Size control, natural GC and empty handles/completed tasks at exit; no performance approval |
 
-## Budgets und Gateway (#6/#7)
+## Budgets and gateway (#6/#7)
 
-Nach 800 ms kontrolliertem Pool-Warten sinkt der 2000-ms-Wire-Wert unmittelbar vor
-Request-Schreiben; wiederverwendete und neue Verbindung werden getrennt geprüft.
-Gateway → Shopping → Recipes und zwei serielle Recipe-Aufrufe teilen dieselbe
-Deadline. Hintergrundkontexte mit kürzerem Budget funktionieren; abgelaufene
-Kontexte starten keinen weiteren Child-Call. Native Prüfungen bestätigen 400 für
-malformed/doppelte/negative/übergroße interne Werte und 504 für null/abgelaufene
-Budgets. Externe Budget-/Action-/Versionsheader verlängern die Gateway-Policy nicht;
-Request-ID bleibt erhalten, Authorization wird nicht weitergereicht.
+After 800 ms of controlled pool waiting, the 2000 ms wire value drops immediately before writing
+the request; reused and new connections are checked separately. Gateway → Shopping → Recipes and
+two serial recipe calls share the same deadline. Background contexts with a shorter budget work;
+expired contexts start no further child call. Native checks confirm 400 for
+malformed/duplicate/negative/oversized internal values and 504 for zero/expired budgets. External
+budget/action/version headers do not extend the gateway policy; the request ID is preserved,
+Authorization is not forwarded.
 
-Cancellation gibt den eigenen SDK-Slot und das Permit frei; andere Calls desselben
-Clients funktionieren weiter. Zwei Sättigungszyklen liefern gezählte 200/504 und
-anschließend normale Antworten ohne Prozessneustart. Am Schluss sind alle Gates
-und Pools leer, alle drei Prozesse enden mit Exit 0 und `drained=true`.
+Cancellation releases its own SDK slot and the permit; other calls of the same client keep
+working. Two saturation cycles deliver counted 200/504 and then normal responses without a process
+restart. At the end all gates and pools are empty; all three processes end with exit 0 and
+`drained=true`.
 
-Routen werden vor Veröffentlichung gemeinsam mit Katalog/Revision vorbereitet;
-Requests benutzen diesen Snapshot auch für die Auswahl. Native Checks prüfen
-Route ändern/entfernen, verweigerte Permission, widersprüchliche Rolling-Metadaten,
-null/ungültige Pfadparameter sowie Count-/Metadatenüberlauf. Jeweils gültige
-128/100 zusätzliche Routen werden zuerst angenommen; erst die Erweiterung auf
-über 256 Routen bzw. 64 KiB Metadaten scheitert. Kein partielles Update; der alte
-Snapshot altert aus und konvergiert nach Entfernung des Übermaßes ohne Neustart.
-JUnit bestätigt zusätzlich unveränderte Array-Identität und atomare Revisionen.
+Routes are prepared together with catalog/revision before publication; requests also use this
+snapshot for selection. Native checks cover changing/removing a route, denied permission,
+contradicting rolling metadata, zero/invalid path parameters and count/metadata overflow. Valid
+128/100 additional routes are accepted first; only the extension to more than 256 routes or 64 KiB
+metadata fails. No partial update; the old snapshot ages out and converges without restart after
+the excess is removed. JUnit additionally confirms unchanged array identity and atomic revisions.
 
-## Gemeinsame Image-/Lastabnahme (#8/#10)
+## Joint image/load acceptance (#8/#10)
 
-Smoke verwendet pro Rolle 0,5 CPU, 256 MiB Containerspeicher und 32 MiB logischen
-Guest-Heap. Alte/neue Recipe-Instanzen teilen während des Rolling-Checks die
-bisherigen 0,5 CPU. Individuelle Advertise-Adressen und Actions werden geprüft;
-Shopping/Gateway behalten Container-ID, Image-ID und Startzeit. Drei
-Sättigungszyklen über eine Registry-TTL zeigen begrenzte aktive/wartende Calls,
-null SDK-Pending und lebende Control-Leases. Nach jeweils 5,5 s Ruhe werden
-Heap/committed Heap, RSS, cgroup inklusive Dateicache, Tasks und Handles erfasst.
+The smoke test uses 0.5 CPU, 256 MiB container memory and a 32 MiB logical guest heap per role.
+Old/new recipe instances share the previous 0.5 CPU during the rolling check. Individual advertise
+addresses and actions are checked; shopping/gateway keep container ID, image ID and start time.
+Three saturation cycles across one registry TTL show bounded active/waiting calls, zero SDK pending
+and living control leases. After 5.5 s of quiet each, heap/committed heap, RSS, cgroup including
+file cache, tasks and handles are recorded.
 
-Unter fortlaufenden GETs werden eine neue Action veröffentlicht, Registry-Timeouts
-per Pause ausgelöst, Registry-Ausfall bis zum Katalogablauf und eine neue Epoche
-geprüft. SIGKILL eines Providers entfernt seine Registrierung erst per TTL;
-anschließende Neuerstellung und zweimalige Routenentfernung/-veröffentlichung
-konvergieren ohne Consumer-/Gateway-Neustart. Fehler sind separat gezählt,
-insbesondere 502 während Providerwechseln und 404 nach Katalogablauf. Es gibt keine
-Business-Retries und keine Zusage unterbrechungsfreier Rolling Updates.
-SIGTERM bei pausierter Registry drainiert den zugelassenen langsamen Call (200),
-weist den Wartenden ab (503) und endet mit `drained=true`, Exit 0.
+Under continuing GETs, a new action is published, registry timeouts are triggered by pausing, and a
+registry outage until catalog expiry and a new epoch are checked. SIGKILL of a provider removes its
+registration only via TTL; subsequent re-creation and twice removing/publishing a route converge
+without consumer/gateway restart. Errors are counted separately, in particular 502 during provider
+changes and 404 after catalog expiry. There are no business retries and no promise of
+uninterrupted rolling updates. SIGTERM with a paused registry drains the admitted slow call (200),
+rejects the waiter (503) and ends with `drained=true`, exit 0.
 
-Image-Inventar, native ELF-Abhängigkeiten, Zertifikate/Gast-Lizenz und fehlendes
-Host-JDK/Maven/Rust wurden im tatsächlichen Image geprüft. `curl` bleibt für Health
-und Diagnose; 50 Probes sind separat gemessen. Runtime-/SDK-Prüfsummen, feste
-Basis/Paketquellen und reproduzierbare Maven-JARs erhalten die Upgrade-Grenze.
-Messwerte und Rohdaten stehen unter [benchmarks.md](../benchmarks.md).
-Bei der offenen Normallast, langsamen Calls und Recovery liefern A–D je Engine
-384/384 korrekte Antworten. Geschlossene Gateway-Last verfehlt dagegen in allen
-sechs Läufen die 1000-ms-p99-Grenze, teils auch die 1-%-Fehlergrenze.
+Image inventory, native ELF dependencies, certificates/guest license and the absence of host
+JDK/Maven/Rust were checked in the actual image. `curl` stays for health and diagnostics; 50 probes
+are measured separately. Runtime/SDK checksums, fixed base/package sources and reproducible Maven
+JARs preserve the upgrade boundary. Measurements and raw data are in
+[benchmarks.md](../benchmarks.md). For open normal load, slow calls and recovery, A–D deliver
+384/384 correct responses per engine. Closed gateway load, however, misses the 1000 ms p99 limit in
+all six runs, partly also the 1 % error limit.
 
-## Grenzen und nicht ausgeführte Prüfungen
+## Limits and checks not executed
 
-- Relative Übertragung misst Sende-/Transit-/Empfänger-Parsing-Zeit nicht exakt;
-  Remote-Arbeit wird durch einen Caller-Abbruch nicht automatisch unterbrochen.
-- HTTPS mit eigener Wire-Header-Probe, ungültige Zertifikate, verweigerte DNS-/
-  Connect-Capabilities, erzwungene DNS/IP-Wechsel und abgelaufene Shutdown-Grace
-  sind in diesem Consumer nicht erneut geprüft. Docker-Smoke nutzt echte DNS-Auflösung.
-  DNS-/Connect-/TLS-Verzögerungen wurden nicht gezielt injiziert; die Wire-Probe
-  verzögert den Pool und prüft Wiederverwendung sowie einen neuen Connect.
-- JUnit läuft auf HotSpot; native Aussagen stammen ausschließlich aus Guest-/
-  HTTP-/Docker-Prüfungen. Keine Dahemm-Migration oder Produktions-/Securityfreigabe.
-- Kurze wiederholte Lastzyklen zeigen Ressourcen innerhalb der festen Grenzen;
-  ohne erzwungenen GC beweisen Heap/RSS-Snapshots keine langfristige lebende
-  Retention. Mixed-RSS steigt deutlich; eine isolierte Messung nativen Speichers
-  einschließlich JIT liegt nicht vor.
-- Healthcheck-Kosten sind für das aktuelle Image gemessen; ein direkter
-  Vorher-/Nachher-Vergleich derselben Probes fehlt noch für die Abnahme von #8.
-- Ein Micro-eigener Generator, Action-/Routing-Indizes und Raw-Body-Copy-Optimierung
-  sind mangels belegtem Nutzen zurückgestellt. Der optionale upstream Processor
-  ist oben separat qualifiziert; keine zusätzliche Laufzeit-Interception.
+- Relative transfer does not measure send/transit/receiver parsing time exactly; remote work is
+  not interrupted automatically by a caller cancellation.
+- HTTPS with its own wire header probe, invalid certificates, denied DNS/connect capabilities,
+  forced DNS/IP changes and an expired shutdown grace were not re-checked in this consumer. The
+  Docker smoke uses real DNS resolution. DNS/connect/TLS delays were not injected deliberately; the
+  wire probe delays the pool and checks reuse as well as a new connect.
+- JUnit runs on HotSpot; native statements come exclusively from guest/HTTP/Docker checks. No
+  Dahemm migration or production/security approval.
+- Short repeated load cycles show resources within the fixed limits; without forced GC, heap/RSS
+  snapshots prove no long-term live retention. Mixed RSS rises clearly; an isolated measurement of
+  native memory including JIT is not available.
+- Healthcheck costs are measured for the current image; a direct before/after comparison of the
+  same probes is still missing for the #8 acceptance.
+- A Micro-owned generator, action/routing indexes and a raw body copy optimization are deferred for
+  lack of proven benefit. The optional upstream processor is qualified separately above; no
+  additional runtime interception.
 
-## Reproduzieren
+## Reproduce
 
 ```bash
-./scripts/build.sh /pfad/zur/gepinnten/headless/distribution
+./scripts/build.sh /path/to/pinned/headless/distribution
 ./scripts/test-core.sh
 python3 -m unittest discover -s scripts/tests -v
-# Alle folgenden Befehle jeweils auch mit HOORI_ENGINE=interpreter ausführen:
+# Run all following commands also with HOORI_ENGINE=interpreter:
 ./scripts/test-hoori-core.sh
 python3 scripts/test_control.py
 python3 scripts/test_admission.py
@@ -320,6 +294,6 @@ python3 scripts/test_budgets.py
 python3 scripts/smoke.py
 ```
 
-Smoke schreibt seine begrenzten Ergebnisse nach `.cache/hoori-micro-check-<pid>.json`
-und entfernt ausschließlich sein eigenes Compose-Projekt. Für die vergleichbare
-A–D-Messung und getrennte Profilierung siehe [benchmarks.md](../benchmarks.md).
+The smoke test writes its bounded results to `.cache/hoori-micro-check-<pid>.json` and removes only
+its own Compose project. For the comparable A–D measurement and separate profiling see
+[benchmarks.md](../benchmarks.md).

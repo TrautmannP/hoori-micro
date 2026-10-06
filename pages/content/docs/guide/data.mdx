@@ -1,0 +1,44 @@
+---
+title: Local data & transactions
+description: The optional pattern for short local Jdbi transactions with an outbox, using the original Transaction/JDBC/Jdbi SDKs.
+---
+
+<Callout type="info" title="Optional">
+  Database support is **not** part of the HTTP core. Only the separately built
+  [`local-data`](/docs/examples/local-data) example loads DB/driver/Jdbi JARs.
+</Callout>
+
+## The pattern
+
+1. **Prepare remotely first** – read from other services *before* opening a transaction.
+2. **Write locally and briefly** – a decorated `@Transactional` interface writes data and outbox
+   together.
+3. **Respond after commit** – the physical commit happens before response encoding.
+
+<include meta='title="service/DraftService.java"'>../../../../examples/local-data/src/main/java/dev/hoori/micro/data/service/DraftService.java</include>
+
+<include meta='title="service/DraftWriter.java"'>../../../../examples/local-data/src/main/java/dev/hoori/micro/data/service/DraftWriter.java</include>
+
+<include meta='title="service/LocalDraftWriter.java"'>../../../../examples/local-data/src/main/java/dev/hoori/micro/data/service/LocalDraftWriter.java</include>
+
+<include meta='title="repository/DraftRepository.java"'>../../../../examples/local-data/src/main/java/dev/hoori/micro/data/repository/DraftRepository.java</include>
+
+## One stable manager
+
+Provide exactly one transaction manager as a bean. Each local transaction owns its connection,
+which the original SDK opens and closes:
+
+<include meta='title="config/DatabaseConfiguration.java"'>../../../../examples/local-data/src/main/java/dev/hoori/micro/data/config/DatabaseConfiguration.java</include>
+
+## Rules
+
+- Keep remote preparation **outside** short local transactions.
+- Handles are owner-bound. Child tasks never inherit a handle; an explicitly started child
+  transaction is independent.
+- Same-owner `REQUIRED` nesting reuses the handle and marks it rollback-only on failure.
+- `COMMITTED` and `UNKNOWN` outcomes are preserved – **never** reported as rollback or retried.
+  A lost commit acknowledgement stays `UNKNOWN` and discards the connection without replay.
+
+<Callout type="warn">
+  No exactly-once guarantee, no outbox delivery and no distributed ACID semantics are implied.
+</Callout>

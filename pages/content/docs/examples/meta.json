@@ -1,0 +1,14 @@
+{
+  "title": "Examples",
+  "description": "Runnable example applications from the repository",
+  "root": true,
+  "icon": "Boxes",
+  "pages": [
+    "index",
+    "mvc-crud",
+    "recipes-pantry",
+    "shopping",
+    "task-facade",
+    "local-data"
+  ]
+}

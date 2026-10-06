@@ -1,0 +1,64 @@
+---
+title: local-data
+description: Remote preparation, a short local Jdbi transaction and an atomic outbox – optional and separately built.
+---
+
+Uses the original Transaction/JDBC/Jdbi SDKs with pgJDBC **42.7.13** and Jdbi Core **3.55.0**.
+The HTTP core and the regular apps load no database JARs. The full code walkthrough is in
+[Local data & transactions](/docs/guide/data).
+
+```text
+DataApplication
+  controller/DraftController       POST /drafts, DTO binding and validation
+  service/DraftService             remote preparation
+  service/DraftWriter              short local @Transactional boundary
+  service/LocalDraftWriter         domain operation inside that boundary
+  repository/DraftRepository       SQL for record and outbox
+  client/RecipeClient,PantryClient HTTP contracts
+  config/DatabaseConfiguration     one stable Jdbi manager
+  dto/Draft,SavedDraft             input and response
+```
+
+<include meta='title="dto/Draft.java"'>../../../../examples/local-data/src/main/java/dev/hoori/micro/data/dto/Draft.java</include>
+
+## Run manually
+
+Create [`schema.sql`](https://github.com/TrautmannP/hoori-micro/blob/main/examples/local-data/schema.sql)
+in a dedicated demo database, start registry/recipes/pantry and configure the connection:
+
+```bash
+python3 scripts/optional_example.py build local-data
+export HOORI_DB_URL=jdbc:postgresql://127.0.0.1:5432/hoori_micro_demo
+export HOORI_DB_USER=hoori_micro_demo
+export HOORI_DB_PASSWORD='<local demo password>'
+export HOORI_DB_SSLMODE=disable   # local probe only; default: require
+python3 scripts/optional_example.py run local-data
+curl -fsS http://127.0.0.1:8084/drafts -H 'Content-Type: application/json' -d '{"id":1,"recipeId":1}'
+```
+
+For gateway access add `drafts:write` to its demo permissions.
+
+## Test
+
+```bash
+python3 scripts/test_data.py --hoori-checkout ../hoori
+HOORI_ENGINE=interpreter python3 scripts/test_data.py --hoori-checkout ../hoori
+```
+
+The probe uses its own throwaway PostgreSQL **18.6** and manages schema and container itself.
+
+## Bounds
+
+| Bound | Value |
+|---|---|
+| Connect | ≤ 5 s |
+| Socket I/O | ≤ 10 s |
+| Cancel signal | 2 s |
+| Login ceiling | 300 s |
+
+Shorter positive remaining budgets are rounded up to seconds; URL query parameters cannot
+override these bounds.
+
+<Callout type="warn">
+  No production write authorization, data migration, outbox delivery or exactly-once guarantee.
+</Callout>

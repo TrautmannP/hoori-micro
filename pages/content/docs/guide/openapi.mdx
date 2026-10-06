@@ -1,0 +1,137 @@
+---
+title: OpenAPI contracts
+description: One OpenAPI 3.1 file per service as the source of truth, checked at build time and aggregated by the gateway.
+---
+
+One **OpenAPI 3.1 JSON file per service is the contract source**. The build checks your
+controllers against it; it does not generate a second contract via reflection.
+
+## Binding a contract
+
+```java
+@MicroApplication(name = "recipes", version = 1,
+    openApi = "openapi.json", openApiBaseline = "openapi-v1-baseline.json")
+public final class RecipesApplication { /* regular Micro.run entry */ }
+```
+
+Both files live in `src/main/resources`. The baseline is optional, holds the previously
+released contract and is never overwritten automatically. Alternatively pass
+`-Ahoori.openapi.baseline=/absolute/path.json` to the processor for a single module build; that
+path takes precedence.
+
+## A minimal operation
+
+```json title="src/main/resources/openapi.json (excerpt)"
+{
+  "openapi": "3.1.0",
+  "info": { "title": "crud demo API", "version": "1.0.0" },
+  "x-hoori-service-version": 1,
+  "x-hoori-api-group": "public",
+  "paths": {
+    "/recipes/{id}": {
+      "get": {
+        "operationId": "crudGetRecipe",
+        "x-hoori-permission": "crud:read",
+        "parameters": [{
+          "name": "id", "in": "path", "required": true,
+          "schema": { "type": "integer", "format": "int64", "exclusiveMinimum": 0 }
+        }],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Recipe" } } }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Matching controller method:
+
+```java
+@GetMapping("/{id}")
+@GatewayRoute(permission = "crud:read")
+public Recipe get(@PathVariable("id") @Positive long id) { … }
+```
+
+## Hoori extensions
+
+| Extension | Level | Meaning |
+|---|---|---|
+| `x-hoori-service-version` | Document | Service major version |
+| `x-hoori-api-group` | Document | API group, default `public` |
+| `x-hoori-permission` | Operation | Must equal the `@GatewayRoute` permission |
+| `x-hoori-not-blank` | Schema | `@NotBlank` |
+| `x-hoori-min-utf16-length` / `x-hoori-max-utf16-length` | Schema | `@Size` on strings (Java counts UTF-16 code units) |
+
+Lists use `minItems`/`maxItems`; numeric bounds use the matching JSON Schema keywords
+(`@Positive` → `exclusiveMinimum: 0`).
+
+## What the build checks
+
+Method/path, permission, required parameters and defaults, body, DTO types/field names,
+required input fields, list limits and enabled Jakarta input constraints. Static success
+statuses must match. Every operation has a unique `operationId` and exactly one matching
+`@GatewayRoute` method. Internal methods are not part of the public contract.
+
+Dynamic `HttpResult` statuses/headers, domain errors and response invariants are described in
+the contract and backed by application tests – the processor does not prove arbitrary Java code
+paths.
+
+## Supported profile
+
+- OpenAPI 3.1.0–3.1.2 in JSON; finite local component references without cycles
+- Path parameters and single or repeated query parameters
+- JSON request/response bodies, records, scalars, enums, lists, explicitly nullable types
+- JSON errors and bounded `text/plain` transport errors
+
+<Callout type="warn" title="Not supported (yet)">
+  YAML, external/recursive references, schema composition (`oneOf`/`allOf`), multipart,
+  streaming, custom codecs and unbound security schemes.
+</Callout>
+
+## Baseline compatibility
+
+Within the same service major version:
+
+- ✅ new operations are allowed
+- ❌ existing operation IDs and expanded contracts must stay identical
+- ❌ changes to parameters, schemas, responses or permission require a major bump
+
+Operation-level `summary` does not change the operation hash.
+
+## Runtime artifacts
+
+The JAR contains the canonical file at `META-INF/hoori-micro/<Application-FQN>/openapi.json`
+(sorted keys, reproducible bytes). A SHA-256 hash binds file, bootstrap and discovery metadata.
+The service serves it only at `GET /_hoori/openapi/<hash>` with ETag and immutable caching.
+
+## Gateway documentation
+
+`Gateway.main` enables aggregation with `HOORI_OPENAPI_ENABLED=true` (Compose and `run-local.sh`
+already set it). In your own gateway, call `OpenApi.mount(app)`.
+
+| Gateway path | Content |
+|---|---|
+| `/openapi.json` | Current contract of group `public` |
+| `/_hoori/openapi` | Group index and publication ID |
+| `/_hoori/openapi/groups/<group>` | Current contract of one group |
+| `/_hoori/docs` | Local, filterable API reference with JSON download (no CDN) |
+| `/_hoori/publication` | Routing manifest, also without the documentation process |
+
+Every current response carries `X-Hoori-Publication`. During a snapshot change, a missing
+contract or after freshness expires, the document endpoints return 503 until a complete
+matching publication exists. An unknown group returns 404.
+
+The documentation process uses its own stable HTTP pool (one connection) outside business
+requests and the registry heartbeat. It fetches contracts from a matching instance by their exact
+hash path, resolves references, rejects duplicate operation IDs and hash/route mismatches, and
+publishes all API groups together only after re-checking the snapshot. Overflows make the docs
+unavailable; they never replace business routing.
+
+<Callout>
+  The docs describe structurally published routes. They are not proof of permission for the
+  current user – the gateway policy still checks every request.
+</Callout>

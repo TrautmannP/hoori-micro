@@ -1,0 +1,68 @@
+---
+title: Metrics
+description: Fixed metric names and labels exposed at /metrics – never derived from request data.
+---
+
+Metric labels never come from request data. Only the fixed labels below exist.
+
+## Admission
+
+| Metric | Labels |
+|---|---|
+| `hoori_micro_calls_active` | `direction="incoming"` \| `"outgoing"` |
+| `hoori_micro_calls_pending` | `direction` |
+| `hoori_micro_calls_rejected_total` | `direction` |
+| `hoori_micro_calls_expired_total` | `direction` |
+
+## Connection pools
+
+| Metric | Labels |
+|---|---|
+| `hoori_micro_pool_active_connections` | `pool="data"` \| `"control"` |
+| `hoori_micro_pool_idle_connections` | `pool` |
+| `hoori_micro_pool_pending_acquires` | `pool` |
+| `hoori_micro_pool_rejected_acquires_total` | `pool` |
+
+Active connections include reserved DNS/connect/TLS slots.
+
+## Operations
+
+| Metric | Labels |
+|---|---|
+| `hoori_micro_operations_active` | – |
+| `hoori_micro_operations_overdue` | – |
+| `hoori_micro_operations_completed_total` | – |
+| `hoori_micro_operation_drain_nanos_total` | – |
+| `hoori_micro_operation_failures_total` | `reason` |
+
+`reason` is one of nine fixed values:
+
+| `reason` | Typical cause | HTTP |
+|---|---|---|
+| `business` | SDK `RequestException` | its status |
+| `capacity` | Admission or local task capacity rejected | 503 |
+| `stopping` | Service stopping | 503 |
+| `cancelled` | Cancellation | 503 |
+| `deadline` | Request budget expired | 504 |
+| `io_timeout` | I/O budget expired | 504 |
+| `upstream` | `ServiceCallException` | 502 / 503 / 504 |
+| `interrupted` | Interruption | 503 |
+| `internal` | Anything else | 500 |
+
+Drain time covers completion after the framework body returns, not response I/O.
+
+## Runtime
+
+| Metric | Meaning |
+|---|---|
+| `hoori_micro_heap_used_bytes` | Guest heap in use |
+| `hoori_micro_heap_committed_bytes` | Committed heap |
+| `hoori_micro_rss_bytes` | Process RSS (includes native/JIT data) |
+| `hoori_micro_allocated_bytes_total` | Allocations |
+| `hoori_micro_gc_collections_total` | GC runs |
+| `hoori_micro_tasks_active` / `hoori_micro_tasks_waiting` | Tasks |
+| `hoori_micro_handles_open` | Open handles |
+
+```bash
+curl -s http://127.0.0.1:8082/metrics | grep -E 'hoori_micro_(calls|pool)_'
+```

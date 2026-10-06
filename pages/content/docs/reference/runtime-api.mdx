@@ -1,0 +1,91 @@
+---
+title: Runtime API
+description: Public classes you interact with at runtime – Micro, Microservice, Environment, Context, Invocation, ServiceCallException.
+---
+
+## `hoori.micro.app.Micro`
+
+Loads exactly the generated entry for the selected application – never a classpath scan.
+
+```java
+public static void run(Class<?> application, String[] args) throws Exception
+public static Microservice create(Class<?> application, Environment environment, String[] args) throws Exception
+```
+
+`run` = `create` with `Environment.system()` + `service.run()` in try-with-resources.
+
+## `hoori.micro.Environment`
+
+```java
+@FunctionalInterface
+public interface Environment {
+    String get(String name);
+    static Environment system() { return System::getenv; }
+}
+```
+
+Injectable single-key lookup. All configuration is read once at startup; empty, padded or
+invalid values are errors, not silent fallbacks.
+
+## `hoori.micro.Microservice`
+
+The running app, injectable into any component. `AutoCloseable`.
+
+| Method | Purpose |
+|---|---|
+| `Context context()` | Context of the current managed execution |
+| `<T> T runTask(TaskSpec<T> work)` | Run startup/maintenance work as a service-owned operation; not allowed inside a request owner |
+| `<T extends AutoCloseable> T own(T resource)` | Register an optional resource at startup; closed after root drain |
+| `ServiceConfig config()` | Parsed configuration |
+| `boolean isLive()` / `boolean isReady()` | Health state |
+| `void run()` | Start and block |
+| `void stop()` | Begin shutdown (idempotent) |
+| `void close()` | Release resources |
+
+## `hoori.micro.Context`
+
+| Method | Returns |
+|---|---|
+| `Invocation invocation()` | Current invocation; fails outside a managed execution |
+| `Budget budget()` | Remaining budget of the current work |
+| `Request ownerRequest()` | Owner-local raw HTTP request; children and service work cannot access it – never capture it in tasks |
+
+```java
+public RequestInfo context() {
+    var context = app.context();
+    return new RequestInfo(
+            context.invocation().requestId(),
+            context.ownerRequest().headers.get("Authorization") != null
+                    || context.ownerRequest().headers.get("Cookie") != null);
+}
+```
+
+## `hoori.micro.Invocation`
+
+Immutable correlation only – no request, credentials, scope or resource handles.
+
+| Method | Returns |
+|---|---|
+| `String requestId()` | SDK-validated correlation value; never an authenticated identity |
+| `Origin origin()` | `Origin.REQUEST` or `Origin.SERVICE` |
+
+## `hoori.micro.ServiceCallException`
+
+`RuntimeException` thrown by generated clients. Never contains upstream bodies, credentials or
+raw URLs.
+
+| Method | Returns |
+|---|---|
+| `String service()` | Target service name |
+| `int upstreamStatus()` | Provider status; `0` = no response |
+| `HttpEndpoint endpoint()` | Direct HTTP contract, or `null` when no error response was received |
+| `String code()` | Public provider error code |
+| `List<Violation> violations()` | Bounded field paths and codes only |
+
+## Built-in roles
+
+| Class | Entry | Notes |
+|---|---|---|
+| `hoori.micro.Registry` | `main(String[])` | Registry with the `/_hoori/instances` and `/_hoori/catalog` routes |
+| `hoori.micro.Gateway` | `main(String[])`, `mount(Microservice, BiPredicate<Request, String> policy)` | Policy decides per request and permission |
+| `hoori.micro.OpenApi` | `mount(Microservice)` | Optional documentation aggregation for a gateway |

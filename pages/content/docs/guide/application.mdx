@@ -1,0 +1,89 @@
+---
+title: Application & bootstrap
+description: '@MicroApplication, Micro.run and what happens at build time and at startup.'
+---
+
+## One app per module
+
+```java
+@MicroApplication(name = "recipes", version = 1,
+    openApi = "openapi.json", openApiBaseline = "openapi-v1-baseline.json")
+public final class RecipesApplication {
+    public static void main(String[] args) throws Exception {
+        Micro.run(RecipesApplication.class, args);
+    }
+}
+```
+
+| Attribute | Type | Default | Meaning |
+|---|---|---|---|
+| `name` | `String` | – | Service name: 1–63 chars, starts with `a-z`, then `a-z`, digits or `-` |
+| `version` | `int` | `1` | Major version (1–9999), part of the discovery key |
+| `imports` | `Class<?>[]` | `{}` | Explicitly imported `@MicroModule` libraries |
+| `openApi` | `String` | `""` | Classpath resource holding the OpenAPI 3.1 JSON contract |
+| `openApiBaseline` | `String` | `""` | Previously released contract; requires `openApi` |
+
+The application class must be a public top-level class in a named package. Its package is the
+**base package** for all components.
+
+## What happens at build time
+
+1. The Micro processor finds `@MicroApplication` and all components in the base package.
+2. It checks for missing/ambiguous dependencies, cycles, visibility and duplicate declarations.
+3. It generates `<Application-FQN>MicroModule` – a class with plain constructor calls.
+4. Hoori's MVC processor generates controller, DTO and validation adapters.
+5. With `openApi`, the contract is checked and stored canonically in the JAR at
+   `META-INF/hoori-micro/<Application-FQN>/openapi.json`.
+
+The original processors run only at build time. Sources are not needed at runtime.
+
+## What happens at startup
+
+```java title="hoori/micro/app/Micro.java (abridged)"
+public static void run(Class<?> application, String[] args) throws Exception {
+    try (Microservice service = create(application, Environment.system(), args)) {
+        service.run();
+    }
+}
+```
+
+`Micro.create` loads exactly the generated entry by name – never a classpath scan. If it is
+missing, startup fails with `Missing generated Micro application module: …`.
+
+## Starting with a custom environment: `Micro.create`
+
+For tests or your own launcher you can inject the environment:
+
+```java
+Environment env = name -> switch (name) {
+    case "HOORI_PORT" -> "18081";
+    case "HOORI_BIND_ADDRESS" -> "127.0.0.1";
+    default -> null;
+};
+
+try (Microservice app = Micro.create(RecipesApplication.class, env, new String[0])) {
+    app.run();
+}
+```
+
+`Environment` is a single-key lookup (`String get(String name)`); the default is
+`Environment.system()` (`System::getenv`).
+
+## Library modules
+
+A library module exports components with `@MicroModule`; the app imports it explicitly.
+Foreign JARs are never scanned.
+
+```java title="shared-lib"
+@MicroModule
+public final class SharedModule {}
+```
+
+```java title="app"
+@MicroApplication(name = "orders", imports = { SharedModule.class })
+public final class OrdersApplication { /* … */ }
+```
+
+<Callout type="warn">
+  A class carries either `@MicroApplication` or `@MicroModule`, never both.
+</Callout>

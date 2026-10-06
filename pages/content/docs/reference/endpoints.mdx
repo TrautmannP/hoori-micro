@@ -1,0 +1,50 @@
+---
+title: HTTP endpoints
+description: Fixed routes provided by every service, the registry and the gateway.
+---
+
+These routes sit outside the business admission boundary. Business templates may not start
+with `/_hoori`.
+
+## Every service
+
+| Method | Path | Response |
+|---|---|---|
+| `GET` | `/health/live` | Liveness |
+| `GET` | `/health/ready` | Readiness |
+| `GET` | `/metrics` | Fixed metrics, see [Metrics](/docs/reference/metrics) |
+| `GET` | `/_hoori/openapi/<hash>` | Canonical OpenAPI artifact (only with `openApi`), ETag + immutable cache |
+
+```bash
+curl -i http://127.0.0.1:8081/health/ready
+curl -s http://127.0.0.1:8081/metrics | grep hoori_micro_calls
+```
+
+## Registry
+
+| Method | Path | Purpose |
+|---|---|---|
+| `PUT` | `/_hoori/instances/{id}` | Register |
+| `POST` | `/_hoori/instances/{id}/lease` | Renew lease; 204 when unchanged |
+| `DELETE` | `/_hoori/instances/{id}` | Deregister |
+| `GET` | `/_hoori/catalog` | Catalog; 204 when unchanged |
+
+## Gateway
+
+| Method | Path | Response |
+|---|---|---|
+| `GET` | `/_hoori/publication` | Routing manifest with `X-Hoori-Publication` header; 503 if unavailable |
+| `GET` | `/openapi.json` | Contract of group `public` (with `HOORI_OPENAPI_ENABLED=true`) |
+| `GET` | `/_hoori/openapi` | Group index and publication ID |
+| `GET` | `/_hoori/openapi/groups/{group}` | Contract of one group; 404 for unknown groups |
+| `GET` | `/_hoori/docs` | Local API reference UI |
+
+## Internal headers
+
+| Header | Set by | Meaning |
+|---|---|---|
+| `X-Hoori-Budget-Ms` | Client | Relative remaining budget; ignored by gateways |
+| `X-Hoori-Endpoint` / `X-Hoori-Version` | Client | Checked by the provider; mismatch → 421 |
+| `X-Hoori-Publication` | Gateway | ID of the publication a document belongs to |
+
+External gateway callers cannot set the internal headers.

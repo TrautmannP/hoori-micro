@@ -1,0 +1,43 @@
+---
+title: Scripts
+description: Build, run and test scripts in scripts/.
+---
+
+## Build & run
+
+| Script | Purpose |
+|---|---|
+| `scripts/build.sh <distribution>` | Verify the distribution, build all modules, stage `.docker-context/` |
+| `scripts/run-local.sh <role>` | Start `registry`, `recipes`, `pantry`, `shopping`, `gateway` or `mvc-crud` on loopback via HooriVM |
+| `python3 scripts/optional_example.py build <name>` | Build an optional example (`task-facade`, `local-data`) |
+| `python3 scripts/optional_example.py run <name>` | Run an optional example on port 8084 |
+| `scripts/intellij.sh` | Backend for the shared IntelliJ run configurations |
+
+```bash
+./scripts/build.sh /abs/path/to/distribution
+scripts/run-local.sh registry
+```
+
+## Checks
+
+| Script | Checks |
+|---|---|
+| `scripts/test-core.sh` | Pure configuration/naming checks; not a substitute for Hoori/Docker integration |
+| `scripts/test-hoori-core.sh` | Real guest execution of the portable checks after `build.sh`; no HotSpot fallback |
+| `python3 scripts/smoke.py` | End-to-end smoke test with the real distribution |
+| `python3 scripts/test_mvc.py --gc-stress` | `mvc-crud` HTTP and validation bounds |
+| `python3 scripts/test_application_build.py` | Builds an app outside the reactor and starts it without sources |
+| `python3 scripts/test_composition.py [--facade]` | Composition, validation and task facade cases |
+| `python3 scripts/test_data.py --hoori-checkout ../hoori` | Optional data example against a throwaway PostgreSQL |
+| `python3 scripts/test_http.py`, `test_clients.py`, `test_admission.py`, `test_budgets.py`, `test_control.py`, `test_tasks.py` | Focused HTTP, client, admission, budget, control and task checks |
+
+Run checks additionally with `HOORI_ENGINE=interpreter` where relevant:
+
+```bash
+HOORI_ENGINE=interpreter python3 scripts/test_composition.py --facade
+```
+
+<Callout type="warn">
+  HotSpot test results are not native acceptance. The verified gates and their evidence are in
+  [`docs/validation.md`](https://github.com/TrautmannP/hoori-micro/blob/main/docs/validation.md).
+</Callout>

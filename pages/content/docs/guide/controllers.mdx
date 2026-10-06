@@ -1,0 +1,143 @@
+---
+title: Controllers & routing
+description: Mappings, parameter binding, return types and status codes with hoori.rest.mvc.
+---
+
+Web annotations and `HttpResult` come from **`hoori.rest.mvc`**, not from Spring. The SDK
+router owns the template grammar, UTF-8 decoding, conflict detection and 404/405 behavior.
+
+## Mappings
+
+```java
+@RestController
+@RequestMapping("/recipes")          // prefix for all methods
+public final class RecipeController {
+
+    @GetMapping("/{id}")             // GET /recipes/{id}
+    public Recipe get(@PathVariable("id") @Positive long id) { … }
+
+    @GetMapping                      // GET /recipes
+    public List<Recipe> list(@RequestParam(value = "prefix", defaultValue = "") String prefix) { … }
+
+    @PostMapping                     // POST /recipes
+    public HttpResult<Recipe> create(@RequestBody @Valid CreateRecipe input) { … }
+
+    @DeleteMapping("/{id}")          // DELETE /recipes/{id}
+    @ResponseStatus(204)
+    public void delete(@PathVariable("id") @Positive long id) { … }
+}
+```
+
+`@PutMapping` and `@PatchMapping` exist as well. All mapping annotations also accept `consumes`
+and `produces`.
+
+Without a class-level `@RequestMapping`, put full paths on the methods:
+
+```java
+@RestController
+public final class ShoppingController {
+    @GetMapping("/meals/{id}")
+    public Recipe meal(@PathVariable("id") @Positive long id) { … }
+
+    @GetMapping("/overview/{id}")
+    public Overview overview(@PathVariable("id") @Positive long id) throws Exception { … }
+}
+```
+
+Templates start with `/` (but not `/_hoori`) and consist of literals or `{name}` segments.
+
+## Parameter binding
+
+| Annotation | Source | Example |
+|---|---|---|
+| `@PathVariable("id")` | Path segment | `@PathVariable("id") long id` |
+| `@RequestParam(value, defaultValue, required)` | Query string | `@RequestParam(value = "prefix", defaultValue = "") String prefix` |
+| `@RequestHeader` | Request header | Internal controllers only; the gateway forwards just `Accept` and `Content-Type` |
+| `@RequestBody` | JSON body | `@RequestBody @Valid CreateRecipe input` |
+
+Optional query parameter without a default:
+
+```java
+@RequestParam(value = "prefix", required = false) String prefix
+```
+
+## Return types
+
+<Tabs items={['DTO / list', 'void', 'HttpResult', '@ResponseStatus']}>
+<Tab value="DTO / list">
+
+```java
+@GetMapping("/{id}")
+public Recipe get(@PathVariable("id") long id) { … }   // 200 + JSON
+
+@GetMapping
+public List<Recipe> list() { … }                       // 200 + JSON array
+```
+
+</Tab>
+<Tab value="void">
+
+```java
+@DeleteMapping("/meals/{id}")
+public void delete(@PathVariable("id") long id) { … }  // 204, no body
+```
+
+</Tab>
+<Tab value="HttpResult">
+
+Set the status and allowed headers dynamically:
+
+```java
+@PostMapping
+public HttpResult<Recipe> create(@RequestBody @Valid CreateRecipe input) {
+    Recipe recipe = recipes.create(input);
+    return HttpResult.of(201, recipe).header("Location", "/recipes/" + recipe.id());
+}
+```
+
+</Tab>
+<Tab value="@ResponseStatus">
+
+Declare a static success status:
+
+```java
+@DeleteMapping("/{id}")
+@ResponseStatus(204)
+public void delete(@PathVariable("id") long id) { … }
+```
+
+</Tab>
+</Tabs>
+
+## DTOs
+
+DTOs are public records. Supported are the bounded SDK types, nested records and lists – not
+arbitrary JDK types.
+
+```java
+public record Overview(Recipe recipe, java.util.List<String> available) {
+    public Overview {
+        if (recipe == null || available == null) throw new IllegalArgumentException("Missing overview data");
+        available = java.util.List.copyOf(available);
+    }
+}
+
+public record Dashboard(RecipeSection recipe, PantrySection pantry) {}
+public record RecipeSection(String status, Recipe data) {}
+```
+
+DTOs shared by several services belong in a separate contract module without framework
+wiring (see `examples/demo-contracts`).
+
+## Internal vs. published endpoints
+
+```java
+@PostMapping                                    // reachable through the gateway
+@GatewayRoute(permission = "recipes:write")
+public HttpResult<Recipe> create(@RequestBody @Valid CreateRecipe input) { … }
+
+@PostMapping("/bulk")                           // internal only, e.g. for other services
+public List<Recipe> bulk(@RequestBody @Valid RecipeIds input) { … }
+```
+
+More in [Gateway](/docs/guide/gateway).

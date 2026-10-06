@@ -1,0 +1,138 @@
+---
+title: Annotations
+description: Every Hoori Micro annotation with attributes, targets and rules.
+---
+
+All `hoori.micro.app` annotations have `CLASS` retention: they are read by the processor at
+build time and are not needed via reflection at runtime.
+
+## `@MicroApplication`
+
+**Target:** type · **Package:** `hoori.micro.app`
+
+Marks the single application entry of a Maven module.
+
+<TypeTable
+  type={{
+    name: { type: 'String', required: true, description: 'Service name: 1–63 chars, a-z first, then a-z, digits or hyphen, no trailing hyphen.' },
+    version: { type: 'int', default: '1', description: 'Service major version (1–9999).' },
+    imports: { type: 'Class<?>[]', default: '{}', description: 'Explicitly imported @MicroModule classes.' },
+    openApi: { type: 'String', default: '""', description: 'Classpath resource with the authoritative public OpenAPI 3.1 JSON contract.' },
+    openApiBaseline: { type: 'String', default: '""', description: 'Previous release contract; existing operations are checked within the same major. Requires openApi.' },
+  }}
+/>
+
+```java
+@MicroApplication(name = "recipes", openApi = "openapi.json", openApiBaseline = "openapi-v1-baseline.json")
+public final class RecipesApplication {
+    public static void main(String[] args) throws Exception {
+        Micro.run(RecipesApplication.class, args);
+    }
+}
+```
+
+## `@MicroModule`
+
+**Target:** type · **Package:** `hoori.micro.app` · no attributes
+
+Exports the components of a library module. Must be imported via `@MicroApplication(imports = …)`.
+Cannot be combined with `@MicroApplication` on the same class.
+
+## `@Service` / `@Repository`
+
+**Target:** type · **Package:** `hoori.micro.app` · no attributes
+
+Register a concrete, public, non-generic class with exactly one public constructor as a
+singleton component. The two are equivalent for the graph; the name documents the layer.
+
+```java
+@Service
+public final class RecipeService {
+    public RecipeService(RecipeRepository repository) { … }
+}
+```
+
+## `@Configuration` / `@Bean`
+
+`@Configuration` — **Target:** type. `@Bean` — **Target:** method.
+
+<TypeTable
+  type={{
+    owned: { type: 'boolean', default: 'true', description: '@Bean only. When true, an AutoCloseable result is closed by the app after drain. false transfers no ownership.' },
+  }}
+/>
+
+```java
+@Configuration
+public final class DatabaseConfiguration {
+    @Bean
+    public hoori.jdbi.JdbiTransactions manager() { … }
+}
+```
+
+## `@ServiceClient`
+
+**Target:** interface · **Package:** `hoori.micro.app`
+
+<TypeTable
+  type={{
+    name: { type: 'String', required: true, description: 'Name of the target service.' },
+    version: { type: 'int', default: '1', description: 'Major version of the target service.' },
+  }}
+/>
+
+Methods use the same `hoori.rest.mvc` mapping and parameter annotations as controllers.
+
+```java
+@ServiceClient(name = "pantry", version = 1)
+public interface PantryClient {
+    @GetMapping("/pantry/{id}")
+    List<String> items(@PathVariable("id") long id);
+}
+```
+
+## `@GatewayRoute`
+
+**Target:** method · **Package:** `hoori.micro.app`
+
+<TypeTable
+  type={{
+    permission: { type: 'String', required: true, description: 'Permission in the form <service>:<scope>; the service part must equal the own service name.' },
+  }}
+/>
+
+Publishes a mapped `@RestController` method through the gateway. Missing annotation means no
+publication. Empty/foreign permissions or a missing HTTP mapping are build errors.
+
+```java
+@DeleteMapping("/{id}")
+@ResponseStatus(204)
+@GatewayRoute(permission = "recipes:write")
+public void delete(@PathVariable("id") @Positive long id) { … }
+```
+
+## `hoori.rest.mvc` annotations
+
+These come from the original Hoori REST MVC SDK (`hoori-rest-mvc-api`). Attributes as declared in
+the pinned SDK; usage as in the examples.
+
+| Annotation | Target | Attributes / usage |
+|---|---|---|
+| `@RestController` | type | HTTP controller component |
+| `@RequestMapping("/prefix")` | type | Path prefix for all methods |
+| `@GetMapping`, `@PostMapping`, `@PutMapping`, `@PatchMapping`, `@DeleteMapping` | method | `value` (template), `consumes`, `produces`; e.g. `@GetMapping("/{id}")` |
+| `@PathVariable("id")` | parameter | `value`: template segment name |
+| `@RequestParam` | parameter | `value`, `required`, `defaultValue`, `max`; e.g. `@RequestParam(value = "prefix", defaultValue = "")` |
+| `@RequestHeader` | parameter | `value`, `required`, `defaultValue`, `max`; not forwarded by the gateway, so internal endpoints only |
+| `@RequestBody` | parameter | Bind the JSON body |
+| `@ResponseStatus(204)` | method | `value`: static success status |
+| `@RestControllerAdvice` | type | Exception-to-`Problem` mapping component |
+| `@ExceptionHandler(X.class)` | method | Handles `X`, returns `new Problem(status, code)` |
+
+## `hoori.tasks` annotations
+
+| Annotation | Target | Effect |
+|---|---|---|
+| `@GenerateTasks` | client interface | Generates a `<Client>Tasks` facade returning `TaskSpec`s; injected by the graph |
+| `@TaskScoped(timeoutMillis = …)` | public interface | Task boundary around the injected single delegate |
+| `@Transactional` | public interface | Local transaction around the injected delegate; needs exactly one transaction manager bean |

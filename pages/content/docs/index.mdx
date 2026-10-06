@@ -1,0 +1,20 @@
+---
+title: Documentation
+description: Guide, reference and examples for Hoori Micro.
+---
+
+import { BookOpen, Boxes, Code } from 'lucide-react';
+
+Hoori Micro builds annotation-based HTTP applications on **HooriVM**:
+controller → service → repository or typed service client.
+
+<Callout type="warn" title="Experimental">
+  The examples have no production authentication or data storage. The verified state is
+  recorded in [`docs/validation.md`](https://github.com/TrautmannP/hoori-micro/blob/main/docs/validation.md).
+</Callout>
+
+<Cards>
+  <Card icon={<BookOpen />} title="Guide" href="/docs/guide" description="Concepts from your first application to the gateway." />
+  <Card icon={<Code />} title="Reference" href="/docs/reference" description="Annotations, runtime API, environment variables, endpoints, metrics." />
+  <Card icon={<Boxes />} title="Examples" href="/docs/examples" description="Runnable services from examples/ with curl calls." />
+</Cards>

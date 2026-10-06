@@ -1,0 +1,41 @@
+---
+title: recipes & pantry
+description: Two providers – a CRUD service with advice and internal endpoints, and a minimal read-only service.
+---
+
+## recipes-service
+
+`controller/RecipeController` binds HTTP, `service/RecipeService` owns the operations,
+`repository/RecipeRepository` is a bounded in-memory store (128 entries) and
+`error/RecipeAdvice` maps errors to public codes. DTOs live in `demo-contracts`.
+
+<include meta='title="RecipesApplication.java"'>../../../../examples/recipes-service/src/main/java/dev/hoori/micro/recipes/RecipesApplication.java</include>
+
+Published vs. internal methods in the same controller:
+
+<include meta='title="controller/RecipeController.java"'>../../../../examples/recipes-service/src/main/java/dev/hoori/micro/recipes/controller/RecipeController.java</include>
+
+Two advice handlers:
+
+<include meta='title="error/RecipeAdvice.java"'>../../../../examples/recipes-service/src/main/java/dev/hoori/micro/recipes/error/RecipeAdvice.java</include>
+
+```bash
+curl -fsS http://127.0.0.1:8081/recipes/1
+curl -fsS 'http://127.0.0.1:8081/recipes?prefix=Kartoffel'
+curl -i http://127.0.0.1:8081/recipes -H 'Content-Type: application/json' -d '{"title":"Möhrensuppe"}'
+curl -i -X DELETE http://127.0.0.1:8081/recipes/3
+```
+
+## pantry-service
+
+The fixed demo store needs no repository layer – a service is enough.
+
+<include meta='title="controller/PantryController.java"'>../../../../examples/pantry-service/src/main/java/dev/hoori/micro/pantry/controller/PantryController.java</include>
+
+<include meta='title="service/PantryService.java"'>../../../../examples/pantry-service/src/main/java/dev/hoori/micro/pantry/service/PantryService.java</include>
+
+```bash
+curl -fsS http://127.0.0.1:8083/pantry/1
+curl -fsS http://127.0.0.1:8083/pantry/2   # successful empty list
+curl -i http://127.0.0.1:8083/pantry/0     # validation before the service
+```

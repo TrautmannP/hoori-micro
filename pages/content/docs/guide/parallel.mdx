@@ -1,0 +1,115 @@
+---
+title: Parallel composition
+description: Combine several remote reads with the original hoori.concurrent.Tasks API and generated task facades.
+---
+
+Client methods are synchronous. Parallelism is always an **explicit** choice in your service,
+using the original `hoori.concurrent.Tasks` API. A `TaskSpec` is lazy: nothing runs until you
+pick a combinator, and it then uses the current request context.
+
+## Both results required: `parallel(...).failFast()`
+
+```java
+import hoori.concurrent.Tasks;
+
+public Overview overview(long id) throws Exception {
+    return Tasks.parallel(Tasks.task(recipes::get, id), Tasks.task(pantry::items, id))
+            .named("shopping.overview")
+            .failFast()
+            .map(Overview::new);
+}
+```
+
+Both reads are required: the first failure fails the whole composition.
+
+## Optional parts: `settled()`
+
+`settled()` waits for both tasks and hands you an `Outcome` per task. Use it to distinguish an
+optional outage from a successful empty result:
+
+```java
+public Dashboard dashboard(long id) throws Exception {
+    var parts = Tasks.parallel(Tasks.task(recipes::get, id), Tasks.task(pantry::items, id))
+            .named("shopping.dashboard")
+            .settled();
+    Recipe recipe = optional(parts.first());
+    List<String> items = optional(parts.second());
+    return new Dashboard(
+            new RecipeSection(recipe == null ? "unavailable" : "ok", recipe),
+            new PantrySection(items == null ? "unavailable" : "ok", items));
+}
+
+private static <T> T optional(Outcome<T> outcome) throws Exception {
+    if (outcome.isSuccess()) return outcome.value();
+    Throwable failure = outcome.failure();
+    if (failure instanceof ServiceCallException) return null;   // optional remote outage
+    if (failure instanceof Exception error) throw error;        // deadline, admission, cleanup…
+    if (failure instanceof Error error) throw error;
+    throw new IllegalStateException("Unexpected outcome", failure);
+}
+```
+
+<Callout>
+  Only treat `ServiceCallException` as optional. Global deadline, admission and cleanup failures
+  must still fail the request.
+</Callout>
+
+## Bounded fan-out: `map(...).maxConcurrency(n)`
+
+```java
+public List<Recipe> batch(RecipeIds input) throws Exception {
+    return Tasks.map(input.ids(), recipes::get)
+            .named("shopping.batch")
+            .maxConcurrency(2)
+            .toList();
+}
+```
+
+Order and duplicates of the input are preserved. If the provider offers a bulk endpoint, one
+HTTP call is often the better choice:
+
+```java
+public List<Recipe> bulk(RecipeIds input) {
+    return recipes.bulk(input);
+}
+```
+
+## Lambda form
+
+For a single call with arbitrary arguments:
+
+```java
+TaskSpec<Recipe> spec = Tasks.task(() -> recipes.get(id));
+```
+
+## Generated task facades: `@GenerateTasks`
+
+The original `@GenerateTasks` processor generates a `<Client>Tasks` facade whose methods return
+`TaskSpec`s. The app graph constructs and injects it – you never wire generated classes yourself.
+
+<include meta='title="client/RecipeClient.java"'>../../../../examples/task-facade/src/main/java/dev/hoori/micro/facade/client/RecipeClient.java</include>
+
+<include meta='title="service/OverviewComposition.java"'>../../../../examples/task-facade/src/main/java/dev/hoori/micro/facade/service/OverviewComposition.java</include>
+
+## Method budgets: `@TaskScoped`
+
+`@TaskScoped` on a public interface wraps the injected delegate in a task boundary. A shorter
+parent budget still wins.
+
+<include meta='title="service/OverviewService.java"'>../../../../examples/task-facade/src/main/java/dev/hoori/micro/facade/service/OverviewService.java</include>
+
+<Callout type="warn" title="Interface decoration only">
+  Decoration applies only to the injected public interface with exactly one implementation.
+  Direct calls of the concrete class and self-invocations stay plain Java calls. There is no
+  general AOP container.
+</Callout>
+
+Returning waits for local children and resources to finish; a remote provider may keep running
+independently.
+
+## Work outside a request: `runTask`
+
+Client calls need a managed boundary; outside one they fail before encoding. For explicit
+startup or maintenance work, `Microservice.runTask(TaskSpec)` runs the spec as a service-owned
+operation that the app drains on shutdown. It throws `IllegalStateException` when called from
+within a request owner.

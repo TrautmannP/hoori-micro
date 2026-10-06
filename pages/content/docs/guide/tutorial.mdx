@@ -1,0 +1,286 @@
+---
+title: 'Tutorial: A recipes service'
+description: Layer by layer from an empty module to a validated CRUD service with an OpenAPI contract.
+---
+
+In this tutorial you rebuild the core of the
+[`mvc-crud`](/docs/examples/mvc-crud) example: an in-memory recipe store with
+GET, list, POST and DELETE.
+
+## Target layout
+
+<Files>
+  <Folder name="my-recipes" defaultOpen>
+    <File name="pom.xml" />
+    <Folder name="src/main/java/com/example/recipes" defaultOpen>
+      <File name="RecipesApplication.java" />
+      <Folder name="controller" defaultOpen>
+        <File name="RecipeController.java" />
+      </Folder>
+      <Folder name="service" defaultOpen>
+        <File name="RecipeService.java" />
+      </Folder>
+      <Folder name="repository" defaultOpen>
+        <File name="RecipeRepository.java" />
+      </Folder>
+      <Folder name="dto" defaultOpen>
+        <File name="CreateRecipe.java" />
+        <File name="Recipe.java" />
+      </Folder>
+      <Folder name="error" defaultOpen>
+        <File name="RecipeAdvice.java" />
+        <File name="RecipeNotFound.java" />
+      </Folder>
+    </Folder>
+    <Folder name="src/main/resources">
+      <File name="openapi.json" />
+    </Folder>
+  </Folder>
+</Files>
+
+All components live below the package of the application class – that is the only place
+the processor looks at build time.
+
+<Steps>
+<Step>
+
+### Module and entry point
+
+```xml title="pom.xml"
+<parent>
+  <groupId>dev.hoori</groupId>
+  <artifactId>hoori-micro-starter</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <relativePath/>
+</parent>
+<artifactId>my-recipes</artifactId>
+```
+
+```java title="RecipesApplication.java"
+package com.example.recipes;
+
+import hoori.micro.app.Micro;
+import hoori.micro.app.MicroApplication;
+
+@MicroApplication(name = "recipes")
+public final class RecipesApplication {
+    public static void main(String[] args) throws Exception {
+        Micro.run(RecipesApplication.class, args);
+    }
+}
+```
+
+`Micro.run` loads the build-generated class `RecipesApplicationMicroModule`, which calls
+your constructors directly.
+
+</Step>
+<Step>
+
+### DTOs as records
+
+DTOs are public records. They need no codec annotation and no registration.
+
+```java title="dto/Recipe.java"
+public record Recipe(long id, String title) {}
+```
+
+```java title="dto/CreateRecipe.java"
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+
+public record CreateRecipe(@NotBlank @Size(max = 200) String title) {}
+```
+
+</Step>
+<Step>
+
+### Repository
+
+```java title="repository/RecipeRepository.java"
+import hoori.micro.app.Repository;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+
+/** Demo in-memory data; no persistence or production authorization. */
+@Repository
+public final class RecipeRepository {
+    private final LinkedHashMap<Long, Recipe> recipes = new LinkedHashMap<>();
+    private long nextId = 1;
+
+    public RecipeRepository() {
+        create("Kartoffelsuppe");
+    }
+
+    public synchronized Recipe get(long id) {
+        Recipe recipe = recipes.get(id);
+        if (recipe == null) throw new RecipeNotFound();
+        return recipe;
+    }
+
+    public synchronized Recipe create(String title) {
+        Recipe recipe = new Recipe(nextId++, title);
+        recipes.put(recipe.id(), recipe);
+        return recipe;
+    }
+
+    public synchronized List<Recipe> list(String prefix) {
+        List<Recipe> found = new ArrayList<>();
+        for (Recipe recipe : recipes.values()) if (recipe.title().startsWith(prefix)) found.add(recipe);
+        return found;
+    }
+
+    public synchronized void delete(long id) {
+        get(id);
+        recipes.remove(id);
+    }
+}
+```
+
+</Step>
+<Step>
+
+### Service
+
+Constructor injection is the only way: every public concrete component has **exactly one**
+public constructor.
+
+```java title="service/RecipeService.java"
+import hoori.micro.app.Service;
+
+@Service
+public final class RecipeService {
+    private final RecipeRepository recipes;
+
+    public RecipeService(RecipeRepository recipes) {
+        this.recipes = recipes;
+    }
+
+    public Recipe get(long id) { return recipes.get(id); }
+    public List<Recipe> list(String prefix) { return recipes.list(prefix); }
+    public Recipe create(CreateRecipe input) { return recipes.create(input.title()); }
+    public void delete(long id) { recipes.delete(id); }
+}
+```
+
+</Step>
+<Step>
+
+### Controller
+
+```java title="controller/RecipeController.java"
+import hoori.micro.app.GatewayRoute;
+import hoori.rest.mvc.*;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Positive;
+import java.util.List;
+
+@RestController
+@RequestMapping("/recipes")
+public final class RecipeController {
+    private final RecipeService recipes;
+
+    public RecipeController(RecipeService recipes) {
+        this.recipes = recipes;
+    }
+
+    @GetMapping("/{id}")
+    @GatewayRoute(permission = "recipes:read")
+    public Recipe get(@PathVariable("id") @Positive long id) {
+        return recipes.get(id);
+    }
+
+    @GetMapping
+    @GatewayRoute(permission = "recipes:read")
+    public List<Recipe> list(@RequestParam(value = "prefix", defaultValue = "") String prefix) {
+        return recipes.list(prefix);
+    }
+
+    @PostMapping
+    @GatewayRoute(permission = "recipes:write")
+    public HttpResult<Recipe> create(@RequestBody @Valid CreateRecipe input) {
+        Recipe recipe = recipes.create(input);
+        return HttpResult.of(201, recipe).header("Location", "/recipes/" + recipe.id());
+    }
+
+    @DeleteMapping("/{id}")
+    @ResponseStatus(204)
+    @GatewayRoute(permission = "recipes:write")
+    public void delete(@PathVariable("id") @Positive long id) {
+        recipes.delete(id);
+    }
+}
+```
+
+`@GatewayRoute` publishes a method through the gateway. Without it the endpoint is still
+reachable internally, but not through the gateway.
+
+</Step>
+<Step>
+
+### Translate domain errors
+
+```java title="error/RecipeNotFound.java"
+public final class RecipeNotFound extends RuntimeException {}
+```
+
+```java title="error/RecipeAdvice.java"
+import hoori.rest.mvc.ExceptionHandler;
+import hoori.rest.mvc.Problem;
+import hoori.rest.mvc.RestControllerAdvice;
+
+@RestControllerAdvice
+public final class RecipeAdvice {
+    @ExceptionHandler(RecipeNotFound.class)
+    public Problem missing(RecipeNotFound failure) {
+        return new Problem(404, "recipe_missing");
+    }
+}
+```
+
+</Step>
+<Step>
+
+### Build and call
+
+Inside the repository, `scripts/build.sh` builds all modules. Afterwards (ports from the
+`recipes-service` example):
+
+```bash
+curl -fsS http://127.0.0.1:8081/recipes/1
+curl -fsS 'http://127.0.0.1:8081/recipes?prefix=Kartoffel'
+curl -i http://127.0.0.1:8081/recipes -H 'Content-Type: application/json' -d '{"title":"Möhrensuppe"}'
+curl -i -X DELETE http://127.0.0.1:8081/recipes/3
+curl -i http://127.0.0.1:8081/recipes/0
+```
+
+The last call fails **before** the business method runs:
+
+```json
+{"code":"validation_failed","violations":[{"path":"path.id","code":"positive"}]}
+```
+
+</Step>
+<Step>
+
+### Bind an OpenAPI contract (optional)
+
+Create `src/main/resources/openapi.json` and reference it:
+
+```java
+@MicroApplication(name = "recipes", openApi = "openapi.json")
+```
+
+The build now checks routes, permissions, DTOs, parameters, status codes and constraints
+against the contract. Details in [OpenAPI](/docs/guide/openapi).
+
+</Step>
+</Steps>
+
+## Next steps
+
+<Cards>
+  <Card title="Call another service" href="/docs/guide/service-clients" />
+  <Card title="Compose in parallel" href="/docs/guide/parallel" />
+  <Card title="Publish through the gateway" href="/docs/guide/gateway" />
+</Cards>

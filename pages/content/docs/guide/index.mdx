@@ -1,0 +1,64 @@
+---
+title: Introduction
+description: What Hoori Micro is, what it deliberately is not, and how the pieces fit together.
+---
+
+## What is Hoori Micro?
+
+Hoori Micro is a small framework for HTTP microservices on **HooriVM**. You write plain Java
+classes with annotations – controllers, services, repositories and client interfaces. An
+annotation processor turns them into a finite constructor graph **at build time**. At runtime
+there is no classpath scan, no reflective injection and no general-purpose proxy.
+
+Transport, routing, binding, JSON and validation come from the original Hoori SDKs
+(`hoori-http-api`, `hoori-rest-api` with `hoori.rest.mvc`). Micro adds bootstrap, discovery,
+the gateway and managed request boundaries.
+
+```java title="RecipesApplication.java"
+@MicroApplication(name = "recipes", openApi = "openapi.json")
+public final class RecipesApplication {
+    public static void main(String[] args) throws Exception {
+        Micro.run(RecipesApplication.class, args);
+    }
+}
+```
+
+## The layer model
+
+```text
+Registry ← registration / lease / catalog → services and gateway
+Browser → Gateway → ShoppingController → ShoppingService → RecipeClient → Recipes
+                                                      └→ PantryClient → Pantry
+```
+
+| Layer | Annotation | Responsibility |
+|---|---|---|
+| Entry point | `@MicroApplication` | Exactly one app per Maven module, name and major version |
+| HTTP | `@RestController`, `@RestControllerAdvice` | Mapping, binding, validation, error translation |
+| Business logic | `@Service` | Domain operations and composition, no transport details |
+| Data | `@Repository` | Storage access |
+| Other services | `@ServiceClient` | Typed HTTP interface, implementation is generated |
+| Infrastructure | `@Configuration` + `@Bean` | Factory methods for infrastructure objects |
+
+## What Hoori Micro is not
+
+<Callout type="info">
+  Not fully compatible with Spring, Jakarta EE or the JDK. No runtime DI/AOP container, no ORM,
+  no event broker, no general proxy engine.
+</Callout>
+
+- **Cooperative execution:** Hoori runs guest code cooperatively. Non-cooperating CPU work cannot
+  be preempted arbitrarily.
+- **Partial guest classlib:** not every JDK method exists in the guest (for example
+  `String.repeat`, `Long.toHexString`, `Double.isInfinite` and `Math.floorMod` are missing).
+- **No `ThreadLocal` context:** request context travels through explicit `TaskContext` keys.
+- **Demo security:** the registry and internal endpoints are unauthenticated. See [Security](/docs/guide/security).
+
+## Where to go next
+
+<Cards>
+  <Card title="Quick start" href="/docs/guide/quick-start" description="Build, start and make your first curl calls." />
+  <Card title="Tutorial" href="/docs/guide/tutorial" description="Write a service yourself, layer by layer." />
+  <Card title="Annotations" href="/docs/reference/annotations" description="Every annotation with attributes and rules." />
+  <Card title="Configuration" href="/docs/reference/configuration" description="All HOORI_* variables with defaults and bounds." />
+</Cards>

@@ -1,0 +1,58 @@
+---
+title: Limits
+description: Every built-in bound in one place.
+---
+
+Bounds are deliberate. Don't raise them across the board – measure first (e.g. check
+`/metrics` with your real route count).
+
+## HTTP & JSON
+
+| Limit | Value |
+|---|---|
+| Body / JSON output | `HOORI_BODY_BYTES`, default 64 KiB (1 KiB – 16 MiB) |
+| Headers | 64 headers, 16 KiB header bytes |
+| Requests per connection | 100 |
+| JSON depth | 64 |
+| String length | 16384 UTF-16 code units |
+| Number token length | 128 |
+
+## Application graph
+
+| Limit | Value |
+|---|---|
+| Components + beans | 128 |
+| Own closeable resources | 16 |
+
+## Discovery & gateway
+
+| Limit | Value |
+|---|---|
+| HTTP endpoints per service/instance | 128 |
+| Dependencies per service | 32 |
+| Distinct public gateway routes | 256 |
+| Route metadata per snapshot | 64 KiB |
+
+A larger body budget does not lift gateway limits. Overflow discards the whole update; the old
+snapshot is kept only until its freshness limit.
+
+## OpenAPI
+
+| Limit | Value |
+|---|---|
+| Document / manifest / aggregated group | 64 KiB |
+| JSON depth | 32 |
+| Operations per service | 128 |
+| Entries per JSON container | 512 |
+| Steps per schema/operation resolution | 8192 |
+| Contract artifacts | 64, together 256 KiB canonical source |
+| API groups per publication | 16 |
+| Documentation pool | 1 connection, 1 s exchange timeout, 5 s budget per refresh |
+
+## Demo endpoints
+
+| Endpoint | Limit |
+|---|---|
+| `RecipeIds.ids` | 1–16 elements |
+| `POST /meals/batch` | max. 2 concurrent reads |
+| Recipes demo store | 128 recipes (`409 demo_store_full`) |

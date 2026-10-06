@@ -1,0 +1,90 @@
+---
+title: Gateway & discovery
+description: Registry, catalog, explicit publication with @GatewayRoute and per-request permission checks.
+---
+
+## The roles
+
+| Role | Main class | Demo port |
+|---|---|---|
+| Registry | `hoori.micro.Registry` | 8090 |
+| Gateway | `hoori.micro.Gateway` | 8080 |
+| Your services | your `@MicroApplication` | e.g. 8081–8083 |
+
+Services register with the registry, renew a lease and fetch a filtered catalog. The registry
+is **never on the request path**: requests are routed from a local immutable snapshot.
+
+## Publishing a method
+
+```java
+@GetMapping("/{id}")
+@GatewayRoute(permission = "recipes:read")
+public Recipe get(@PathVariable("id") @Positive long id) { … }
+```
+
+| Situation | Result |
+|---|---|
+| No `@GatewayRoute` | Not published through the gateway (still internal) |
+| Empty or foreign permission (`pantry:read` in `recipes`) | Build error |
+| `@GatewayRoute` without an HTTP mapping | Build error |
+
+Permissions have the form `<service>:<scope>`. The gateway checks them **per request** against
+its policy.
+
+## Demo policy
+
+`Gateway.main` reads `HOORI_GATEWAY_PERMISSIONS` – a comma-separated list granted to **every**
+caller:
+
+```bash
+HOORI_GATEWAY_PERMISSIONS=recipes:read,recipes:write,pantry:read,shopping:read,shopping:write
+```
+
+Empty means all business access is rejected. This is not authentication.
+
+<Callout type="error" title="No user identity">
+  `@GatewayRoute` is an explicit publication, not a user identity. See [Security](/docs/guide/security).
+</Callout>
+
+## What the gateway forwards
+
+- Method, raw path/query and the bounded body stay separate and unchanged.
+- Request headers: only `Accept` and `Content-Type`.
+- Success status and safe metadata are kept. Absolute/unsafe `Location`, credentials and
+  hop-by-hop headers never leave.
+- Known bounded validation/problem errors are checked and re-serialized.
+- External callers cannot set internal `X-Hoori-Endpoint`, `X-Hoori-Version` or budget headers.
+
+## Catalog and routing rules
+
+- Up to 128 HTTP endpoints per instance; each is method, template, consumes/produces and an
+  optional permission.
+- Max. 256 distinct public routes and 64 KiB route metadata per gateway snapshot.
+- **Conflicts** (e.g. two services publishing `/recipes`) withhold *both* definitions.
+- Overflowing updates do not extend the old view beyond its freshness limit.
+- Additional provider endpoints can appear dynamically, without rebuilding the gateway or
+  unrelated clients.
+
+## Inspecting the publication
+
+```bash
+curl -s http://127.0.0.1:8080/_hoori/publication
+```
+
+The manifest contains catalog epoch/revision, `publicationId`, selected contract/operation
+hashes, plus undocumented and withheld routes. `complete` only means every accepted route has
+a contract; `registryComplete` reflects the registry restart phase. **Neither proves
+that all desired deployment services are running.** Clients can compare the publication IDs of
+two separate requests – there is no distributed atomicity between them.
+
+## Registry protocol
+
+| Method | Path | Purpose |
+|---|---|---|
+| `PUT` | `/_hoori/instances/{id}` | Register an instance |
+| `POST` | `/_hoori/instances/{id}/lease` | Renew lease (204 if unchanged) |
+| `DELETE` | `/_hoori/instances/{id}` | Deregister |
+| `GET` | `/_hoori/catalog` | Fetch catalog (204 if unchanged) |
+
+Catalog filters are `none`, `public` or `services=name:version,...` (max. 32 dependencies).
+Consumers receive only their services and no gateway/OpenAPI metadata.

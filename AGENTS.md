@@ -1,6 +1,7 @@
 # Working on Hoori Micro
 
-- Read README.md and docs/architecture.md. This is a separate consumer repository;
+- Read README.md, docs/architecture.md and the relevant manual pages in
+  pages/content/docs. This is a separate consumer repository;
   do not move Dahemm migration into the Hoori VM MS0–MS5 roadmap.
 - Use the real `hoori-http-api` / `hoori-rest-api`. Do not replace networking with
   java.net.http, Spring, Servlet or test stubs. Do not copy the SDK implementation.
@@ -30,5 +31,11 @@
 - Demos have no production authorization or persistence design; the optional data
   example owns only its demo database. Never present them as migrated Dahemm business
   services. Do not log credentials, bodies or raw upstream failures.
-- Keep docs short and remove obsolete instructions when behavior changes. No invented
-  performance wins or unnecessarily broad governance/test matrices.
+- User-facing docs live only in the manual (pages/content/docs, English MDX); docs/ is
+  internal (architecture invariants, validation, benchmarks, source baseline, roadmap).
+  Update the matching manual page in the same change as any API, annotation, config,
+  endpoint, metric or limit change. Example READMEs only point to the manual. Run
+  `cd pages && npm run build` for manual changes.
+- Write everything in English. Keep docs short and remove obsolete instructions when
+  behavior changes. No invented performance wins or unnecessarily broad governance/test
+  matrices.

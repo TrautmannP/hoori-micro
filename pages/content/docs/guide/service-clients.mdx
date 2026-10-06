@@ -1,0 +1,78 @@
+---
+title: Service clients
+description: Call other services through typed interfaces – discovery, context and budgets included.
+---
+
+## A client is an interface
+
+<include meta='title="client/RecipeClient.java"'>../../../../examples/shopping-service/src/main/java/dev/hoori/micro/shopping/client/RecipeClient.java</include>
+
+The processor generates the implementation and the app graph injects it:
+
+```java
+@Service
+public final class ShoppingService {
+    private final RecipeClient recipes;
+
+    public ShoppingService(RecipeClient recipes) {
+        this.recipes = recipes;
+    }
+
+    public Recipe meal(long id) {
+        return recipes.get(id);
+    }
+}
+```
+
+The client knows service, version and HTTP contract. **Addresses** come from the local
+discovery snapshot – never from request data.
+
+## Anatomy of a call
+
+1. The client reads the **current** request context. Outside a Micro boundary the call fails
+   before encoding and networking.
+2. Outgoing admission: one global permit covers encoding, exchange and decoding.
+3. An instance is selected by service, version and exact endpoint contract from the snapshot.
+4. The relative remaining budget travels as `X-Hoori-Budget-Ms`, set in the original
+   before-write hook, i.e. after pool/DNS/connect/TLS waiting.
+5. The provider checks `X-Hoori-Endpoint`/`X-Hoori-Version`; a mismatch yields 421 without retry.
+
+Synchronous calls create no additional task.
+
+## What clients deliberately do not do
+
+<Callout type="warn">
+  No client per request, no automatic write replays, no redirects, no credential forwarding.
+  Each app has **one** data pool plus a separate control connection to the registry.
+</Callout>
+
+## Dependencies
+
+Every `@ServiceClient` makes `name:version` a dependency of the app. The discovery snapshot
+contains only those services (max. 32 dependencies). New providers or additional endpoints do
+not require rebuilding existing clients; incompatible contract changes need a new major version.
+
+## Handling failures
+
+```java
+try {
+    return recipes.get(id);
+} catch (ServiceCallException failure) {
+    if (failure.upstreamStatus() == 404) throw new RecipeMissing();
+    throw failure;   // becomes 502 (or the provider's 503/504)
+}
+```
+
+See [Error handling](/docs/guide/errors#errors-from-other-services).
+
+## Configuration
+
+Relevant variables (full list in the [reference](/docs/reference/configuration)):
+
+| Variable | Default |
+|---|---|
+| `HOORI_CLIENT_TIMEOUT_MS` | 2000 |
+| `HOORI_CLIENT_CONNECTIONS` | 16 |
+| `HOORI_CLIENT_PER_ORIGIN` | min(8, total limit) |
+| `HOORI_OUTGOING_CALLS` | client per-origin limit |
+| `HOORI_OUTGOING_PENDING_CALLS` | outgoing calls |

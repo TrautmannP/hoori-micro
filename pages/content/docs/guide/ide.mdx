@@ -1,0 +1,45 @@
+---
+title: IntelliJ setup
+description: Build, run and test the examples on HooriVM with the shared run configurations.
+---
+
+Open the root `pom.xml` as a Maven project. The shared configurations in `.run/` appear under
+**Run → Edit Configurations** in the **Hoori** folder. They call `scripts/intellij.sh`, which
+uses the existing build/test scripts; applications run via `bin/hoori` of the pinned
+distribution.
+
+## One-time setup
+
+Put local paths into `.idea/hoori.env` (not versioned, Bash assignments):
+
+```bash title=".idea/hoori.env"
+HOORI_JAVA21_HOME=/absolute/path/to/jdk-21.0.12.1
+HOORI_DISTRIBUTION=/absolute/path/to/headless/release-distribution
+# Database test only: checkout with the original pinned JDBC fixtures.
+# HOORI_CHECKOUT=/absolute/path/to/hoori-checkout
+```
+
+Without `HOORI_DISTRIBUTION` the build reuses `.docker-context/runtime`. Maven and Python must
+be on the `PATH` inherited by IntelliJ.
+
+## Configurations
+
+Always run **Hoori - Build** first, also after changing sources or contracts.
+
+| Configuration | Use |
+|---|---|
+| `Hoori - Demo` | Start registry, recipes, pantry, shopping and gateway; gateway at `http://127.0.0.1:8080` |
+| `Hoori - registry/recipes/pantry/shopping/gateway` | Single role on ports 8090/8081/8083/8082/8080 |
+| `Hoori - mvc-crud` | Small CRUD example on port 8085 |
+| `Hoori - Build task-facade` → `Hoori - task-facade` | Optional example on port 8084 |
+| `Hoori - Build local-data` → `Hoori - local-data` | Data example on port 8084 (needs its demo database) |
+| `Hoori - Test Core/HTTP/MVC (GC stress)` | Native core, HTTP and CRUD/bootstrap checks |
+
+Set `HOORI_ENGINE=interpreter` (default `mixed`), `HOORI_PORT` and other
+[settings](/docs/reference/configuration) under **Environment variables**. Never put passwords
+into shared `.run` files.
+
+<Callout>
+  The stop button reaches HooriVM directly (thanks to `exec`) and triggers the normal shutdown.
+  Java breakpoints need a separate debugger attachment to Hoori.
+</Callout>

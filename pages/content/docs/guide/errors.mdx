@@ -1,0 +1,76 @@
+---
+title: Error handling
+description: Map domain errors to stable codes with @RestControllerAdvice and handle remote failures.
+---
+
+## Domain errors → `Problem`
+
+Expected domain errors are ordinary exceptions. A `@RestControllerAdvice` maps them to a
+public `Problem(status, code)`:
+
+<include meta='title="error/RecipeAdvice.java"'>../../../../examples/recipes-service/src/main/java/dev/hoori/micro/recipes/error/RecipeAdvice.java</include>
+
+```java
+public final class RecipeNotFound extends RuntimeException {}
+public final class RecipeStoreFull extends RuntimeException {}
+```
+
+Unknown failures stay **500**. Public responses never contain exceptions, provider messages
+or input values.
+
+## Errors from other services
+
+A service client throws `hoori.micro.ServiceCallException` on failure:
+
+| Method | Content |
+|---|---|
+| `service()` | Name of the called service |
+| `upstreamStatus()` | Provider HTTP status; `0` means no response |
+| `endpoint()` | Direct HTTP contract, or `null` when no error response was received |
+| `code()` | Public error code of the provider |
+| `violations()` | Bounded field paths and codes; never peer messages or values |
+
+Typical pattern: translate a known remote status into your own domain error and rethrow
+everything else.
+
+```java
+@Service
+public final class ShoppingService {
+    private final RecipeClient recipes;
+
+    public ShoppingService(RecipeClient recipes) {
+        this.recipes = recipes;
+    }
+
+    public Recipe meal(long id) {
+        try {
+            return recipes.get(id);
+        } catch (ServiceCallException failure) {
+            if (failure.upstreamStatus() == 404) throw new RecipeMissing();
+            throw failure;
+        }
+    }
+
+    public static final class RecipeMissing extends RuntimeException {}
+}
+```
+
+<include meta='title="controller/ShoppingAdvice.java"'>../../../../examples/shopping-service/src/main/java/dev/hoori/micro/shopping/controller/ShoppingAdvice.java</include>
+
+## Error priority
+
+Admission, cancellation, deadline and mandatory cleanup take **precedence** over domain advice.
+The response is released only after local child/resource drain.
+
+| Situation | Result |
+|---|---|
+| Validation fails | 400 with `validation_failed`, before the business method |
+| Domain error with advice | Status and code from the `Problem` |
+| Untranslated `ServiceCallException` | 502; if the provider answered 503/504, that status is kept |
+| Request budget expired / I/O timeout | 504 |
+| Cancellation, interruption, saturation, stop | 503, no retries |
+| Endpoint/version mismatch at the provider | 421, no retry |
+| Unknown exception | 500 without details |
+
+A remote validation failure is **not** presented as validation of the outer input: an
+untranslated failure of an inner call becomes 502, without the provider's field paths.

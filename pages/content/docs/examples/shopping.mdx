@@ -1,0 +1,85 @@
+---
+title: shopping
+description: A consumer service composing recipes and pantry – required, optional and bounded fan-out reads.
+---
+
+`ShoppingApplication` wires `ShoppingController`, `ShoppingService` and the injected
+`RecipeClient`/`PantryClient`. Controllers bind input; the service decides about parallel
+reads, failure policy and batch vs. bulk.
+
+## Clients
+
+<include meta='title="client/PantryClient.java"'>../../../../examples/shopping-service/src/main/java/dev/hoori/micro/shopping/client/PantryClient.java</include>
+
+`RecipeClient` mirrors the recipes endpoints including the internal `/recipes/bulk` – see
+[Service clients](/docs/guide/service-clients).
+
+## Four composition styles
+
+<Tabs items={['Required (overview)', 'Optional (dashboard)', 'Batch', 'Bulk']}>
+<Tab value="Required (overview)">
+
+```java
+public Overview overview(long id) throws Exception {
+    return Tasks.parallel(Tasks.task(recipes::get, id), Tasks.task(pantry::items, id))
+            .named("shopping.overview")
+            .failFast()
+            .map(Overview::new);
+}
+```
+
+</Tab>
+<Tab value="Optional (dashboard)">
+
+```java
+public Dashboard dashboard(long id) throws Exception {
+    var parts = Tasks.parallel(Tasks.task(recipes::get, id), Tasks.task(pantry::items, id))
+            .named("shopping.dashboard")
+            .settled();
+    Recipe recipe = optional(parts.first());
+    List<String> items = optional(parts.second());
+    return new Dashboard(
+            new RecipeSection(recipe == null ? "unavailable" : "ok", recipe),
+            new PantrySection(items == null ? "unavailable" : "ok", items));
+}
+```
+
+</Tab>
+<Tab value="Batch">
+
+At most 16 IDs, at most two reads started concurrently; order and duplicates preserved.
+
+```java
+public List<Recipe> batch(RecipeIds input) throws Exception {
+    return Tasks.map(input.ids(), recipes::get)
+            .named("shopping.batch")
+            .maxConcurrency(2)
+            .toList();
+}
+```
+
+</Tab>
+<Tab value="Bulk">
+
+One HTTP call to the provider's internal bulk endpoint.
+
+```java
+public List<Recipe> bulk(RecipeIds input) {
+    return recipes.bulk(input);
+}
+```
+
+</Tab>
+</Tabs>
+
+## Try it (through the gateway)
+
+```bash
+curl -fsS http://127.0.0.1:8080/meals/1
+curl -fsS http://127.0.0.1:8080/overview/1
+curl -fsS http://127.0.0.1:8080/dashboard/2
+curl -fsS http://127.0.0.1:8080/meals/bulk -H 'Content-Type: application/json' -d '{"ids":[2,1,2]}'
+```
+
+The dashboard distinguishes an optional outage (`"unavailable"`) from successful empty data;
+global deadline, admission and cleanup failures still fail the request.

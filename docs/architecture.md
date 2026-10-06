@@ -1,165 +1,90 @@
-# Architektur
+# Architecture (internal)
 
-Hoori Micro ist ein eigenständiger Consumer der originalen Hoori-SDKs. Die
-öffentliche Anwendungsschicht verwendet MVC-Controller, Fachservices, Repositories
-und typisierte HTTP-Clients. Ein endlicher, beim Build erzeugter Konstruktorgraph
-ersetzt technische Registrierung im Anwendungscode.
+Design invariants and their reasons, for people changing the framework. How to *use* Hoori Micro
+is documented in the manual (`pages/content/docs`); keep user-facing material there.
 
-## Build und Bootstrap
+Hoori Micro is an independent consumer of the original Hoori SDKs. A finite constructor graph
+generated at build time replaces technical registration in application code.
 
-`@MicroApplication(name, version)` definiert genau eine App pro Maven-Modul.
-Komponenten unter ihrem Basispaket tragen `@RestController`,
-`@RestControllerAdvice`, `@Service`, `@Repository`, `@Configuration` oder
-`@ServiceClient`. Öffentliche konkrete Komponenten besitzen genau einen
-öffentlichen Konstruktor. `@Bean`-Methoden einer Configuration liefern
-Infrastruktur. Factory-Parameter werden wie Konstruktorparameter aufgelöst.
-`Environment`, `Microservice` und die Startargumente stehen als Infrastruktur bereit.
+## Build and bootstrap
 
-Der Graph prüft fehlende/mehrdeutige Abhängigkeiten, Zyklen, Sichtbarkeit und
-Doppeldeklarationen. Maximal 128 Komponenten/Beans und 16 eigene schließbare Ressourcen; keine Scans zur Laufzeit,
-Scopesprache, reflektiven Feldinjektionen oder allgemeinen Proxies. Ein Bibliotheks-
-modul exportiert Komponenten mit `@MicroModule`; die App benennt es in
-`@MicroApplication(imports = {...})`. Metadaten bleiben im JAR, Quellen sind zur
-Laufzeit unnötig. Imports sind ausdrücklich; fremde JARs werden nicht durchsucht.
+- One `@MicroApplication` per Maven module. The Micro processor resolves the graph and generates
+  `<Application-FQN>MicroModule`; `Micro.run` loads exactly that class by name. No runtime scans,
+  scope language, reflective field injection or general proxies.
+- Controller/advice and DTO/validation adapters come from Hoori's MVC processor; clients use its
+  shared HTTP/DTO model. Avaje is the starter's validation provider; the HTTP core depends only
+  on the neutral SPI. Original processors run only at build time.
+- Library modules export components via `@MicroModule` and are imported explicitly. Metadata stays
+  in the JAR; foreign JARs are never searched.
+- Graph bounds: 128 components/beans, 16 owned closeable resources. Owned `AutoCloseable`
+  singletons close once, in reverse creation order. A bootstrap failure cleans up created
+  resources before listeners, readiness or registration start.
 
-`Micro.run(App.class, args)` lädt genau den erzeugten Einstieg und führt direkte
-Konstruktoraufrufe aus. Controller/Advice und DTO-/Validation-Adapter stammen aus
-Hooris MVC-Processor, Clients nutzen dessen gemeinsames HTTP-/DTO-Modell. Avaje
-ist der Provider des Starters; der HTTP-Core hängt nur von der neutralen SPI ab.
-Die ursprünglichen Processor laufen ausschließlich beim Build.
+## Request boundary
 
-Singleton-Ressourcen mit `AutoCloseable` gehören standardmäßig der App. Alias-
-Instanzen werden identisch nur einmal geschlossen, in umgekehrter Erzeugungsfolge.
-`@Bean(owned = false)` überträgt keinen Besitz. Ein Bootstrapfehler räumt bereits
-erzeugte Ressourcen auf, bevor Listener, Readiness oder Registrierung beginnen.
+- Every business request passes the same incoming admission and `RequestScopes`/`Executions`
+  boundary. The HTTP SDK has already read the bounded raw body; DTO binding, validation and
+  business work start only after admission. No second request root in the MVC adapter, no
+  `ThreadLocal` context.
+- `TaskContext` carries correlation, origin and remaining budget. The mutable raw request stays
+  with the HTTP owner. A reused client reads the current context on every call; calls outside a
+  Micro boundary fail before encoding and network.
+- Outgoing admission covers encoding, the actual exchange and decoding. One data pool per app,
+  plus a separate control connection without an extra queue. No per-request clients, automatic
+  write replays, redirects or credential forwarding.
+- `X-Hoori-Budget-Ms` is written in the original before-write hook, i.e. after pool/DNS/connect/TLS
+  waiting. It is a relative remaining budget, not a global real-time deadline and not a remote
+  cancellation protocol.
+- Failure priority: admission, cancellation, deadline and mandatory cleanup win over business
+  advice. The response is released only after the local child/resource drain. Hoori is
+  cooperative; non-cooperating CPU work cannot be preempted arbitrarily.
 
-## HTTP und DTOs
+## Discovery and gateway
 
-Mappings unter `hoori.rest.mvc` definieren Methode/Template. `@PathVariable`,
-`@RequestParam`, `@RequestHeader` und `@RequestBody` binden getrennte Eingaben.
-Der SDK-Router besitzt allein Template-Grammatik, UTF-8-Decoding, Konfliktprüfung
-und 404/405-Verhalten. Controller delegieren an Fachservices; diese kennen keine
-Transport-Registrierung. DTOs sind öffentliche Records. Unterstützt sind die
-begrenzten SDK-Typen, verschachtelte Records und Listen; keine beliebigen JDK-Typen.
+- The catalog holds service, major version, instance ID, checked origin and at most 128 HTTP
+  endpoints per instance (method, template, consumes/produces, optional permission). OpenAPI apps
+  add operation hashes plus contract hash and API group per instance; schemas stay with the
+  service. The HTTP key is independent of Java method names and request data.
+- Registry over HTTP/JSON (`/_hoori/instances/{id}`, `/lease`, `/_hoori/catalog`). TTL, epochs,
+  revisions and the `complete` marker bound re-registration and restarts; unchanged
+  epoch/revision/view confirm with 204. Filters: `none`, `public`, `services=name:version,...`
+  (max. 32). The registry catalog and its answers stay bounded, also before filtering.
+- The request path uses only a local immutable snapshot. Client selection is by service, version
+  and exact endpoint contract. Providers check `X-Hoori-Endpoint`/`X-Hoori-Version`; mismatch is
+  421 without retry. Empty/expired views never offer a wrong substitute instance.
+- The registrar prepares routing and catalog together (max. 256 distinct public routes, 64 KiB
+  metadata). Conflicts withhold both definitions; overflowing updates do not extend the old view.
+  Unchanged confirmations reuse the frozen routing.
+- Gateway and providers use the same SDK router. Method, raw path/query and bounded body stay
+  separate and unchanged. Only `Accept` and `Content-Type` are forwarded. Known bounded
+  validation/problem errors are checked and re-serialized; an inner remote failure is never
+  presented as validation of the outer input.
+- OpenAPI routes must also match permission, API group and operation hash. The publication
+  manifest is built from the same snapshot. The optional documentation process fetches
+  hash-bound artifacts through its own client outside requests and the heartbeat and replaces the
+  aggregate only after a full match and a second snapshot comparison.
 
-`@Valid` und Jakarta-Constraints erzeugen begrenzte Validation vor der Fachmethode.
-Fehlende Pflichtfelder, falsche Typen, doppelte JSON-Felder, nachfolgende Tokens
-und Größenüberschreitungen werden abgewiesen. Null und fachliche Constraints
-bleiben getrennte Regeln. Unterstützt sind `@NotNull`, `@NotBlank`, `@Size`,
-`@Positive`, `@Min`, `@Max`, verschachteltes `@Valid` und Listenelemente.
-Nicht unterstützte Profile scheitern beim Build. `new Dto(...)` validiert nicht.
+## Parallel work and optional data
 
-DTO-/Listenantworten liefern JSON, `void` liefert 204. `@ResponseStatus` bzw.
-`HttpResult<T>` setzen Status und erlaubte Metadaten. `@RestControllerAdvice`
-bindet erwartete Fachfehler an einen begrenzten öffentlichen `Problem`-Code.
-Unbekannte Fehler bleiben 500; öffentliche Antworten enthalten keine Exceptions,
-Provider-Meldungen oder Eingabewerte.
+- Client methods are synchronous; parallelism is explicit via the original `Tasks` API. The
+  original `@GenerateTasks` processor generates facades; the app graph injects them.
+- `@TaskScoped`/`@Transactional` decoration applies only to supported public interfaces with
+  exactly one implementation; transactions need exactly one stable manager. Concrete and
+  self-invoked methods get no interception.
+- In the data example, remote reads are prepared before the local transaction; data and outbox
+  commit together before response encoding. Handles are owner-bound; children never inherit them.
+  `UNKNOWN` and `COMMITTED` are preserved, never treated as rollback or retried. DB/driver/Jdbi
+  JARs belong only to the optional runtime classpath.
 
-## Request-Grenze, Kontext und Ressourcen
+## Shutdown
 
-Jede Fachanfrage läuft durch dieselbe Incoming-Admission und
-`RequestScopes`-/`Executions`-Grenze. Der HTTP-SDK hat den begrenzten Raw-Body
-bereits gelesen; DTO-Binding, Validation und Facharbeit beginnen erst nach Admission.
-Health, Metrics und feste Control-Routen liegen außerhalb dieser Fachgrenze.
-Keine zweite Request-Root im MVC-Adapter und kein ThreadLocal-Kontext.
+Stop sets unready and closes admission; deregistration runs independently. Admitted requests may
+use existing slots; waiting/new work is rejected; after the grace period cancellation is
+triggered. Only after the actual request/child/HTTP drain do app resources and both clients
+close. `HttpServer.run()` returning is no proof of drain, and neither is a forced kill.
 
-`TaskContext` hält Korrelation, Ursprung und Restbudget. Der mutable Raw-Request
-bleibt beim HTTP-Owner. Ein wiederverwendeter Client liest den aktuellen Kontext
-bei jedem Aufruf; Aufrufe außerhalb einer Micro-Grenze scheitern vor Encoding und
-Netzwerk. Explizite Startup-/Wartungsarbeit verwendet `app.runTask(...)`.
+## Out of scope
 
-Outgoing-Admission umfasst Encoding, tatsächlichen Exchange und Decoding. Ein
-Datenpool je App, eine gesonderte Control-Verbindung ohne zusätzliche Warteschlange.
-Keine Clients pro Request, automatischen Write-Replays, Redirects oder
-Credential-Weitergabe. `X-Hoori-Budget-Ms` entsteht im originalen Before-Write-Hook,
-also nach Pool-/DNS-/Connect-/TLS-Wartezeit. Es ist ein relatives Restbudget,
-keine globale Echtzeitfrist und kein Remote-Cancellation-Protokoll.
-
-Fehlerpriorität: Admission, Cancellation, Deadline und verpflichtendes Cleanup
-haben Vorrang vor Fach-Advice. Die Antwort wird erst nach lokalem Child-/Ressourcen-
-Drain freigegeben. Hoori arbeitet kooperativ; nicht kooperierende CPU-Arbeit kann
-nicht beliebig präemptiert werden.
-
-## Discovery und Gateway
-
-Der Katalog enthält Service, Major-Version, Instanz-ID, geprüften Origin und
-höchstens 128 HTTP-Endpunkte pro Instanz. Jeder Endpunkt besteht aus Methode,
-Template, consumes/produces und optionaler Permission. OpenAPI-Anwendungen ergänzen
-Operationshashes sowie Vertrags-Hash und API-Gruppe pro Instanz; Schemas bleiben
-beim Service. Der HTTP-Schlüssel bleibt unabhängig von Java-Methodennamen und Requestdaten.
-
-Die Registry verwendet HTTP/JSON unter `/_hoori/instances/{id}`,
-`/_hoori/instances/{id}/lease` und `/_hoori/catalog`.
-TTL, Epochen, Revisionen und die
-`complete`-Markierung begrenzen Wiederanmeldung und Neustart. Bei unveränderter
-Epoche/Revision/Sicht bestätigen Lease und Katalogabruf mit 204. Filter sind
-`none`, `public` oder `services=name:version,...` mit höchstens 32 Dependencies.
-Consumer erhalten nur ihre Services und keine Gateway-/OpenAPI-Metadaten. Der Registry-
-Gesamtkatalog und seine Antworten bleiben begrenzt, auch vor gefilterter Ausgabe.
-
-Auf dem Request-Pfad wird ausschließlich ein lokales unveränderliches Snapshot
-verwendet. Clientauswahl erfolgt nach Service, Version und exaktem Endpunktvertrag.
-Interne `X-Hoori-Endpoint`-/`X-Hoori-Version`-Header werden am Provider geprüft;
-Mismatch führt zu 421 ohne Retry. Externe Gateway-Aufrufer dürfen diese Header
-nicht bestimmen. Leere/abgelaufene Sichten bieten keine falsche Ersatzinstanz an.
-
-`@GatewayRoute(permission="service:scope")` veröffentlicht eine gemappte Methode.
-Fehlende Annotation bedeutet keine Gateway-Publikation; leere/fremde Permissions
-und Annotationen ohne Controller-Mapping sind Buildfehler. Die Policy wird pro
-Request geprüft. Die Demo-Policy gewährt konfigurierte Permissions jedem Aufrufer.
-
-Gateway und Provider verwenden denselben SDK-Router. Methode, Raw-Pfad/Query und
-begrenzter Body bleiben getrennt und unverändert. Das Gateway reicht nur `Accept`
-und `Content-Type` als Requestheader weiter; weitere gebundene Header sind für
-interne Controller/Clients möglich, aber nicht für publizierte Methoden.
-Erfolgsstatus und sichere Metadaten bleiben erhalten; absolute/unsichere Location,
-Credentials und Hop-by-hop-Header gelangen nicht nach außen. Bekannte begrenzte
-Validation-/Problem-Fehler werden geprüft und neu serialisiert. Ein Fehler eines
-inneren Remote-Aufrufs wird nicht als Validation des äußeren Inputs dargestellt.
-
-Der Registrar bereitet Routing und Katalog gemeinsam vor: maximal 256 verschiedene
-öffentliche Routen und 64 KiB Metadaten. Konflikte halten beide Definitionen zurück;
-überlaufende Updates verlängern die alte Sicht nicht. Unveränderte Bestätigungen
-verwenden das eingefrorene Routing weiter. Zusätzliche Provider-Endpunkte können
-dynamisch erscheinen, ohne Gateway oder unbeteiligte Clients neu zu bauen.
-
-OpenAPI-Routen müssen zusätzlich bei Permission, API-Gruppe und Operationshash
-übereinstimmen. Das [Publikationsmanifest](openapi.md) entsteht aus demselben
-Snapshot; undokumentierte und zurückgehaltene Routen sind ausdrücklich sichtbar.
-Der optionale Dokumentationsprozess holt passende, hashgebundene Artefakte über
-einen eigenen Client außerhalb von Requests und Registry-Heartbeat. Erst nach
-vollständigem Abgleich und erneutem Snapshotvergleich wird die aggregierte Doku
-ersetzt. Ein Wechsel oder Frischeablauf liefert bis dahin 503.
-
-## Parallele Fachlogik und optionale Daten
-
-Normale Clientmethoden sind synchron. `Tasks.task(() -> client.read(...))` erzeugt
-einen lazy `TaskSpec`; `parallel`/`map`/`settled` wählen ausdrücklich Parallelität,
-Fehlerpolicy und Reihenfolge. Der originale `@GenerateTasks`-Processor kann die
-Task-Fassade eines Client-Interfaces erzeugen; der App-Graph injiziert sie.
-
-`@TaskScoped`-/`@Transactional`-Dekoration gilt ausschließlich für unterstützte
-öffentliche Interfaces und deren injizierte Delegates. Es muss genau eine
-Implementierung geben; Transaktionen benötigen genau einen stabilen Manager.
-Konkrete/self-invoked Methoden erhalten keine automatische Interception. Die
-originalen SDK-Processor prüfen den Annotationsvertrag.
-
-Im optionalen Datenbeispiel bereitet der Fachservice Remote-Reads **vor** der
-lokalen Transaktion vor. Ein dekorierter Writer schreibt Daten und Outbox gemeinsam;
-das Repository enthält nur SQL. Handles sind ownergebunden, Kinder erhalten keine
-geerbten Handles. Physischer Commit liegt vor Response-Encoding. `UNKNOWN` und
-`COMMITTED` bleiben erhalten und werden weder als Rollback noch als Retry behandelt.
-DB-/Treiber-/Jdbi-JARs gehören allein zum optionalen Runtime-Klassenpfad.
-
-## Shutdown und Grenzen
-
-Stop setzt Unready und schließt Admission; Deregistrierung läuft unabhängig.
-Admittierte Requests dürfen vorhandene Slots weiter nutzen. Wartende/neue Arbeit
-wird abgewiesen, nach Grace wird Cancellation ausgelöst. Erst nach tatsächlichem
-Request-/Child-/HTTP-Drain schließen App-Ressourcen und beide Clients.
-`HttpServer.run()` allein beweist keinen Drain; erzwungener Prozesskill ebenso wenig.
-
-Registry und interne Endpunkte sind in dieser Demo unauthentifiziert. Keine
-allgemeine Proxy-Engine, ORM, Runtime-DI/AOP, Eventbroker, Spring-Kompatibilität oder
-Dahemm-Migration. Sicherheits- und Betriebsfolgen stehen in [security.md](security.md)
-und [roadmap.md](roadmap.md).
+Registry and internal endpoints are unauthenticated in this demo. No general proxy engine, ORM,
+runtime DI/AOP, event broker, Spring compatibility or Dahemm migration. See
+[roadmap.md](roadmap.md).

@@ -1,0 +1,95 @@
+---
+title: Validation
+description: Jakarta constraints checked before the business method – with fixed error codes.
+---
+
+`@Valid` and Jakarta constraints (`jakarta.validation`) generate bounded validation at build
+time. It runs **after** admission and **before** the business method.
+
+## Supported constraints
+
+| Constraint | Applies to | Example |
+|---|---|---|
+| `@NotNull` | References | `@NotNull List<Long> ids` |
+| `@NotBlank` | Strings | `@NotBlank String title` |
+| `@Size(min, max)` | Strings, lists | `@Size(max = 200) String title` |
+| `@Positive` | Numbers | `@Positive long id` |
+| `@Min` / `@Max` | Numbers | `@Min(1) int page` |
+| `@Valid` | Nested records, `@RequestBody` | `@RequestBody @Valid CreateRecipe input` |
+
+Unsupported profiles fail **at build time**, not at runtime.
+
+## Examples
+
+<Tabs items={['Path parameter', 'Body', 'List elements']}>
+<Tab value="Path parameter">
+
+```java
+@GetMapping("/{id}")
+public Recipe get(@PathVariable("id") @Positive long id) { … }
+```
+
+```bash
+curl -i http://127.0.0.1:8081/recipes/0
+```
+
+```json
+{"code":"validation_failed","violations":[{"path":"path.id","code":"positive"}]}
+```
+
+</Tab>
+<Tab value="Body">
+
+```java
+public record CreateRecipe(@NotBlank @Size(max = 200) String title) {}
+
+@PostMapping
+public HttpResult<Recipe> create(@RequestBody @Valid CreateRecipe input) { … }
+```
+
+</Tab>
+<Tab value="List elements">
+
+Constraints may sit on type arguments (`TYPE_USE`):
+
+```java
+public record RecipeIds(
+        @NotNull @Size(min = 1, max = 16)
+        List<@NotNull @Positive Long> ids) {}
+```
+
+An invalid element is reported with its index, e.g. `{"path":"ids[1]","code":"positive"}`.
+
+</Tab>
+</Tabs>
+
+## What else is rejected
+
+- missing required fields and wrong JSON types
+- duplicate JSON fields and trailing tokens
+- size overruns (body, JSON depth, string length – see [Limits](/docs/reference/limits))
+
+Null checks and domain constraints remain separate rules.
+
+<Callout type="warn" title="new Dto(...) does not validate">
+  Validation happens while binding incoming requests. A `new CreateRecipe("")` created in code
+  is not checked.
+</Callout>
+
+## Error shape
+
+Validation failures return **400**. Public errors contain only a field path and a code – never
+the rejected value or an exception message:
+
+```json
+{
+  "code": "validation_failed",
+  "violations": [
+    { "path": "path.id", "code": "positive" }
+  ]
+}
+```
+
+If your service calls another service and that one rejects with a validation error, you see a
+`ServiceCallException` with `violations()` – **not** a validation error of your own input. See
+[Error handling](/docs/guide/errors).
