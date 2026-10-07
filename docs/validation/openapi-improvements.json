@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "date": "2026-10-07",
+  "code_revision": "93510b9fb4fae43f6b56cc49fba52265d168cee3",
+  "issues": [
+    51,
+    52,
+    53,
+    54,
+    57
+  ],
+  "runtime": {
+    "source": {
+      "dirty": false,
+      "revision": "83d2b8fc83ffee6ed7c748409ff7b4802d8a341b"
+    },
+    "toolchain": {
+      "javac": "javac 21.0.12.1",
+      "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)"
+    },
+    "manifest_sha256": "a1b5a9d79d5f6d2d3d5b07ce8b71ac890188985a5d8b689ffa6ef787bfb6f575"
+  },
+  "jars": {
+    "examples/demo-contracts/target/hoori-micro-demo-contracts-0.1.0-SNAPSHOT.jar": "3cea4d161be4c1e824aaf296657fb6fd454a44409dbefa6cbe0e342a50eea36a",
+    "examples/mvc-crud/target/mvc-crud-0.1.0-SNAPSHOT.jar": "0e3406d4cc686e31c00e0fa1b6ca70f7f255c0615421fda60d47be6ac3c7d8ad",
+    "examples/pantry-service/target/pantry-service-0.1.0-SNAPSHOT.jar": "63f6a342d10be88b042cdf1b50cbeb24e3461d6a01e14d4ab973c2262c1e5176",
+    "examples/recipes-service/target/recipes-service-0.1.0-SNAPSHOT.jar": "7d00b16f4edb3658e5cc818c6ae033d047dacef4e2fb9f4506fa34bee1238950",
+    "examples/shopping-service/target/shopping-service-0.1.0-SNAPSHOT.jar": "2b8394e7d0c8a1be3fba78d6d8ce3567331a4fdf27f3cb10724a6f8064ad80d4",
+    "framework/target/hoori-micro-0.1.0-SNAPSHOT.jar": "c35b71086454c263be3f05ae45a7edce25e4577a7115bcfcfe44e2abed37a798",
+    "processor/target/hoori-micro-processor-0.1.0-SNAPSHOT.jar": "1061d509fe1561d370a92686d50c008c4c3c5f800890597ab4f78c59a8e290f6"
+  },
+  "passed": {
+    "maven_verify": {
+      "jdk": "21.0.12.1",
+      "maven": "3.9.11",
+      "framework_junit_tests": 25,
+      "processor_junit_tests": 16
+    },
+    "portable_core_assertions": 117,
+    "formatter_fixtures": 5,
+    "python_unit_tests": 27,
+    "manual_build": true,
+    "native_core_engines": [
+      "mixed",
+      "interpreter"
+    ],
+    "native_openapi_assertions_per_engine": 38,
+    "native_openapi_http_engines": [
+      "mixed",
+      "interpreter"
+    ],
+    "existing_http_and_mvc_engines": [
+      "mixed"
+    ],
+    "docker_mixed": [
+      "gateway publication, business calls, health, metrics and context",
+      "registration, leases, catalog filtering and byte limits",
+      "missing OpenAPI artifact, business/readiness isolation and publication recovery"
+    ]
+  },
+  "limitations": [
+    "Full Docker smoke exits before resource snapshots: the runner cannot read the Docker cgroup memory.stat through its current cgroup namespace.",
+    "Build cache was primed by installing framework and processor before build.sh; clean-cache first-build issue #46 remains separate.",
+    "Remaining Docker rolling/resource/shutdown stages, interpreter Docker smoke, MVC GC stress, optional examples and performance matrices were not completed for this change."
+  ],
+  "raw_evidence_sha256": {
+    ".cache/openapi-build.log": "6ab04729983ba9365c1e17d04ce440f26c05b1c3f5a4a34de808e404eb677f91",
+    ".cache/openapi-portable.log": "0d196b6ad6e4ffba4f37869220986c0b5b8836dfdb96e3c24cf37e07b0b76017",
+    ".cache/openapi-python.log": "830a3bec52bc94138ec4a1d91e93ba9fe98ffbd837cec58f19d9bba551c3aa04",
+    ".cache/openapi-manual-build.log": "4b5d9e8677bbd020945b0aa6fa923504b9410b07e0615f5f35e85d9529da2f58",
+    ".cache/openapi-core-mixed.log": "addbb92ac207784b0328707038e637e72beb1b46c3c3d62b88d2f674f7cb8a95",
+    ".cache/openapi-core-interpreter.log": "addbb92ac207784b0328707038e637e72beb1b46c3c3d62b88d2f674f7cb8a95",
+    ".cache/openapi-http-mixed.log": "42fce3b8af87ae5c88beb312fdcb6ac955a4e8f7c86d2e2a0fa2525e7fe5dffe",
+    ".cache/openapi-http-interpreter.log": "d9b87fe6c25ab525570c4de01a33c0ae5f31bf1aea4be0759c474f37b1b1dc48",
+    ".cache/openapi-existing-http.log": "a6927c88e5b0fe32abe7cc050ba803a28260c809ebef08920a4a98fa22e864b8",
+    ".cache/openapi-existing-mvc.log": "3f4f75e578f8dcaa4b86bbdac53a0f471b0c87952ea83d877d29eefbfcd979b6",
+    ".cache/openapi-smoke.log": "7aa86fb47015dc7ed0bf9d77ddcbadaf33913b834b3b51eb69fa373dbe0fae6e",
+    ".cache/openapi-mixed.json": "42fce3b8af87ae5c88beb312fdcb6ac955a4e8f7c86d2e2a0fa2525e7fe5dffe",
+    ".cache/openapi-interpreter.json": "d9b87fe6c25ab525570c4de01a33c0ae5f31bf1aea4be0759c474f37b1b1dc48",
+    ".cache/http-mixed.json": "ddf03cfbdab7ea6a615c50f5852303cc24cef358aa8b8f92a30ffdcce848b3f4",
+    ".cache/hoori-micro-check-26368.json": "d9561276da4cb1e4e6d499feb73c3d7d8e10adce9b0b6de87e6591a45bce5a96"
+  }
+}

@@ -72,3 +72,24 @@ process selection, HTTP and SIGTERM drain.
 No visual IntelliJ acceptance. Interpreter variants of the HTTP/example/smoke gates and the other
 gates listed above were not re-run for this change; their previous receipts stay tied to the
 earlier state.
+
+## OpenAPI improvements, 7 October 2026
+
+Issues #51–#54 and #57 use the unchanged runtime pin, JDK `21.0.12.1` and Maven `3.9.11`.
+Passed: 41 JUnit tests, 117 portable assertions, 5 formatter fixtures, 27 Python tests,
+the manual build, native core/38 OpenAPI assertions and `test_openapi.py` in **mixed and
+interpreter**. The generated HTTP fixture verifies defaults (including empty strings), byte/short
+boundaries, parameter overrides, literal `$ref` fields/examples, fixed diagnostic states,
+conflicts, expiry and recovery. Existing HTTP/MVC checks passed in mixed.
+
+The Docker mixed run passed publication, registry/lease/filter checks and missing-artifact
+isolation/recovery, then stopped before resource sampling: this runner cannot read Docker's
+`memory.stat` through its cgroup namespace. The full smoke is **not passed**. Staged artifacts
+needed public read/traverse permissions because the runner defaults to `umask 0077`; image
+non-root execution and security settings were preserved. Framework/processor artifacts were
+installed before `build.sh`; this does not resolve the clean-cache first-build issue #46.
+
+The [receipt](validation/openapi-improvements.json) binds the implementation revision, runtime,
+JARs and raw evidence hashes. Remaining Docker stages, interpreter Docker smoke, MVC GC stress,
+optional examples and performance matrices were not completed here; historical receipts remain
+tied to their earlier code states.
