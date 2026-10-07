@@ -39,10 +39,13 @@ final class ServiceBroker {
     private volatile View view = View.EMPTY;
     private boolean publicCatalog;
     private final Random jitter = new Random();
-    private boolean registered; // all control state below is heartbeat-thread owned
+    private volatile boolean registered; // written only by the control owner
+    private volatile long registrationNanos;
+    private volatile long refreshFailures;
+    private volatile String failureReason = "none";
     private String retiredEpoch;
     private int failures;
-    private boolean registryReachable = true; // heartbeat thread only; logs transitions, not every beat
+    private volatile boolean registryReachable; // logs transitions, not every beat
 
     ServiceBroker(ServiceDefinition service, ServiceConfig config, Exchange exchange, JsonLimits limits) {
         this(service, config, exchange, exchange, limits);
@@ -110,6 +113,27 @@ final class ServiceBroker {
 
     Admission.Stats admissionStats() {
         return outgoing.stats();
+    }
+
+    /** Local observations only; a scrape neither renews a lease nor fetches a catalog. */
+    String discoveryMetrics() {
+        View current = view;
+        long now = System.nanoTime();
+        boolean fresh = current.live && now - current.fetchedNanos < config.catalogMaxAgeMillis * 1_000_000L;
+        long age = current == View.EMPTY ? -1 : Math.max(0, (now - current.fetchedNanos) / 1_000_000L);
+        boolean activeRegistration = registered && now - registrationNanos < config.registryTtlMillis * 1_000_000L;
+
+        return "hoori_micro_discovery_enabled " + (needsDiscovery() ? 1 : 0) + "\n"
+                + "hoori_micro_registry_available " + (registryReachable ? 1 : 0) + "\n"
+                + "hoori_micro_registration_active " + (activeRegistration ? 1 : 0) + "\n"
+                + "hoori_micro_catalog_age_millis " + age + "\n"
+                + "hoori_micro_catalog_fresh " + (fresh ? 1 : 0) + "\n"
+                + "hoori_micro_catalog_complete " + (fresh && current.catalog.complete ? 1 : 0) + "\n"
+                + "hoori_micro_registry_refresh_failures_total " + refreshFailures + "\n"
+                + "hoori_micro_registry_failure{reason=\"" + failureReason + "\"} 1\n"
+                + "hoori_micro_gateway_publication_available " + (fresh && current.publication != null ? 1 : 0) + "\n"
+                + "hoori_micro_gateway_routes_withheld "
+                + (fresh && current.publication != null ? current.publication.withheldRoutes : 0) + "\n";
     }
 
     void stop() {
@@ -335,9 +359,13 @@ final class ServiceBroker {
 
             accept(response, known, requested);
 
-            if (register) registered = true;
+            if (register) {
+                registered = true;
+                registrationNanos = System.nanoTime();
+            }
 
             failures = 0;
+            failureReason = "none";
             reachable(true, null);
         } catch (SocketTimeoutException expired) {
             if (Thread.currentThread().isInterrupted()) throw expired;
@@ -352,6 +380,12 @@ final class ServiceBroker {
 
     private void failedBeat(Exception failed) {
         failures = Math.min(3, failures + 1);
+
+        if (refreshFailures < Long.MAX_VALUE) refreshFailures++;
+
+        failureReason = failed instanceof SocketTimeoutException
+                ? "timeout"
+                : failed instanceof IOException ? "transport" : "rejected";
         reachable(false, failed);
     }
 
@@ -499,8 +533,7 @@ final class ServiceBroker {
             System.err.println(
                     value
                             ? "registry_available service=" + service.name
-                            : "registry_unavailable service=" + service.name + " type="
-                                    + failure.getClass().getName());
+                            : "registry_unavailable service=" + service.name + " reason=" + failureReason);
 
         registryReachable = value;
     }

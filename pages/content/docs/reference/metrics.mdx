@@ -51,6 +51,39 @@ Active connections include reserved DNS/connect/TLS slots.
 
 Drain time covers completion after the framework body returns, not response I/O.
 
+## Discovery and OpenAPI
+
+These observations are local. Scrapes never fetch a registry or contract. Counters saturate
+at `Long.MAX_VALUE`; no provider address, request data or exception text becomes a label.
+
+| Metric | Meaning |
+|---|---|
+| `hoori_micro_discovery_enabled` | 1 when this process needs registration or a catalog |
+| `hoori_micro_registry_available` | 1 after the last successful heartbeat; 0 before the first success or after a failed refresh |
+| `hoori_micro_registration_active` | 1 while a successful local registration/renewal is within its TTL; this does not probe the registry |
+| `hoori_micro_catalog_age_millis` | Age since the last accepted catalog/confirmation; -1 before the first acceptance |
+| `hoori_micro_catalog_fresh` | 1 while the retained catalog is within `HOORI_CATALOG_MAX_AGE_MS` |
+| `hoori_micro_catalog_complete` | 1 for a fresh catalog whose registry rebuilding phase is complete |
+| `hoori_micro_registry_refresh_failures_total` | Failed heartbeat attempts; retained across recovery |
+| `hoori_micro_registry_failure` | Current fixed `reason`: `none`, `timeout`, `transport` or `rejected` |
+| `hoori_micro_gateway_publication_available` | 1 when a fresh gateway routing manifest exists, independently of documentation |
+| `hoori_micro_gateway_routes_withheld` | Distinct conflicting route identities in the current fresh manifest; 0 without a manifest |
+| `hoori_micro_openapi_enabled` | 1 when the documentation worker is mounted |
+| `hoori_micro_openapi_available` | 1 only when the document matches the current fresh routing publication |
+| `hoori_micro_openapi_refresh_failures_total` | Failed documentation refresh attempts; retained across recovery |
+| `hoori_micro_openapi_state` | Current fixed `reason` described below |
+
+`hoori_micro_openapi_state{reason="…"} 1` reports `disabled`, `none` (available),
+`catalog` (no fresh catalog), `incomplete` (undocumented routes), `pending` (new snapshot
+not yet aggregated), `artifact` (fetch failed or artifact missing), `identity` (hash mismatch),
+`invalid` (media/document rejected), `limit` (bounded publication/cache overflow) or `aggregate`
+(aggregate rejected), or `timeout` (refresh budget/interruption). One state is emitted per scrape;
+repeated identical failures only increment the counter and produce no documentation log stream.
+
+Registry availability can be 0 while a retained catalog is still fresh. Local
+`/health/ready` describes admission/readiness, not dependency or documentation health.
+Withheld routes are excluded while other compatible routes can remain available.
+
 ## Runtime
 
 | Metric | Meaning |

@@ -9,6 +9,14 @@
     <relativePath>../../starter/pom.xml</relativePath>
   </parent>
   <artifactId>mvc-crud</artifactId>
+  <dependencies>
+    <dependency>
+      <groupId>dev.hoori</groupId>
+      <artifactId>hoori-rest-annotations</artifactId>
+      <version>${hoori.sdk.version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
   <properties>
     <spotless.skip>false</spotless.skip>
   </properties>

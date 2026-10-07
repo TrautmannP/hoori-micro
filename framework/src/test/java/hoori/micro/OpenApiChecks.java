@@ -6,6 +6,7 @@ import hoori.rest.json.Json;
 import hoori.rest.json.JsonLimits;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /** Same bounded contract/publication checks on the host and the actual guest. */
@@ -126,7 +127,163 @@ public final class OpenApiChecks {
                         .id
                         .equals("public"),
                 "Gateway selection honors published contract");
+        parameterOverrides(first);
+        literalReferences();
         System.out.println("OpenAPI checks passed: " + checks + " assertions");
+    }
+
+    private static void parameterOverrides(OpenApiDocument first) {
+        Map<String, Object> tree = first.document();
+        Map<String, Object> item =
+                ContractJson.object(ContractJson.object(tree.get("paths")).get("/widgets/{id}"));
+        Map<String, Object> operation = ContractJson.object(item.get("get"));
+        Object id = ContractJson.array(operation.get("parameters")).get(0);
+        Map<String, Object> inherited = queryParameter("20"), local = queryParameter("10");
+        item.put("parameters", List.of(id, inherited));
+        operation.put("parameters", List.of(local));
+        OpenApiDocument overridden = new OpenApiDocument(ContractJson.bytes(tree));
+        var selected = overridden.operations().get(0);
+        List<?> parameters =
+                ContractJson.array(overridden.expandedOperation(selected).get("parameters"));
+        check(parameters.size() == 2, "Override replaces just the matching inherited parameter");
+        check(
+                ContractJson.object(ContractJson.object(parameters.get(1)).get("schema"))
+                        .get("default")
+                        .equals(new ContractJson.NumberToken("10")),
+                "Override default is effective");
+        item.put("parameters", List.of(id, queryParameter("30")));
+        OpenApiDocument shadowed = new OpenApiDocument(ContractJson.bytes(tree));
+        check(selected.hash().equals(shadowed.operations().get(0).hash()), "Shadowed parameter does not affect hash");
+        operation.put("parameters", List.of(queryParameter("11")));
+        check(
+                !selected.hash()
+                        .equals(new OpenApiDocument(ContractJson.bytes(tree))
+                                .operations()
+                                .get(0)
+                                .hash()),
+                "Effective parameter affects hash");
+        operation.put("parameters", List.of(local, local));
+        rejected(() -> new OpenApiDocument(ContractJson.bytes(tree)), "Duplicate local parameter");
+        operation.put("parameters", List.of(local));
+        item.put("parameters", List.of(id, inherited, inherited));
+        rejected(() -> new OpenApiDocument(ContractJson.bytes(tree)), "Duplicate inherited parameter");
+        Map<String, Object> sameName = new LinkedHashMap<>(local);
+        sameName.put("name", "id");
+        item.put("parameters", List.of(id));
+        operation.put("parameters", List.of(sameName));
+        check(
+                ContractJson.array(new OpenApiDocument(ContractJson.bytes(tree))
+                                        .operation(selected)
+                                        .get("parameters"))
+                                .size()
+                        == 2,
+                "Parameter locations are distinct");
+        ContractJson.object(tree.get("components")).put("parameters", Map.of("Old", inherited, "New", local));
+        item.put("parameters", List.of(id, Map.of("$ref", "#/components/parameters/Old")));
+        operation.put("parameters", List.of(Map.of("$ref", "#/components/parameters/New")));
+        OpenApiDocument referenced = new OpenApiDocument(ContractJson.bytes(tree));
+        check(
+                selected.hash().equals(referenced.operations().get(0).hash()),
+                "Referenced parameters use the same override");
+        GatewayPublication publication = publication(referenced);
+        Map<String, Object> aggregate = ContractJson.object(
+                ContractJson.read(OpenApi.aggregate(publication, Map.of(referenced.hash(), referenced))
+                        .get("public")));
+        Map<String, Object> published = ContractJson.object(
+                ContractJson.object(ContractJson.object(aggregate.get("paths")).get("/widgets/{id}"))
+                        .get("get"));
+        check(
+                ContractJson.array(published.get("parameters")).equals(parameters),
+                "Published override matches effective parameters");
+    }
+
+    private static Map<String, Object> queryParameter(String fallback) {
+        return Map.of(
+                "name",
+                "limit",
+                "in",
+                "query",
+                "required",
+                false,
+                "schema",
+                Map.of("type", "integer", "format", "int32", "default", new ContractJson.NumberToken(fallback)));
+    }
+
+    private static void literalReferences() {
+        Map<String, Object> tree = document(DOCUMENT).document();
+        Map<String, Object> schemas =
+                ContractJson.object(ContractJson.object(tree.get("components")).get("schemas"));
+        Map<String, Object> widget = ContractJson.object(schemas.get("Widget"));
+        Map<String, Object> properties = ContractJson.object(widget.get("properties"));
+        properties.put("$ref", properties.remove("description"));
+        widget.put("required", List.of("id", "$ref"));
+        schemas.put("Detail", Map.of("type", "string"));
+        properties.put("nested", Map.of("$ref", "#/components/schemas/Detail"));
+        Map<String, Object> literal =
+                Map.of("$ref", "#/components/schemas/Widget", "nested", Map.of("$ref", "literal application data"));
+        for (String key : List.of("default", "const")) widget.put(key, literal);
+        for (String key : List.of("enum", "examples")) widget.put(key, List.of(literal));
+        Map<String, Object> operation = ContractJson.object(
+                ContractJson.object(ContractJson.object(tree.get("paths")).get("/widgets/{id}"))
+                        .get("get"));
+        Map<String, Object> media = responseMedia(operation);
+        media.put("example", literal);
+        media.put("examples", Map.of("sample", Map.of("value", literal)));
+        OpenApiDocument document = new OpenApiDocument(ContractJson.bytes(tree));
+        Map<String, Object> expanded =
+                document.expandedOperation(document.operations().get(0));
+        Map<String, Object> expandedMedia = responseMedia(expanded);
+        Map<String, Object> schema = ContractJson.object(expandedMedia.get("schema"));
+        check(
+                ContractJson.object(schema.get("properties")).containsKey("$ref"),
+                "Literal property named $ref survives expansion");
+        check(
+                ContractJson.object(
+                                ContractJson.object(schema.get("properties")).get("nested"))
+                        .get("type")
+                        .equals("string"),
+                "Actual nested schema reference is expanded");
+        check(
+                literal.equals(expandedMedia.get("example"))
+                        && literal.equals(schema.get("default"))
+                        && literal.equals(schema.get("const"))
+                        && List.of(literal).equals(schema.get("enum"))
+                        && List.of(literal).equals(schema.get("examples")),
+                "Example and schema values remain literal");
+        check(
+                literal.equals(ContractJson.object(ContractJson.object(expandedMedia.get("examples"))
+                                .get("sample"))
+                        .get("value")),
+                "Example object value stays literal");
+        OpenApiDocument canonical = new OpenApiDocument(document.bytes());
+        check(
+                document.hash().equals(canonical.hash())
+                        && document.operations()
+                                .get(0)
+                                .hash()
+                                .equals(canonical.operations().get(0).hash()),
+                "Literal data fingerprints are deterministic");
+        GatewayPublication publication = publication(document);
+        Map<String, Object> aggregate =
+                ContractJson.object(ContractJson.read(OpenApi.aggregate(publication, Map.of(document.hash(), document))
+                        .get("public")));
+        Map<String, Object> published = ContractJson.object(
+                ContractJson.object(ContractJson.object(aggregate.get("paths")).get("/widgets/{id}"))
+                        .get("get"));
+        check(responseMedia(published).equals(expandedMedia), "Publication preserves literal reference data");
+    }
+
+    private static Map<String, Object> responseMedia(Map<String, Object> operation) {
+        return ContractJson.object(ContractJson.object(ContractJson.object(
+                                ContractJson.object(operation.get("responses")).get("200"))
+                        .get("content"))
+                .get("application/json"));
+    }
+
+    private static GatewayPublication publication(OpenApiDocument document) {
+        Catalog catalog = new Catalog("checks", 1, true, new Catalog.Instance[] {instance("literal", document)});
+
+        return GatewayPublication.build(catalog, Gateway.build(catalog));
     }
 
     private static HttpEndpoint firstEndpoint() {

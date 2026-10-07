@@ -10,6 +10,7 @@ import hoori.http.Response;
 import hoori.micro.openapi.ContractJson;
 import hoori.micro.openapi.OpenApiDocument;
 import java.io.IOException;
+import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
@@ -25,9 +26,22 @@ public final class OpenApi implements AutoCloseable {
     private final Thread worker;
     private volatile boolean closed;
     private volatile Published published;
+    private volatile RefreshState refreshState = new RefreshState("", "pending", 0);
+    private String attemptedId = "";
     private Map<String, OpenApiDocument> cache = new LinkedHashMap<>();
 
     private record Published(String id, Map<String, byte[]> groups) {}
+
+    private record RefreshState(String id, String reason, long failures) {}
+
+    private static final class RefreshFailure extends IOException {
+        final String reason;
+
+        RefreshFailure(String reason) {
+            super(reason);
+            this.reason = reason;
+        }
+    }
 
     private OpenApi(Microservice app) {
         this.app = app;
@@ -40,6 +54,7 @@ public final class OpenApi implements AutoCloseable {
         if (!app.broker().followsPublicCatalog()) throw new IllegalStateException("Mount Gateway before OpenApi");
 
         OpenApi api = app.own(new OpenApi(app));
+        app.documentation(api);
         app.controlRoute("GET", "/openapi.json", request -> api.document("public"));
         app.controlRoute("GET", "/_hoori/openapi/groups/{group}", request -> api.document(request.pathParam("group")));
         app.controlRoute("GET", "/_hoori/openapi", request -> api.index());
@@ -63,6 +78,34 @@ public final class OpenApi implements AutoCloseable {
         GatewayPublication source = app.broker().snapshot().publication;
 
         return current != null && source != null && current.id.equals(source.id) ? current : null;
+    }
+
+    static String metrics(OpenApi api) {
+        String reason = "disabled";
+        boolean available = false;
+        long failures = 0;
+
+        if (api != null) {
+            RefreshState state = api.refreshState;
+            failures = state.failures;
+            ServiceBroker.View view = api.app.broker().snapshot();
+            GatewayPublication source = view.publication;
+            available = api.published != null && source != null && api.published.id.equals(source.id);
+            reason = available
+                    ? "none"
+                    : !view.live
+                            ? "catalog"
+                            : source == null
+                                    ? "limit"
+                                    : !source.complete
+                                            ? "incomplete"
+                                            : state.id.equals(source.id) ? state.reason : "pending";
+        }
+
+        return "hoori_micro_openapi_enabled " + (api == null ? 0 : 1) + "\n"
+                + "hoori_micro_openapi_available " + (available ? 1 : 0) + "\n"
+                + "hoori_micro_openapi_refresh_failures_total " + failures + "\n"
+                + "hoori_micro_openapi_state{reason=\"" + reason + "\"} 1\n";
     }
 
     private Response document(String group) {
@@ -104,7 +147,12 @@ public final class OpenApi implements AutoCloseable {
                 if (app.isReady()) refresh();
             } catch (IOException | RuntimeException failed) {
                 // Missing, mismatched or oversized documents never replace a complete publication.
-                // No provider errors or document contents are logged.
+                // Only a fixed reason and saturating counter are retained; no error text is logged.
+                RefreshState previous = refreshState;
+                refreshState = new RefreshState(
+                        attemptedId,
+                        failed instanceof RefreshFailure bounded ? bounded.reason : "aggregate",
+                        previous.failures == Long.MAX_VALUE ? Long.MAX_VALUE : previous.failures + 1);
             }
             try {
                 Thread.sleep(250);
@@ -119,13 +167,14 @@ public final class OpenApi implements AutoCloseable {
 
         if (source == null || !source.complete || published != null && published.id.equals(source.id)) return;
 
+        attemptedId = source.id;
         Map<String, OpenApiDocument> documents = new LinkedHashMap<>();
         int bytes = 0;
         RequestBudget budget = RequestBudget.afterMillis(5000);
         for (GatewayPublication.Selection selection : source.selections) {
             if (documents.containsKey(selection.hash())) continue;
 
-            if (documents.size() == 64) throw new IOException("OpenAPI document count limit");
+            if (documents.size() == 64) throw new RefreshFailure("limit");
 
             OpenApiDocument document = cache.get(selection.hash());
 
@@ -133,7 +182,7 @@ public final class OpenApi implements AutoCloseable {
 
             bytes += document.byteSize();
 
-            if (bytes > 262144) throw new IOException("OpenAPI cache byte limit");
+            if (bytes > 262144) throw new RefreshFailure("limit");
 
             documents.put(selection.hash(), document);
         }
@@ -144,12 +193,14 @@ public final class OpenApi implements AutoCloseable {
 
         cache = documents;
         published = new Published(source.id, Map.copyOf(groups));
+        refreshState = new RefreshState(source.id, "none", refreshState.failures);
     }
 
     private OpenApiDocument fetch(GatewayPublication.Selection selection, RequestBudget budget) throws IOException {
         // Exact artifact and matching instance; no round-robin by service name and no request-derived URL.
+        String reason = "artifact";
         for (Catalog.Instance provider : selection.providers()) {
-            if (closed || budget.isExpired()) throw new IOException("OpenAPI refresh stopped");
+            if (closed || budget.isExpired()) throw new RefreshFailure("timeout");
 
             try {
                 Response response = client.exchange(
@@ -159,19 +210,40 @@ public final class OpenApi implements AutoCloseable {
                         EMPTY,
                         budget);
 
-                if (response.status != 200
-                        || !ServiceBroker.jsonContentType(response.headers)
-                        || response.body.length > ContractJson.MAX_BYTES
-                        || !selection.hash().equals(ContractJson.hash(response.body))) continue;
+                if (response.status != 200) {
+                    reason = "artifact";
+                    continue;
+                }
+
+                if (!ServiceBroker.jsonContentType(response.headers)) {
+                    reason = "invalid";
+                    continue;
+                }
+
+                if (response.body.length > ContractJson.MAX_BYTES) {
+                    reason = "limit";
+                    continue;
+                }
+
+                if (!selection.hash().equals(ContractJson.hash(response.body))) {
+                    reason = "identity";
+                    continue;
+                }
 
                 OpenApiDocument document = new OpenApiDocument(response.body);
 
                 if (document.hash().equals(selection.hash())) return document;
+
+                reason = "identity";
             } catch (IOException | IllegalArgumentException | hoori.rest.json.JsonException rejected) {
-                if (Thread.currentThread().isInterrupted()) throw new IOException("OpenAPI stopped");
+                reason = rejected instanceof SocketTimeoutException
+                        ? "timeout"
+                        : rejected instanceof IOException ? "artifact" : "invalid";
+
+                if (Thread.currentThread().isInterrupted()) throw new RefreshFailure("timeout");
             }
         }
-        throw new IOException("OpenAPI artifact unavailable");
+        throw new RefreshFailure(reason);
     }
 
     static Map<String, byte[]> aggregate(GatewayPublication source, Map<String, OpenApiDocument> documents) {

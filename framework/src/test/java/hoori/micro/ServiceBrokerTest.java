@@ -276,18 +276,24 @@ final class ServiceBrokerTest {
                 },
                 JsonLimits.DEFAULT);
         assertTrue(broker.needsDiscovery());
+        assertTrue(broker.discoveryMetrics().contains("hoori_micro_catalog_age_millis -1\n"));
         for (int i = 0; i < 2; i++) {
             broker.beat(false);
             assertFalse(Thread.currentThread().isInterrupted());
         }
         failure[0] = new IOException("transport failure");
         broker.beat(false);
+        assertTrue(broker.discoveryMetrics().contains("hoori_micro_registry_refresh_failures_total 3\n"));
+        assertTrue(broker.discoveryMetrics().contains("hoori_micro_registry_available 0\n"));
         int delay = broker.heartbeatDelayMillis();
         assertTrue(delay >= 14400 && delay <= 17600);
         failure[0] = null;
         registry.register(parse(instance("recipes-a", 1, "http://a:8080", "get")), now);
         broker.beat(false);
         assertEquals("ok", call(broker, null, RequestBudget.afterMillis(broker.callTimeoutMillis()), GET, "x"));
+        assertTrue(broker.discoveryMetrics().contains("hoori_micro_registry_available 1\n"));
+        assertTrue(broker.discoveryMetrics().contains("hoori_micro_registry_failure{reason=\"none\"} 1\n"));
+        assertTrue(broker.discoveryMetrics().contains("hoori_micro_catalog_fresh 1\n"));
         delay = broker.heartbeatDelayMillis();
         assertTrue(delay >= 1800 && delay <= 2200);
         failure[0] = new InterruptedIOException("cancelled");
@@ -816,6 +822,7 @@ final class ServiceBrokerTest {
         ServiceBroker.View snapshot = broker.snapshot();
         assertEquals(1, snapshot.catalog.revision);
         assertEquals("/first", snapshot.routes[0].path);
+        assertTrue(broker.discoveryMetrics().contains("hoori_micro_gateway_routes_withheld 0\n"));
         broker.accept(Json.encode(initial, Catalog.CODEC));
         assertSame(snapshot.routes, broker.snapshot().routes);
         Catalog.Entry changed =
@@ -826,6 +833,7 @@ final class ServiceBrokerTest {
         broker.accept(Json.encode(conflict, Catalog.CODEC));
         assertEquals(2, broker.snapshot().catalog.revision);
         assertEquals(0, broker.snapshot().routes.length);
+        assertTrue(broker.discoveryMetrics().contains("hoori_micro_gateway_routes_withheld 1\n"));
         Catalog.Instance[] many = new Catalog.Instance[3];
         for (int i = 0; i < many.length; i++) {
             Catalog.Entry[] entries = new Catalog.Entry[i == 2 ? 1 : 128];
@@ -843,6 +851,9 @@ final class ServiceBrokerTest {
         Thread.sleep(120);
         assertSame(Catalog.EMPTY, broker.snapshot().catalog);
         assertEquals(0, broker.snapshot().routes.length);
+        assertTrue(broker.discoveryMetrics().contains("hoori_micro_catalog_fresh 0\n"));
+        assertTrue(broker.discoveryMetrics().contains("hoori_micro_gateway_publication_available 0\n"));
+        assertFalse(broker.discoveryMetrics().contains("hoori_micro_catalog_age_millis -1\n"));
     }
 
     @Test

@@ -1,0 +1,52 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "OpenAPI regression probe", "version": "1" },
+  "x-hoori-service-version": 1,
+  "paths": {
+    "/probe/openapi/defaults": {
+      "parameters": [{ "name": "limit", "in": "query", "required": false,
+        "schema": { "type": "integer", "format": "int32", "default": 30 } }],
+      "get": {
+        "operationId": "probeDefaults", "x-hoori-permission": "probe:read",
+        "parameters": [
+          { "name": "limit", "in": "query", "required": false,
+            "schema": { "type": "integer", "format": "int32", "default": 20 } },
+          { "name": "text", "in": "query", "required": false,
+            "schema": { "type": "string", "default": "" } }
+        ],
+        "responses": { "200": { "description": "Defaults", "content": {
+          "application/json": { "schema": { "type": "string" } }
+        } } }
+      }
+    },
+    "/probe/openapi/range": {
+      "get": {
+        "operationId": "probeRange", "x-hoori-permission": "probe:read",
+        "parameters": [
+          { "name": "byte", "in": "query", "required": true,
+            "schema": { "type": "integer", "format": "int32", "minimum": -128, "maximum": 127 } },
+          { "name": "short", "in": "query", "required": true,
+            "schema": { "type": "integer", "format": "int32", "minimum": -32768, "maximum": 32767 } }
+        ],
+        "responses": { "200": { "description": "Sum", "content": {
+          "application/json": { "schema": { "type": "integer", "format": "int32" } }
+        } } }
+      }
+    },
+    "/probe/openapi/literal": {
+      "get": {
+        "operationId": "probeLiteral", "x-hoori-permission": "probe:read",
+        "responses": { "200": { "description": "Literal key", "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Literal" },
+            "example": { "$ref": "#/components/schemas/Literal" },
+            "examples": { "sample": { "value": { "$ref": "literal application data" } } }
+          }
+        } } }
+      }
+    }
+  },
+  "components": { "schemas": {
+    "Literal": { "type": "object", "properties": { "$ref": { "type": "string" } }, "required": ["$ref"] }
+  } }
+}

@@ -1,5 +1,7 @@
 package probe;
 
+import hoori.micro.app.GatewayRoute;
+import hoori.rest.codegen.JsonField;
 import hoori.rest.mvc.*;
 import jakarta.validation.Valid;
 
@@ -40,4 +42,26 @@ public final class ProbeController {
 
         return input;
     }
+
+    @GetMapping("/openapi/defaults")
+    @GatewayRoute(permission = "probe:read")
+    public String defaults(
+            @RequestParam(value = "limit", defaultValue = "20") Integer limit,
+            @RequestParam(value = "text", defaultValue = "") String text) {
+        return limit + ":" + text;
+    }
+
+    @GetMapping("/openapi/range")
+    @GatewayRoute(permission = "probe:read")
+    public int range(@RequestParam("byte") byte level, @RequestParam("short") Short amount) {
+        return level + amount;
+    }
+
+    @GetMapping("/openapi/literal")
+    @GatewayRoute(permission = "probe:read")
+    public Literal literal() {
+        return new Literal("literal application data");
+    }
+
+    public record Literal(@JsonField(name = "$ref") String reference) {}
 }

@@ -11,6 +11,7 @@ import hoori.rest.mvc.processor.HttpContract;
 import hoori.rest.processor.JsonCodecs;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -115,12 +116,18 @@ final class OpenApiBinding {
                             parameter.element(),
                             "OpenAPI query list exceeds the MVC parameter limit");
 
+                require(
+                        schema.containsKey("default") == (parameter.defaultValue() != null),
+                        parameter.element(),
+                        "OpenAPI default presence differs from MVC");
+
                 if (parameter.defaultValue() != null) {
-                    Object fallback = schema.get("default");
-                    String actual =
-                            fallback instanceof ContractJson.NumberToken n ? n.value() : String.valueOf(fallback);
                     require(
-                            fallback != null && actual.equals(parameter.defaultValue()),
+                            sameDefault(
+                                    parameter.type(),
+                                    schema.get("default"),
+                                    parameter.defaultValue(),
+                                    parameter.element()),
                             parameter.element(),
                             "OpenAPI default differs from MVC");
                 }
@@ -260,6 +267,12 @@ final class OpenApiBinding {
             if (scalar.equals("integer")) {
                 String format = java.equals("long") || java.equals("java.lang.Long") ? "int64" : "int32";
                 require(format.equals(schema.get("format")), origin, "OpenAPI integer format differs from " + java);
+
+                if (input && (java.equals("byte") || java.equals("java.lang.Byte")))
+                    narrowInteger(schema, origin, java, Byte.MIN_VALUE, Byte.MAX_VALUE);
+
+                if (input && (java.equals("short") || java.equals("java.lang.Short")))
+                    narrowInteger(schema, origin, java, Short.MIN_VALUE, Short.MAX_VALUE);
             }
         } else if (type instanceof DeclaredType declared && declared.asElement().getKind() == ElementKind.ENUM) {
             require(
@@ -430,5 +443,69 @@ final class OpenApiBinding {
 
     private static BigDecimal number(Object value) {
         return new BigDecimal(((ContractJson.NumberToken) value).value());
+    }
+
+    private boolean sameDefault(TypeMirror type, Object value, String fallback, Element origin) {
+        String java = clients.codecs.typeName(type, origin);
+
+        if (java.equals("java.lang.String")
+                || type instanceof DeclaredType d && d.asElement().getKind() == ElementKind.ENUM)
+            return value instanceof String && value.equals(fallback);
+
+        if (java.equals("boolean") || java.equals("java.lang.Boolean"))
+            return value instanceof Boolean && value.toString().equals(fallback);
+
+        return value instanceof ContractJson.NumberToken && number(value).compareTo(new BigDecimal(fallback)) == 0;
+    }
+
+    private static void narrowInteger(Map<String, Object> schema, Element origin, String java, int min, int max) {
+        BigDecimal lower = BigDecimal.valueOf((long) min - 1), upper = BigDecimal.valueOf((long) max + 1);
+        boolean boundedBelow =
+                schema.containsKey("minimum") && number(schema.get("minimum")).compareTo(lower) > 0
+                        || schema.containsKey("exclusiveMinimum")
+                                && number(schema.get("exclusiveMinimum")).compareTo(lower) >= 0;
+        boolean boundedAbove =
+                schema.containsKey("maximum") && number(schema.get("maximum")).compareTo(upper) < 0
+                        || schema.containsKey("exclusiveMaximum")
+                                && number(schema.get("exclusiveMaximum")).compareTo(upper) <= 0;
+
+        if (schema.containsKey("const") || schema.containsKey("enum")) {
+            List<?> values = schema.containsKey("const")
+                    ? Collections.singletonList(schema.get("const"))
+                    : array(schema.get("enum"));
+            boolean finiteBelow = true, finiteAbove = true;
+            for (Object value : values) {
+                if (!(value instanceof ContractJson.NumberToken)) continue;
+
+                BigDecimal candidate = number(value);
+
+                if (candidate.stripTrailingZeros().scale() > 0 || !allowsNumber(schema, candidate)) continue;
+
+                finiteBelow &= candidate.compareTo(BigDecimal.valueOf(min)) >= 0;
+                finiteAbove &= candidate.compareTo(BigDecimal.valueOf(max)) <= 0;
+            }
+            boundedBelow |= finiteBelow;
+            boundedAbove |= finiteAbove;
+        }
+
+        require(
+                boundedBelow && boundedAbove,
+                origin,
+                "OpenAPI input range exceeds " + java + " [" + min + ", " + max + "]");
+    }
+
+    private static boolean allowsNumber(Map<String, Object> schema, BigDecimal value) {
+        for (String key : List.of("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum")) {
+            if (!schema.containsKey(key)) continue;
+
+            int compared = value.compareTo(number(schema.get(key)));
+
+            if (key.equals("minimum") && compared < 0
+                    || key.equals("maximum") && compared > 0
+                    || key.equals("exclusiveMinimum") && compared <= 0
+                    || key.equals("exclusiveMaximum") && compared >= 0) return false;
+        }
+
+        return true;
     }
 }
