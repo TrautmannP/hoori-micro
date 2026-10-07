@@ -69,12 +69,26 @@ public Recipe get(@PathVariable("id") @Positive long id) { … }
 Lists use `minItems`/`maxItems`; numeric bounds use the matching JSON Schema keywords
 (`@Positive` → `exclusiveMinimum: 0`).
 
+For `byte` / `Byte` inputs, `integer` / `int32` schemas must restrict values to
+`[-128, 127]`; `short` / `Short` inputs use `[-32768, 32767]`. Declare `minimum` and
+`maximum`, equivalent exclusive bounds, or a finite `enum` / `const`. Input contracts
+may be narrower than the Java range; output contracts may describe a wider range.
+
 ## What the build checks
 
 Method/path, permission, required parameters and defaults, body, DTO types/field names,
 required input fields, list limits and enabled Jakarta input constraints. Static success
 statuses must match. Every operation has a unique `operationId` and exactly one matching
 `@GatewayRoute` method. Internal methods are not part of the public contract.
+
+Parameter defaults describe the original MVC binding's behavior on omission. A schema
+`default` must be present exactly when the MVC annotation supplies `defaultValue`, and
+the typed values must match. An empty string is a default, too; OpenAPI does not add a
+second runtime defaulting layer.
+
+Path Item parameters are inherited by each operation. An operation parameter with the
+same `(in, name)` replaces the inherited definition; duplicates within either array
+are rejected. Binding, operation hashes and publication use this effective parameter set.
 
 Dynamic `HttpResult` statuses/headers, domain errors and response invariants are described in
 the contract and backed by application tests – the processor does not prove arbitrary Java code
@@ -91,6 +105,11 @@ paths.
   YAML, external/recursive references, schema composition (`oneOf`/`allOf`), multipart,
   streaming, custom codecs and unbound security schemes.
 </Callout>
+
+References are resolved at schema, parameter, request-body, response, header and example-object
+positions. Property-name maps and literal `example`, schema `examples`, `default`, `const`,
+`enum` and example `value` payloads keep their data unchanged, including keys named `$ref`.
+Literal reference-shaped strings do not load contract components.
 
 ## Baseline compatibility
 

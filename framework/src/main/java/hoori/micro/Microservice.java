@@ -35,6 +35,7 @@ public final class Microservice implements AutoCloseable {
     private final Context context;
     private final List<String> controlRoutes = new ArrayList<>();
     private final List<AutoCloseable> resources = new ArrayList<>();
+    private OpenApi documentation;
 
     private volatile HttpServer server;
     private volatile boolean closed, stopRequested, applicationReady = true;
@@ -106,6 +107,8 @@ public final class Microservice implements AutoCloseable {
                                         + poolMetrics(http.poolStats(), control.poolStats())
                                         + admissionMetrics(incoming.stats(), broker.admissionStats())
                                         + broker.executions.metrics()
+                                        + broker.discoveryMetrics()
+                                        + OpenApi.metrics(documentation)
                                         + runtimeMetrics())
                                 .getBytes(StandardCharsets.UTF_8)));
         router.onError((request, failure) -> {
@@ -118,6 +121,12 @@ public final class Microservice implements AutoCloseable {
 
     public static Microservice create(String name) {
         return create(name, 1, Environment.system());
+    }
+
+    void documentation(OpenApi api) {
+        if (documentation != null) throw new IllegalStateException("OpenAPI already mounted");
+
+        documentation = api;
     }
 
     public static Microservice create(String name, int version, Environment environment) {

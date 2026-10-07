@@ -121,6 +121,136 @@ final class OpenApiBindingTest {
                 before, document(changed.replace("\"x-hoori-service-version\":1", "\"x-hoori-service-version\":2")));
     }
 
+    @Test
+    void defaultsMustBePresentOnBothSidesAndMatchTheirScalarType() throws Exception {
+        for (String[] scalar : List.of(
+                new String[] {"Integer", "\"type\":\"integer\",\"format\":\"int32\"", "20", "20"},
+                new String[] {
+                    "Long", "\"type\":\"integer\",\"format\":\"int64\"", "9223372036854775807", "9223372036854775807"
+                },
+                new String[] {"Boolean", "\"type\":\"boolean\"", "true", "true"},
+                new String[] {"String", "\"type\":\"string\"", "\"\"", ""})) {
+            String schema = "{" + scalar[1] + ",\"default\":" + scalar[2] + "}";
+            String contract = queryContract(schema);
+            String controller = queryController(scalar[0], "defaultValue=\"" + scalar[3] + "\"");
+            assertEquals("OK", compile(contract, controller, contract));
+            String absent = queryController(scalar[0], "required=false");
+            String diagnostic = compile(contract, absent, contract);
+            assertTrue(diagnostic.contains("default presence differs"), diagnostic);
+            String noDefault = queryContract("{" + scalar[1] + "}");
+            assertEquals("OK", compile(noDefault, absent, null));
+            diagnostic = compile(noDefault, controller, null);
+            assertTrue(diagnostic.contains("default presence differs"), diagnostic);
+        }
+        assertEquals(
+                "OK",
+                compile(
+                        queryContract("{\"type\":\"integer\",\"format\":\"int32\",\"default\":20.0}"),
+                        queryController("Integer", "defaultValue=\"020\""),
+                        null));
+        for (String fallback : List.of("21", "\"20\"", "null")) {
+            String diagnostic = compile(
+                    queryContract("{\"type\":\"integer\",\"format\":\"int32\",\"default\":" + fallback + "}"),
+                    queryController("Integer", "defaultValue=\"20\""),
+                    null);
+            assertTrue(diagnostic.contains("default differs"), diagnostic);
+        }
+    }
+
+    @Test
+    void narrowIntegerInputsNeedBoundsButOutputsMayBeWider() throws Exception {
+        for (String type : List.of("byte", "Byte", "short", "Short")) {
+            int min = type.equalsIgnoreCase("byte") ? -128 : -32768;
+            int max = type.equalsIgnoreCase("byte") ? 127 : 32767;
+            String controller = queryController(type, "required=true");
+            for (String bounds : List.of(
+                    "",
+                    ",\"minimum\":" + (min - 1) + ",\"maximum\":" + max,
+                    ",\"minimum\":" + min + ",\"maximum\":" + (max + 1))) {
+                String diagnostic = compile(integerQuery(bounds), controller, null);
+                assertTrue(diagnostic.contains("input range exceeds") && diagnostic.contains(type), diagnostic);
+            }
+            for (String bounds : List.of(
+                    ",\"minimum\":" + min + ",\"maximum\":" + max,
+                    ",\"exclusiveMinimum\":" + (min - 1) + ",\"exclusiveMaximum\":" + (max + 1),
+                    ",\"minimum\":0,\"maximum\":10",
+                    ",\"enum\":[0,10]",
+                    ",\"const\":10")) assertEquals("OK", compile(integerQuery(bounds), controller, null));
+            String diagnostic = compile(integerQuery(",\"enum\":[0," + (max + 1) + "]"), controller, null);
+            assertTrue(diagnostic.contains("input range exceeds"), diagnostic);
+        }
+        assertEquals("OK", compile(integerQuery(""), queryController("int", "required=true"), null));
+        assertEquals("OK", compile(integerQuery(""), queryController("Integer", "required=true"), null));
+        assertEquals(
+                "OK",
+                compile(
+                        integerQuery(",\"minimum\":-128.5,\"maximum\":127.5"),
+                        queryController("byte", "required=true"),
+                        null));
+        assertEquals(
+                "OK",
+                compile(
+                        integerQuery(",\"minimum\":1,\"maximum\":127"),
+                        queryController("byte", "required=true")
+                                .replace("byte value", "@jakarta.validation.constraints.Positive byte value"),
+                        null));
+        assertEquals(
+                "OK",
+                compile(
+                        integerQuery("")
+                                .replace(
+                                        "\"schema\":{\"type\":\"string\"}",
+                                        "\"schema\":{\"type\":\"integer\",\"format\":\"int32\"}"),
+                        queryController("int", "required=true")
+                                .replace("public String get", "public byte get")
+                                .replace("return \"ok\"", "return 1"),
+                        null));
+    }
+
+    @Test
+    void inheritedParametersUseTheOperationOverrideForBindingAndBaseline() throws Exception {
+        Map<String, Object> tree = document(integerQuery(",\"default\":10")).document();
+        Map<String, Object> item =
+                ContractJson.object(ContractJson.object(tree.get("paths")).get("/items"));
+        Map<String, Object> operation = ContractJson.object(item.get("get"));
+        Map<String, Object> inherited = ContractJson.object(
+                ContractJson.array(operation.get("parameters")).getFirst());
+        Map<String, Object> schema = new LinkedHashMap<>(ContractJson.object(inherited.get("schema")));
+        schema.put("default", new ContractJson.NumberToken("20"));
+        Map<String, Object> parameter = new LinkedHashMap<>(inherited);
+        parameter.put("schema", schema);
+        item.put("parameters", List.of(parameter));
+        String withOverride = new String(ContractJson.bytes(tree), StandardCharsets.UTF_8);
+        assertEquals(
+                "OK",
+                compile(
+                        withOverride,
+                        queryController("Integer", "defaultValue=\"10\""),
+                        integerQuery(",\"default\":10")));
+        String diagnostic = compile(withOverride, queryController("Integer", "defaultValue=\"20\""), null);
+        assertTrue(diagnostic.contains("default differs"), diagnostic);
+    }
+
+    private static String integerQuery(String bounds) {
+        String contract = queryContract("{\"type\":\"integer\",\"format\":\"int32\"" + bounds + "}");
+
+        return bounds.contains("default") ? contract : contract.replace("\"required\":false", "\"required\":true");
+    }
+
+    private static String queryContract(String schema) {
+        return "{\"openapi\":\"3.1.0\",\"info\":{\"title\":\"Test\",\"version\":\"1\"},\"x-hoori-service-version\":1,"
+                + "\"paths\":{\"/items\":{\"get\":{\"operationId\":\"itemsGet\",\"x-hoori-permission\":\"test:read\","
+                + "\"parameters\":[{\"name\":\"value\",\"in\":\"query\",\"required\":false,\"schema\":" + schema + "}],"
+                + "\"responses\":{\"200\":{\"description\":\"OK\",\"content\":{\"application/json\":{\"schema\":{\"type\":\"string\"}}}}}}}}}";
+    }
+
+    private static String queryController(String type, String options) {
+        return "package test; @hoori.rest.mvc.RestController public final class Web {"
+                + "@hoori.rest.mvc.GetMapping(\"/items\") @hoori.micro.app.GatewayRoute(permission=\"test:read\")"
+                + "public String get(@hoori.rest.mvc.RequestParam(value=\"value\"," + options + ") " + type
+                + " value) { return \"ok\"; }}";
+    }
+
     private static OpenApiDocument document(String json) {
         return new OpenApiDocument(json.getBytes(StandardCharsets.UTF_8));
     }

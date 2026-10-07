@@ -204,7 +204,14 @@ public final class OpenApiDocument {
                 wire.put("operationId", id);
                 for (String key : List.of("parameters", "requestBody", "responses", "security"))
                     if (materialized.containsKey(key))
-                        wire.put(key, expand(materialized.get(key), new HashSet<>(), new int[1], 0));
+                        wire.put(
+                                key,
+                                expand(
+                                        materialized.get(key),
+                                        new HashSet<>(),
+                                        new int[1],
+                                        0,
+                                        child(Position.OPERATION, key)));
                 operations.add(new Operation(
                         verb, path.getKey(), id, permission, ContractJson.hash(ContractJson.bytes(wire))));
             }
@@ -381,20 +388,76 @@ public final class OpenApiDocument {
         return result;
     }
 
-    private Object expand(Object value, Set<String> active, int[] nodes, int depth) {
-        return expand(value, active, nodes, depth, true);
+    private enum Position {
+        OPERATION,
+        PARAMETERS,
+        PARAMETER,
+        REQUEST_BODY,
+        RESPONSES,
+        RESPONSE,
+        HEADERS,
+        HEADER,
+        CONTENT,
+        MEDIA,
+        SCHEMA,
+        PROPERTIES,
+        EXAMPLES,
+        EXAMPLE,
+        LITERAL
     }
 
-    private Object expand(Object value, Set<String> active, int[] nodes, int depth, boolean fingerprint) {
+    private static Position child(Position position, String key) {
+        return switch (position) {
+            case OPERATION ->
+                switch (key) {
+                    case "parameters" -> Position.PARAMETERS;
+                    case "requestBody" -> Position.REQUEST_BODY;
+                    case "responses" -> Position.RESPONSES;
+                    default -> Position.LITERAL;
+                };
+            case RESPONSES -> Position.RESPONSE;
+            case HEADERS -> Position.HEADER;
+            case CONTENT -> Position.MEDIA;
+            case PROPERTIES -> Position.SCHEMA;
+            case EXAMPLES -> Position.EXAMPLE;
+            case SCHEMA ->
+                switch (key) {
+                    case "properties" -> Position.PROPERTIES;
+                    case "items" -> Position.SCHEMA;
+                    default -> Position.LITERAL;
+                };
+            case PARAMETER, HEADER, MEDIA ->
+                switch (key) {
+                    case "schema" -> Position.SCHEMA;
+                    case "examples" -> Position.EXAMPLES;
+                    default -> Position.LITERAL;
+                };
+            case REQUEST_BODY, RESPONSE ->
+                switch (key) {
+                    case "content" -> Position.CONTENT;
+                    case "headers" -> Position.HEADERS;
+                    default -> Position.LITERAL;
+                };
+            default -> Position.LITERAL;
+        };
+    }
+
+    private Object expand(Object value, Set<String> active, int[] nodes, int depth, Position position) {
         require(++nodes[0] <= 8192 && depth < 32, "Expanded operation limit");
 
         if (value instanceof Map<?, ?>) {
             Map<String, Object> map = object(value);
 
-            if (map.containsKey("$ref")) {
+            if (map.containsKey("$ref")
+                    && (position == Position.SCHEMA
+                            || position == Position.PARAMETER
+                            || position == Position.REQUEST_BODY
+                            || position == Position.RESPONSE
+                            || position == Position.HEADER
+                            || position == Position.EXAMPLE)) {
                 String ref = text(map.get("$ref"));
                 require(active.add(ref), "Recursive contract reference");
-                Object result = expand(resolve(map), active, nodes, depth + 1, fingerprint);
+                Object result = expand(resolve(map), active, nodes, depth + 1, position);
                 active.remove(ref);
 
                 return result;
@@ -402,7 +465,9 @@ public final class OpenApiDocument {
 
             Map<String, Object> copy = new LinkedHashMap<>();
             for (var entry : map.entrySet()) {
-                copy.put(entry.getKey(), expand(entry.getValue(), active, nodes, depth + 1, fingerprint));
+                copy.put(
+                        entry.getKey(),
+                        expand(entry.getValue(), active, nodes, depth + 1, child(position, entry.getKey())));
             }
 
             return copy;
@@ -410,7 +475,13 @@ public final class OpenApiDocument {
 
         if (value instanceof List<?> list) {
             List<Object> copy = new ArrayList<>();
-            for (Object item : list) copy.add(expand(item, active, nodes, depth + 1, fingerprint));
+            for (Object item : list)
+                copy.add(expand(
+                        item,
+                        active,
+                        nodes,
+                        depth + 1,
+                        position == Position.PARAMETERS ? Position.PARAMETER : Position.LITERAL));
 
             return copy;
         }
@@ -426,19 +497,26 @@ public final class OpenApiDocument {
 
     /** Inline the finite local references so aggregation cannot collide on component names. */
     public Map<String, Object> expandedOperation(Operation operation) {
-        return object(expand(operation(operation), new HashSet<>(), new int[1], 0, false));
+        return object(expand(operation(operation), new HashSet<>(), new int[1], 0, Position.OPERATION));
     }
 
     private Map<String, Object> materialize(String path, String method) {
         Map<String, Object> item = object(object(root.get("paths")).get(path));
         Map<String, Object> operation = new LinkedHashMap<>(object(item.get(method)));
-        List<Object> parameters = new ArrayList<>();
+        Map<String, Object> parameters = new LinkedHashMap<>();
+        for (Map<String, Object> level : List.of(item, operation)) {
+            Set<String> seen = new HashSet<>();
 
-        if (item.containsKey("parameters")) parameters.addAll(array(item.get("parameters")));
+            if (!level.containsKey("parameters")) continue;
 
-        if (operation.containsKey("parameters")) parameters.addAll(array(operation.get("parameters")));
-
-        operation.put("parameters", parameters);
+            for (Object value : array(level.get("parameters"))) {
+                Map<String, Object> parameter = resolve(value);
+                String key = text(parameter.get("in")) + " " + text(parameter.get("name"));
+                require(seen.add(key), "Duplicate OpenAPI parameter");
+                parameters.put(key, parameter);
+            }
+        }
+        operation.put("parameters", new ArrayList<>(parameters.values()));
 
         return operation;
     }

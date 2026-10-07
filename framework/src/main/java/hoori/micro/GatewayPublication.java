@@ -14,6 +14,7 @@ final class GatewayPublication {
     final byte[] bytes;
     final List<Selection> selections;
     final boolean complete;
+    final int withheldRoutes;
 
     private GatewayPublication(Catalog catalog, Gateway.Route[] routes) {
         List<Object> published = new ArrayList<>(), missing = new ArrayList<>(), withheld = new ArrayList<>();
@@ -74,6 +75,7 @@ final class GatewayPublication {
         manifest.put("catalogRevision", catalog.revision);
         manifest.put("registryComplete", catalog.complete);
         complete = missing.isEmpty();
+        withheldRoutes = withheld.size();
         manifest.put("complete", complete);
         manifest.put("operations", published);
         manifest.put("undocumented", missing);

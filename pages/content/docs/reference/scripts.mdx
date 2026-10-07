@@ -26,6 +26,7 @@ scripts/run-local.sh registry
 | `scripts/test-hoori-core.sh` | Real guest execution of the portable checks after `build.sh`; no HotSpot fallback |
 | `python3 scripts/smoke.py` | End-to-end smoke test with the real distribution |
 | `python3 scripts/test_mvc.py --gc-stress` | `mvc-crud` HTTP and validation bounds |
+| `python3 scripts/test_openapi.py` | Generated defaults, narrow integers, literal `$ref` publication and local diagnostic recovery |
 | `python3 scripts/test_application_build.py` | Builds an app outside the reactor and starts it without sources |
 | `python3 scripts/test_composition.py [--facade]` | Composition, validation and task facade cases |
 | `python3 scripts/test_data.py --hoori-checkout ../hoori` | Optional data example against a throwaway PostgreSQL |

@@ -74,3 +74,19 @@ The response is released only after local child/resource drain.
 
 A remote validation failure is **not** presented as validation of the outer input: an
 untranslated failure of an inner call becomes 502, without the provider's field paths.
+
+## Troubleshooting
+
+Inspect the affected process's `/metrics`; the [metrics reference](/docs/reference/metrics)
+defines each local discovery, pool, admission and OpenAPI signal.
+
+| Symptom | Check |
+|---|---|
+| Gateway 404 | Published route/permission declarations, `hoori_micro_catalog_fresh` and `hoori_micro_gateway_routes_withheld` |
+| 502 upstream failure | Provider health and registration, catalog freshness and registry availability; a fresh catalog does not prove a provider is reachable |
+| Admission-related 503 | Active/pending/rejected calls, pool saturation and stopping/cancellation failure reasons |
+| Documentation-only 503 | `hoori_micro_openapi_enabled`, `hoori_micro_openapi_available` and the fixed `hoori_micro_openapi_state` reason |
+
+An unavailable registry can leave the retained catalog usable until it expires. A missing
+contract or rejected aggregate can make docs unavailable while business routes and local
+readiness remain usable. Fix the indicated cause; the workers recover without a restart.
